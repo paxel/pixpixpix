@@ -14,7 +14,10 @@ fn missing_file_gives_the_defaults() {
 fn saved_settings_are_loaded_back() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config/settings.toml");
-    let saved = Settings { cache_per_side: 12 };
+    let saved = Settings {
+        cache_per_side: 12,
+        ..Settings::default()
+    };
     settings::save(&path, &saved).unwrap();
     assert_eq!(settings::load(&path), Ok(saved));
 }
@@ -24,7 +27,13 @@ fn hand_edited_file_is_read_with_missing_and_unknown_fields_tolerated() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("settings.toml");
     std::fs::write(&path, "# mine\ncache_per_side = 3\nfuture = \"x\"\n").unwrap();
-    assert_eq!(settings::load(&path), Ok(Settings { cache_per_side: 3 }));
+    assert_eq!(
+        settings::load(&path),
+        Ok(Settings {
+            cache_per_side: 3,
+            ..Settings::default()
+        })
+    );
     std::fs::write(&path, "future = 1\n").unwrap();
     assert_eq!(settings::load(&path), Ok(Settings::default()));
 }
@@ -34,9 +43,21 @@ fn out_of_range_cache_size_is_clamped() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("settings.toml");
     std::fs::write(&path, "cache_per_side = 100\n").unwrap();
-    assert_eq!(settings::load(&path), Ok(Settings { cache_per_side: 20 }));
+    assert_eq!(
+        settings::load(&path),
+        Ok(Settings {
+            cache_per_side: 20,
+            ..Settings::default()
+        })
+    );
     std::fs::write(&path, "cache_per_side = 0\n").unwrap();
-    assert_eq!(settings::load(&path), Ok(Settings { cache_per_side: 1 }));
+    assert_eq!(
+        settings::load(&path),
+        Ok(Settings {
+            cache_per_side: 1,
+            ..Settings::default()
+        })
+    );
 }
 
 #[test]
@@ -56,4 +77,18 @@ fn unwritable_place_is_an_error() {
     std::fs::write(&blocker, "").unwrap();
     let error = settings::save(&blocker.join("settings.toml"), &Settings::default()).unwrap_err();
     assert!(error.starts_with("Cannot save"), "{error}");
+}
+
+#[test]
+fn external_apps_are_kept_and_empty_by_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.toml");
+    assert_eq!(Settings::default().image_app, "");
+    assert_eq!(Settings::default().video_app, "");
+    std::fs::write(&path, "image_app = \"gwenview\"\nvideo_app = \"vlc \"\n").unwrap();
+    let loaded = settings::load(&path).unwrap();
+    assert_eq!(loaded.image_app, "gwenview");
+    assert_eq!(loaded.video_app, "vlc ");
+    settings::save(&path, &loaded).unwrap();
+    assert_eq!(settings::load(&path), Ok(loaded));
 }

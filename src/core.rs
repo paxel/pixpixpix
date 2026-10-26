@@ -43,6 +43,7 @@ pub enum Key {
     R,
     B,
     S,
+    O,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -127,6 +128,9 @@ pub enum Event {
     SettingsChanged(Settings),
     /// A [`Command::SaveSettings`] finished.
     SettingsSaved(Result<(), String>),
+    /// A [`Command::OpenExternally`] failed to start the program, or the
+    /// program reported failure; the message says which and why.
+    OpenFailed(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -156,6 +160,13 @@ pub enum Command {
     LoadSettings,
     /// Write the settings file, answered by [`Event::SettingsSaved`].
     SaveSettings(Settings),
+    /// Open the file in another program, `app` or else the system default,
+    /// without waiting for it; only a failure is answered, by
+    /// [`Event::OpenFailed`].
+    OpenExternally {
+        path: PathBuf,
+        app: Option<String>,
+    },
     SetFullscreen(bool),
     Quit,
 }
@@ -239,6 +250,10 @@ const IMAGE_VIEW_KEYS: &[KeyHint] = &[
     KeyHint {
         keys: "1",
         action: "100 %",
+    },
+    KeyHint {
+        keys: "O",
+        action: "open in another app",
     },
     KeyHint {
         keys: "N",
@@ -518,6 +533,8 @@ pub struct View {
     /// Why the settings file could not be read or written; the defaults are
     /// in effect after a failed read.
     pub settings_error: Option<String>,
+    /// Why the last `o` could not open the current file elsewhere.
+    pub open_error: Option<String>,
 }
 
 pub struct Core {
@@ -667,6 +684,7 @@ impl Core {
                 settings: Settings::default(),
                 settings_open: false,
                 settings_error: None,
+                open_error: None,
             },
             screen,
             band: Vec::new(),
@@ -744,6 +762,10 @@ impl Core {
             }
             Event::SettingsSaved(result) => {
                 self.view.settings_error = result.err();
+                Vec::new()
+            }
+            Event::OpenFailed(message) => {
+                self.view.open_error = Some(message);
                 Vec::new()
             }
         }
@@ -1291,8 +1313,26 @@ impl Core {
                 self.view.zoom.scale = Scale::Exact(1.0);
                 Vec::new()
             }
+            Key::O => self.open_externally(),
             _ => Vec::new(),
         }
+    }
+
+    /// Hands the current file, broken or not, to the app the settings name
+    /// for its kind, or the system default when that is blank.
+    fn open_externally(&mut self) -> Vec<Command> {
+        self.view.open_error = None;
+        let Some(path) = self.current.clone() else {
+            return Vec::new();
+        };
+        let settings = &self.view.settings;
+        let app = if folder::is_video(&path) {
+            &settings.video_app
+        } else {
+            &settings.image_app
+        };
+        let app = (!app.trim().is_empty()).then(|| app.clone());
+        vec![Command::OpenExternally { path, app }]
     }
 
     /// The image on screen, if it and the viewport have a size, so zoom
@@ -1382,6 +1422,7 @@ impl Core {
     /// shows nothing until its decode arrives.
     fn go_to(&mut self, path: PathBuf) -> Vec<Command> {
         self.current = Some(path.clone());
+        self.view.open_error = None;
         let mut commands = Vec::new();
         self.screen = match self.cache.get(&path) {
             Some(result) => screen(&path, result.clone()),

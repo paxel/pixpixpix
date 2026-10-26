@@ -17,6 +17,16 @@ pub fn is_image(path: &Path) -> bool {
     has_extension(path, IMAGE_EXTENSIONS)
 }
 
+/// Extensions of the video formats, lower case.
+const VIDEO_EXTENSIONS: &[&str] = &[
+    "mp4", "mov", "m4v", "mkv", "webm", "avi", "mts", "m2ts", "3gp", "wmv", "flv", "mpg",
+];
+
+/// True when the file name has an extension of a video format.
+pub fn is_video(path: &Path) -> bool {
+    has_extension(path, VIDEO_EXTENSIONS)
+}
+
 /// True when the file is something navigation shows.
 pub fn is_media(path: &Path) -> bool {
     is_image(path)

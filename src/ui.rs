@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use egui::{Color32, ColorImage, RichText, TextureHandle, TextureOptions};
 
 use crate::core::{
-    DirColumn, Event, Focus, Key, KeyLine, KeyPress, Notice, Points, Screen, Thumb, View, Zoom,
+    DirColumn, Event, Focus, Key, KeyPress, Notice, Points, Screen, Thumb, View, Zoom,
 };
 use crate::decode::DecodedImage;
 use crate::folder;
@@ -35,6 +35,15 @@ const THUMB_HEIGHT: f32 = 64.0;
 const OPEN_HINT: &str = "Press O to open it in another app";
 /// The label of the cache size in the settings screen.
 const CACHE_LABEL: &str = "Cached images per side";
+/// The labels of the external apps in the settings screen.
+const IMAGE_APP_LABEL: &str = "App for images";
+const VIDEO_APP_LABEL: &str = "App for videos";
+/// How the external apps are given, below their fields.
+const APP_HINT: &str = if cfg!(target_os = "macos") {
+    "An application name such as Preview or VLC, opened with open -a. Empty: the system default."
+} else {
+    "A command such as gwenview or vlc, the file is added last. Empty: the system default."
+};
 
 /// GPU textures of decoded images, uploaded once per path.
 #[derive(Default)]
@@ -111,6 +120,7 @@ fn map_key(key: egui::Key) -> Option<Key> {
         egui::Key::R => Key::R,
         egui::Key::B => Key::B,
         egui::Key::S => Key::S,
+        egui::Key::O => Key::O,
         _ => return None,
     })
 }
@@ -125,7 +135,7 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
         .show_separator_line(false)
         .frame(egui::Frame::NONE.fill(BACKGROUND).inner_margin(6.0))
         .show(ui, |ui| {
-            show_key_line(ui, &view.key_line, view.folder_error.as_deref());
+            show_key_line(ui, view);
         });
     if !view.band.is_empty() {
         egui::Panel::bottom("band")
@@ -329,6 +339,10 @@ fn show_settings(
                 egui::Slider::new(&mut changed.cache_per_side, settings::CACHE_PER_SIDE)
                     .text(RichText::new(CACHE_LABEL).color(TEXT)),
             );
+            ui.add_space(8.0);
+            app_field(ui, IMAGE_APP_LABEL, &mut changed.image_app);
+            app_field(ui, VIDEO_APP_LABEL, &mut changed.video_app);
+            ui.label(RichText::new(APP_HINT).color(DIM_TEXT));
             if changed != *values {
                 events.push(Event::SettingsChanged(changed));
             }
@@ -339,7 +353,16 @@ fn show_settings(
         });
 }
 
-fn show_key_line(ui: &mut egui::Ui, key_line: &KeyLine, folder_error: Option<&str>) {
+/// A labelled one-line text field for an external app.
+fn app_field(ui: &mut egui::Ui, label: &str, value: &mut String) {
+    ui.horizontal(|ui| {
+        let label = ui.label(RichText::new(label).color(TEXT));
+        ui.text_edit_singleline(value).labelled_by(label.id);
+    });
+}
+
+fn show_key_line(ui: &mut egui::Ui, view: &View) {
+    let key_line = &view.key_line;
     ui.horizontal(|ui| {
         for hint in &key_line.keys {
             ui.label(RichText::new(hint.keys).color(TEXT).strong());
@@ -353,9 +376,12 @@ fn show_key_line(ui: &mut egui::Ui, key_line: &KeyLine, folder_error: Option<&st
             };
             ui.label(RichText::new(text).color(NOTICE_TEXT));
         }
-        if let Some(error) = folder_error {
+        if let Some(error) = &view.folder_error {
             let text = format!("Cannot read the folder: {error}");
             ui.label(RichText::new(text).color(ERROR_TEXT));
+        }
+        if let Some(error) = &view.open_error {
+            ui.label(RichText::new(error).color(ERROR_TEXT));
         }
     });
 }

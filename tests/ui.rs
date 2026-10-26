@@ -599,7 +599,10 @@ fn the_cache_size_is_changed_on_the_settings_screen() {
     assert_eq!(h.state().core.view().settings.cache_per_side, 6);
     assert_eq!(
         h.state().commands,
-        [Command::SaveSettings(Settings { cache_per_side: 6 })]
+        [Command::SaveSettings(Settings {
+            cache_per_side: 6,
+            ..Settings::default()
+        })]
     );
     let slider = h.get_by_role_and_label(Role::Slider, CACHE_LABEL);
     assert_eq!(slider.accesskit_node().numeric_value(), Some(6.0));
@@ -617,4 +620,50 @@ fn the_settings_screen_shows_why_the_file_is_unusable() {
     h.key_press(egui::Key::S);
     h.run();
     h.get_by_label("Cannot read settings.toml: bad");
+}
+
+#[test]
+fn o_reaches_the_core_and_a_failure_shows_in_the_key_line() {
+    let mut h = harness(shown("/p/cat.jpg"));
+    h.run();
+    h.get_by_label("O");
+    h.key_press(egui::Key::O);
+    h.run();
+    assert_eq!(
+        h.state().commands,
+        [Command::OpenExternally {
+            path: PathBuf::from("/p/cat.jpg"),
+            app: None
+        }]
+    );
+    let commands = h
+        .state_mut()
+        .core
+        .handle(Event::OpenFailed("Cannot start nope: not found".into()));
+    assert!(commands.is_empty());
+    h.run();
+    h.get_by_label("Cannot start nope: not found");
+}
+
+#[test]
+fn the_external_apps_are_typed_on_the_settings_screen() {
+    let mut h = harness(shown("/p/cat.jpg"));
+    h.run();
+    h.key_press(egui::Key::S);
+    h.run();
+    h.get_by_role_and_label(Role::TextInput, "App for videos");
+    h.get_by_role_and_label(Role::TextInput, "App for images")
+        .focus();
+    h.run();
+    h.get_by_role_and_label(Role::TextInput, "App for images")
+        .type_text("gwenview");
+    h.run();
+    assert_eq!(h.state().core.view().settings.image_app, "gwenview");
+    assert_eq!(
+        h.state().commands.last(),
+        Some(&Command::SaveSettings(Settings {
+            image_app: "gwenview".into(),
+            ..Settings::default()
+        }))
+    );
 }

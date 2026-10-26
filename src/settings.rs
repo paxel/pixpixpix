@@ -16,11 +16,21 @@ pub const CACHE_PER_SIDE: RangeInclusive<usize> = 1..=20;
 pub struct Settings {
     /// How many neighbours per side of the current file are kept decoded.
     pub cache_per_side: usize,
+    /// The program images are opened with by `o`; empty for the system
+    /// default.
+    pub image_app: String,
+    /// The program videos are opened with by `o`; empty for the system
+    /// default.
+    pub video_app: String,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { cache_per_side: 5 }
+        Self {
+            cache_per_side: 5,
+            image_app: String::new(),
+            video_app: String::new(),
+        }
     }
 }
 
@@ -31,6 +41,7 @@ impl Settings {
             cache_per_side: self
                 .cache_per_side
                 .clamp(*CACHE_PER_SIDE.start(), *CACHE_PER_SIDE.end()),
+            ..self
         }
     }
 }

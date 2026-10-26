@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use crate::core::{Command, Core, Event, Screen};
 use crate::geometry::{self, Geometry};
-use crate::{decode, folder, settings, startup, ui, watch};
+use crate::{decode, external, folder, settings, startup, ui, watch};
 
 pub const APP_ID: &str = "io.github.paxel.pixpixpix";
 
@@ -205,6 +205,24 @@ impl Worker {
                 let _ = self.events.send(Event::SettingsSaved(result));
                 self.ctx.request_repaint();
             }
+            Command::OpenExternally { path, app } => {
+                let events = self.events.clone();
+                let ctx = self.ctx.clone();
+                let exited = move |result: Result<(), String>| {
+                    if let Err(message) = result {
+                        // The app may already be gone; nothing to report to then.
+                        let _ = events.send(Event::OpenFailed(message));
+                        ctx.request_repaint();
+                    }
+                };
+                if let Err(message) =
+                    external::launch(external::command(path, app.as_deref()), exited)
+                {
+                    // The app may already be gone; nothing to report to then.
+                    let _ = self.events.send(Event::OpenFailed(message));
+                    self.ctx.request_repaint();
+                }
+            }
             Command::SetFullscreen(_) | Command::Quit => {}
         }
     }
@@ -259,7 +277,8 @@ impl App {
                 | Command::Search { .. }
                 | Command::CancelSearch
                 | Command::LoadSettings
-                | Command::SaveSettings(_) => {
+                | Command::SaveSettings(_)
+                | Command::OpenExternally { .. } => {
                     self.worker.spawn(&command);
                 }
             }

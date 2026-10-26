@@ -16,6 +16,7 @@
 pub mod app;
 pub mod core;
 pub mod decode;
+pub mod external;
 pub mod folder;
 pub mod geometry;
 pub mod settings;

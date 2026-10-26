@@ -19,5 +19,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - In the dir column, `.` shows dot files and dot folders and `r` searches the subfolders breadth-first for the nearest folder with images, filling the band with them; picking one moves there. Both last until the next move in the column.
 - `b` focuses the band: Left/Right move its highlight, Enter shows the highlighted image (a found one too) and returns to the image view, Esc goes back. `Tab` cycles dir column, image view and band, skipping the closed column.
 - `s` opens the settings screen (`s` or `Esc` closes it): the number of images preloaded per side (1 to 20, default 5) takes effect at once and is saved to `settings.toml` in the config directory, which may also be edited by hand; a file that cannot be read keeps the defaults and the screen shows why.
+- `o` opens the current file, a broken one too, in the system default app (`xdg-open` on Linux, `open` on macOS) and pixpixpix stays open; the settings screen can name one app for images and one for videos instead (`image_app`/`video_app` in `settings.toml`). A failure to launch is shown in the key line with its message.
 - The window reopens at its last size and position; `f` toggles fullscreen; `Ctrl+Q` (`Cmd+Q` on macOS) quits.
 - `PIXPIXPIX_TIMING=1` prints the time from launch to the first frame.

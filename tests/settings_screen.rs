@@ -87,6 +87,7 @@ fn s_opens_and_closes_the_settings_screen() {
             "+/-",
             "0",
             "1",
+            "O",
             "N",
             "B",
             "Tab",
@@ -125,7 +126,10 @@ fn the_open_screen_takes_every_key_but_quit() {
 #[test]
 fn loaded_cache_size_re_plans_the_window() {
     let mut core = browsing();
-    let commands = core.handle(Event::SettingsLoaded(Ok(Settings { cache_per_side: 1 })));
+    let commands = core.handle(Event::SettingsLoaded(Ok(Settings {
+        cache_per_side: 1,
+        ..Settings::default()
+    })));
     let cancelled: Vec<Command> = ["a", "b", "c", "d", "h", "i", "j", "k"]
         .iter()
         .map(|n| Command::CancelDecode(p(n)))
@@ -139,14 +143,23 @@ fn loaded_cache_size_re_plans_the_window() {
 #[test]
 fn changed_cache_size_takes_effect_and_is_saved() {
     let mut core = browsing();
-    core.handle(Event::SettingsLoaded(Ok(Settings { cache_per_side: 1 })));
-    let commands = core.handle(Event::SettingsChanged(Settings { cache_per_side: 2 }));
+    core.handle(Event::SettingsLoaded(Ok(Settings {
+        cache_per_side: 1,
+        ..Settings::default()
+    })));
+    let commands = core.handle(Event::SettingsChanged(Settings {
+        cache_per_side: 2,
+        ..Settings::default()
+    }));
     assert_eq!(
         commands,
         [
             Command::Decode(p("h")),
             Command::Decode(p("d")),
-            Command::SaveSettings(Settings { cache_per_side: 2 }),
+            Command::SaveSettings(Settings {
+                cache_per_side: 2,
+                ..Settings::default()
+            }),
         ]
     );
     assert_eq!(core.view().settings.cache_per_side, 2);
@@ -155,14 +168,23 @@ fn changed_cache_size_takes_effect_and_is_saved() {
 #[test]
 fn changed_value_is_clamped_and_an_unchanged_one_is_not_saved() {
     let mut core = browsing();
-    let commands = core.handle(Event::SettingsChanged(Settings { cache_per_side: 99 }));
+    let commands = core.handle(Event::SettingsChanged(Settings {
+        cache_per_side: 99,
+        ..Settings::default()
+    }));
     assert_eq!(
         commands.last(),
-        Some(&Command::SaveSettings(Settings { cache_per_side: 20 }))
+        Some(&Command::SaveSettings(Settings {
+            cache_per_side: 20,
+            ..Settings::default()
+        }))
     );
     assert!(
-        core.handle(Event::SettingsChanged(Settings { cache_per_side: 30 }))
-            .is_empty()
+        core.handle(Event::SettingsChanged(Settings {
+            cache_per_side: 30,
+            ..Settings::default()
+        }))
+        .is_empty()
     );
 }
 
