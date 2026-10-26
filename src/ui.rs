@@ -9,7 +9,8 @@ use egui::{Color32, ColorImage, RichText, TextureHandle, TextureOptions};
 
 use crate::core::{
     DirColumn, EditsView, Event, ExportView, Focus, InnerImages, Key, KeyPress, MetadataView,
-    MotionKind, Notice, Points, Region, Screen, Thumb, Video, VideoStep, View, Zoom, unturned,
+    MotionKind, Notice, Points, Region, Screen, Thumb, Toggle, Video, VideoStep, View, Zoom,
+    unturned,
 };
 use crate::decode::DecodedImage;
 use crate::folder;
@@ -111,19 +112,24 @@ pub fn input_events(ctx: &egui::Context) -> Vec<Event> {
         i.events
             .iter()
             .filter_map(|e| match e {
+                // `Shift`+`.` types `>` or `:`, depending on the layout; the
+                // key's place still names it.
                 egui::Event::Key {
                     key,
+                    physical_key,
                     pressed: true,
                     modifiers,
                     ..
-                } => map_key(*key).map(|k| {
-                    Event::Key(KeyPress {
-                        key: k,
-                        command: modifiers.command,
-                        shift: modifiers.shift,
-                        alt: modifiers.alt,
-                    })
-                }),
+                } => map_key(*key)
+                    .or_else(|| (*physical_key == Some(egui::Key::Period)).then_some(Key::Period))
+                    .map(|k| {
+                        Event::Key(KeyPress {
+                            key: k,
+                            command: modifiers.command,
+                            shift: modifiers.shift,
+                            alt: modifiers.alt,
+                        })
+                    }),
                 _ => None,
             })
             .collect::<Vec<_>>()
@@ -634,6 +640,19 @@ fn show_key_line(ui: &mut egui::Ui, view: &View) {
             ui.label(RichText::new(hint.keys).color(TEXT).strong());
             ui.label(RichText::new(hint.action).color(DIM_TEXT));
             ui.add_space(12.0);
+        }
+        for tag in &view.tags {
+            let text = match (tag.toggle, tag.kept) {
+                (Toggle::DotEntries, false) => "dot entries shown",
+                (Toggle::DotEntries, true) => "dot entries shown, kept",
+                (Toggle::FindImages, false) => "finding images",
+                (Toggle::FindImages, true) => "finding images, kept",
+            };
+            ui.label(
+                RichText::new(text)
+                    .color(HIGHLIGHT_TEXT)
+                    .background_color(HIGHLIGHT),
+            );
         }
         if let Some(notice) = key_line.notice {
             let text = match notice {

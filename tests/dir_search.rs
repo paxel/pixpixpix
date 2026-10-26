@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use pixpixpix::core::{Command, Core, Event, Focus, Key, KeyPress, Screen};
+use pixpixpix::core::{Command, Core, Event, Focus, Key, KeyPress, Screen, Tag, Toggle};
 use pixpixpix::decode::DecodedImage;
 use pixpixpix::folder::Found;
 
@@ -22,6 +22,20 @@ fn paths(list: &[&str]) -> Vec<PathBuf> {
 
 fn press(core: &mut Core, key: Key) -> Vec<Command> {
     core.handle(Event::Key(KeyPress::plain(key)))
+}
+
+fn shift(core: &mut Core, key: Key) -> Vec<Command> {
+    let mut press = KeyPress::plain(key);
+    press.shift = true;
+    core.handle(Event::Key(press))
+}
+
+fn tags(core: &Core) -> Vec<(Toggle, bool)> {
+    core.view()
+        .tags
+        .iter()
+        .map(|Tag { toggle, kept }| (*toggle, *kept))
+        .collect()
 }
 
 fn decoded(core: &mut Core, path: &str) -> Vec<Command> {
@@ -208,14 +222,13 @@ fn leaving_the_folder_resets_dots_and_aborts_the_search() {
 }
 
 #[test]
-fn moving_the_highlight_aborts_the_search_but_keeps_dot_folders() {
+fn moving_the_highlight_keeps_dot_folders_and_the_search() {
     for key in [Key::Up, Key::Down] {
         let mut core = column_open();
         press(&mut core, Key::Period);
         press(&mut core, Key::R);
-        assert_eq!(
-            press(&mut core, key).first(),
-            Some(&Command::CancelSearch),
+        assert!(
+            !press(&mut core, key).contains(&Command::CancelSearch),
             "{key:?}"
         );
         assert_eq!(
@@ -223,8 +236,56 @@ fn moving_the_highlight_aborts_the_search_but_keeps_dot_folders() {
             paths(&["/p/.git", "/p/x", "/p/y"]),
             "{key:?}"
         );
-        assert_eq!(press(&mut core, Key::R), [search("/p", true)], "{key:?}");
+        assert_eq!(
+            tags(&core),
+            [(Toggle::DotEntries, false), (Toggle::FindImages, false)],
+            "{key:?}"
+        );
+        assert!(press(&mut core, Key::R).is_empty(), "{key:?}");
     }
+}
+
+#[test]
+fn shift_dot_keeps_dot_entries_in_every_folder_entered() {
+    let mut core = column_open();
+    shift(&mut core, Key::Period);
+    assert_eq!(tags(&core), [(Toggle::DotEntries, true)]);
+    assert_eq!(column_dirs(&core), paths(&["/p/.git", "/p/x", "/p/y"]));
+    press(&mut core, Key::Right);
+    dirs_listed(&mut core, "/p/x", &["/p/x/.h", "/p/x/k"]);
+    assert_eq!(column_dirs(&core), paths(&["/p/x/.h", "/p/x/k"]));
+    press(&mut core, Key::Left);
+    dirs_listed(&mut core, "/p", &["/p/.git", "/p/x", "/p/y"]);
+    assert_eq!(column_dirs(&core), paths(&["/p/.git", "/p/x", "/p/y"]));
+    // `.` ends it.
+    press(&mut core, Key::Period);
+    assert!(tags(&core).is_empty());
+    assert_eq!(column_dirs(&core), paths(&["/p/x", "/p/y"]));
+}
+
+#[test]
+fn shift_r_searches_every_folder_the_column_enters_until_r() {
+    let mut core = column_open();
+    assert_eq!(shift(&mut core, Key::R), [search("/p", false)]);
+    assert_eq!(tags(&core), [(Toggle::FindImages, true)]);
+    let commands = press(&mut core, Key::Right);
+    assert_eq!(commands.first(), Some(&Command::CancelSearch));
+    assert!(commands.contains(&search("/p/x", false)));
+    // Closing and opening the column searches again.
+    press(&mut core, Key::N);
+    assert!(press(&mut core, Key::N).contains(&search("/p/x", false)));
+    assert_eq!(press(&mut core, Key::R), [Command::CancelSearch]);
+    assert!(tags(&core).is_empty());
+    assert!(!press(&mut core, Key::Left).contains(&search("/p", false)));
+}
+
+#[test]
+fn a_plain_r_is_tagged_until_the_folder_is_left() {
+    let mut core = column_open();
+    press(&mut core, Key::R);
+    assert_eq!(tags(&core), [(Toggle::FindImages, false)]);
+    press(&mut core, Key::Left);
+    assert!(tags(&core).is_empty());
 }
 
 #[test]
@@ -366,7 +427,8 @@ fn a_found_highlighted_folder_waits_for_the_nav_decode() {
     assert_eq!(decoded(&mut core, "/p/x/1.jpg"), [decode("/p/x/2.jpg")]);
     assert_eq!(band(&core), [(Path::new("/p/x/1.jpg"), true)]);
     // Aborting cancels only what the search asked for.
-    let commands = press(&mut core, Key::Down);
+    shift(&mut core, Key::R);
+    let commands = shift(&mut core, Key::R);
     assert!(commands.contains(&Command::CancelDecode(PathBuf::from("/p/x/2.jpg"))));
 }
 
@@ -376,8 +438,9 @@ fn aborting_leaves_a_nav_decode_running() {
     files_listed(&mut core, "/p/x", &["/p/x/1.jpg"]);
     press(&mut core, Key::R);
     searched(&mut core, "/p", false, Some(("/p/x", &["/p/x/1.jpg"])));
-    // Up moves nowhere, so the nav cache keeps waiting for x.
-    assert!(press(&mut core, Key::Up).is_empty());
+    // The nav cache keeps waiting for x.
+    shift(&mut core, Key::R);
+    assert!(shift(&mut core, Key::R).is_empty());
 }
 
 #[test]

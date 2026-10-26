@@ -517,6 +517,23 @@ pub struct KeyHint {
     pub action: &'static str,
 }
 
+/// A one-shot action of the dir column that is on, tagged in the key line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Toggle {
+    /// `.`: dot files and dot folders are shown.
+    DotEntries,
+    /// `r`: the subfolders are searched for images.
+    FindImages,
+}
+
+/// A toggle that is on, and whether it stays on when the folder is left:
+/// turned on with `Shift`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Tag {
+    pub toggle: Toggle,
+    pub kept: bool,
+}
+
 /// Why the last key did nothing, or what it did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Notice {
@@ -703,11 +720,11 @@ const DIR_COLUMN_KEYS: &[KeyHint] = &[
         action: "open",
     },
     KeyHint {
-        keys: ".",
+        keys: "./Shift+.",
         action: "dot entries",
     },
     KeyHint {
-        keys: "R",
+        keys: "R/Shift+R",
         action: "find images",
     },
     KeyHint {
@@ -1077,6 +1094,8 @@ pub struct View {
     pub band: Vec<Thumb>,
     pub fullscreen: bool,
     pub key_line: KeyLine,
+    /// The toggles that are on.
+    pub tags: Vec<Tag>,
     pub zoom: Zoom,
     /// The size of the area the image is shown in; zero until the UI reports
     /// it.
@@ -1155,8 +1174,12 @@ pub struct Core {
     column_dirs: Option<Vec<PathBuf>>,
     /// Whether dot files and dot folders are shown: the one-shot `.` action.
     dots: bool,
+    /// `Shift`+`.`: dot entries stay shown when the folder is left.
+    dots_kept: bool,
     /// The one-shot `r` search of the dir column.
     search: Option<Search>,
+    /// `Shift`+`r`: every folder the dir column enters is searched.
+    search_kept: bool,
     /// Decode results of the files in the window around the current one.
     /// Failures are kept too, so a broken file is not decoded again and again.
     cache: BTreeMap<PathBuf, Result<DecodedImage, String>>,
@@ -1413,6 +1436,7 @@ impl Core {
                     keys: focus_keys(Focus::Image, false),
                     notice: None,
                 },
+                tags: Vec::new(),
                 zoom: Zoom::FIT,
                 viewport: Points::default(),
                 folder_error: None,
@@ -1448,7 +1472,9 @@ impl Core {
             all_files: None,
             column_dirs: None,
             dots: false,
+            dots_kept: false,
             search: None,
+            search_kept: false,
             cache: BTreeMap::new(),
             decoding,
             came_from: None,
@@ -1726,6 +1752,15 @@ impl Core {
     /// Shows the search or the preview if there is one, otherwise the current
     /// folder.
     fn publish(&mut self) {
+        let dots = self.dots.then_some(Tag {
+            toggle: Toggle::DotEntries,
+            kept: self.dots_kept,
+        });
+        let search = (self.search_kept || self.search.is_some()).then_some(Tag {
+            toggle: Toggle::FindImages,
+            kept: self.search_kept,
+        });
+        self.view.tags = dots.into_iter().chain(search).collect();
         let preview = self.search_view().or_else(|| {
             self.previewed()
                 .and_then(|dir| Some(self.nav.get(dir)?.preview(dir)))
@@ -2446,6 +2481,8 @@ impl Core {
                 self.step_video(if forward { step } else { step.back() })
             }
             (_, true) => Vec::new(),
+            (Key::Period, false) if key.shift && self.view.focus == Focus::Dirs => self.keep_dots(),
+            (Key::R, false) if key.shift && self.view.focus == Focus::Dirs => self.keep_search(),
             _ => match self.view.focus {
                 Focus::Dirs => self.dir_key(key.key),
                 Focus::Image => self.image_key(key.key),
@@ -2524,7 +2561,11 @@ impl Core {
             error: None,
         });
         self.set_focus(Focus::Dirs);
-        vec![Command::ListDirs(dir)]
+        let mut commands = vec![Command::ListDirs(dir)];
+        if self.search_kept {
+            commands.extend(self.start_search());
+        }
+        commands
     }
 
     /// Lists the column's subfolders, keeping the highlight on the folder just
@@ -2563,33 +2604,56 @@ impl Core {
         }
     }
 
-    /// Keys of the dir column; moving the highlight aborts the search,
-    /// leaving the folder ends both one-shot actions first.
+    /// Keys of the dir column; leaving the folder ends the one-shot actions
+    /// first, and a kept search starts again in the folder entered.
     fn dir_key(&mut self, key: Key) -> Vec<Command> {
         let mut commands = match key {
             Key::Period => {
+                self.dots_kept = false;
                 let dots = !self.dots;
                 return self.set_dots(dots);
             }
+            Key::R if self.search_kept => return self.keep_search(),
             Key::R => return self.start_search(),
-            Key::Up | Key::Down => self.abort_search(),
             Key::Left | Key::Right | Key::Enter | Key::Escape | Key::Backspace => {
                 self.reset_one_shot()
             }
             _ => Vec::new(),
         };
         commands.extend(self.move_in_column(key));
+        if self.search_kept && self.view.overview.is_none() {
+            commands.extend(self.start_search());
+        }
         commands
     }
 
-    /// Ends the one-shot actions: the search is aborted and dot entries are
-    /// hidden again.
+    /// Ends the one-shot actions that are not kept: the search is aborted and
+    /// dot entries are hidden again.
     fn reset_one_shot(&mut self) -> Vec<Command> {
         let mut commands = self.abort_search();
-        if self.dots {
+        if self.dots && !self.dots_kept {
             commands.extend(self.set_dots(false));
         }
         commands
+    }
+
+    /// `Shift`+`.`: dot entries are shown and stay shown in every folder, or
+    /// are hidden again.
+    fn keep_dots(&mut self) -> Vec<Command> {
+        self.dots_kept = !self.dots_kept;
+        let dots = self.dots_kept;
+        self.set_dots(dots)
+    }
+
+    /// `Shift`+`r`: every folder the dir column enters is searched, starting
+    /// with this one, until `r` or `Shift`+`r` ends it.
+    fn keep_search(&mut self) -> Vec<Command> {
+        self.search_kept = !self.search_kept;
+        if self.search_kept {
+            self.start_search()
+        } else {
+            self.abort_search()
+        }
     }
 
     /// Shows or hides dot entries in the column and the current folder.
@@ -2693,7 +2757,7 @@ impl Core {
         self.live.clear();
         self.all_files = None;
         self.column_dirs = None;
-        self.dots = false;
+        self.dots &= self.dots_kept;
         self.came_from = None;
         self.dir = Some(dir.clone());
         let cached = self.nav.remove(&dir).map(|n| n.state);

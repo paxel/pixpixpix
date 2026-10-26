@@ -493,6 +493,27 @@ fn dot_in_the_column_shows_dot_folders() {
     h.get_by_label(".git");
 }
 
+#[test]
+fn shift_dot_on_any_layout_keeps_dot_folders_and_says_so() {
+    let mut h = column_open();
+    h.state_mut().core.handle(Event::DirsListed {
+        dir: PathBuf::from("/p"),
+        result: Ok(vec![PathBuf::from("/p/.git"), PathBuf::from("/p/work")]),
+    });
+    h.run();
+    // A German layout types `:`, a US one `>`.
+    h.event(egui::Event::Key {
+        key: egui::Key::Colon,
+        physical_key: Some(egui::Key::Period),
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::SHIFT,
+    });
+    h.run();
+    h.get_by_label(".git");
+    h.get_by_label("dot entries shown, kept");
+}
+
 /// Whether the band thumb or overview tile `name` is highlighted for
 /// keyboard selection.
 fn band_selected(h: &Harness<'_, State>, name: &str) -> Option<bool> {

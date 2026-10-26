@@ -96,16 +96,20 @@ In the save dialog, `Enter` saves as a new file and `Esc` goes back to editing.
 
 ### Dir column (`n`)
 
-| Key                          | Action                                 |
-|------------------------------|----------------------------------------|
-| `Up` / `Down`                | select a subfolder                     |
-| `Right` / `Enter`            | enter it                               |
-| `Left` / `Esc` / `Backspace` | go to the parent                       |
-| `.`                          | show dot files and dot folders         |
-| `r`                          | find the nearest subfolder with images |
-| `g`                          | overview of the highlighted folder     |
-| `n`                          | close                                  |
-| `b`                          | focus the band                         |
+| Key                          | Action                                                         |
+|------------------------------|----------------------------------------------------------------|
+| `Up` / `Down`                | select a subfolder                                             |
+| `Right` / `Enter`            | enter it                                                       |
+| `Left` / `Esc` / `Backspace` | go to the parent                                               |
+| `.`                          | show dot files and dot folders until you leave the folder      |
+| `Shift`+`.`                  | show dot files and dot folders in every folder, until `.`      |
+| `r`                          | find the nearest subfolder with images, until you leave        |
+| `Shift`+`r`                  | find images below every folder you enter, until `r`            |
+| `g`                          | overview of the highlighted folder                             |
+| `n`                          | close                                                          |
+| `b`                          | focus the band                                                 |
+
+The key line tags what is on.
 
 ### Band (`b`)
 
