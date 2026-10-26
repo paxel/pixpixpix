@@ -2,8 +2,9 @@
 //! file itself through a temporary file, as `rotate` does, or as a new file
 //! that never replaces an existing one. The pixels are cropped and turned by
 //! the pending rotation after the shapes are drawn, so the file looks like
-//! the screen. Exports: an area of the edited image scaled to a given size,
-//! written without metadata, within a size limit if asked.
+//! the screen, and keeps the original's metadata where its format can hold
+//! it. Exports: an area of the edited image scaled to a given size, written
+//! without metadata, within a size limit if asked.
 
 use std::fs;
 use std::io::{Cursor, Write};
@@ -23,6 +24,7 @@ use tiny_skia::{
 
 use crate::core::{Block, Export, ExportFormat, ImagePoint, Mark, Region, Shape, cropped, degrees};
 use crate::decode::DecodedImage;
+use crate::metadata::{self, Kept};
 use crate::rotate::{self, Rotation};
 use crate::{clipboard, decode, folder, motion, multi};
 
@@ -260,7 +262,8 @@ impl OutlinePen for GlyphPen {
 }
 
 /// Writes `image` of the file `source` with `shapes` drawn into it and turned
-/// by `rotation` to `target`, in the format its extension names. Over
+/// by `rotation` to `target`, in the format its extension names, with the
+/// EXIF, XMP and colour profile of `source` where the format holds them. Over
 /// `source` itself only when nothing else in the file would be lost; another
 /// `target` must not exist yet. The error is meant to be shown to the user as
 /// is.
@@ -284,51 +287,113 @@ fn write(
 ) -> Result<(), String> {
     let format = ImageFormat::from_path(target)
         .map_err(|_| "the file name has no image format pixpixpix can write".to_owned())?;
-    if target == source {
-        refuse_overwrite(source, format)?;
+    // A video frame keeps nothing of the video.
+    let original = if target == source {
+        let original = fs::read(source).map_err(|e| e.to_string())?;
+        refuse_overwrite(source, &original, format)?;
+        Some(original)
     } else if target.exists() {
         return Err("the file already exists".to_owned());
-    }
+    } else if folder::is_video(source) {
+        None
+    } else {
+        fs::read(source).ok()
+    };
+    let kept = original
+        .map(|original| metadata::kept(source, &original))
+        .unwrap_or_default();
     let edited = clipboard::turned(&render(image, shapes)?, rotation)?;
-    let bytes = encode(&edited, format)?;
+    let bytes = encode(&edited, format, &kept)?;
     if target == source {
         return rotate::replace(target, &bytes).map_err(|e| e.to_string());
     }
     create(source, target, &bytes)
 }
 
-/// Why writing over `source` would lose part of it.
-fn refuse_overwrite(source: &Path, format: ImageFormat) -> Result<(), String> {
-    let bytes = fs::read(source).map_err(|e| e.to_string())?;
-    if decode::is_heif(source, &bytes) {
+/// Why writing over `source`, held in `bytes`, would lose part of it.
+fn refuse_overwrite(source: &Path, bytes: &[u8], format: ImageFormat) -> Result<(), String> {
+    if decode::is_heif(source, bytes) {
         return Err("HEIC/HEIF and AVIF files cannot be written".to_owned());
     }
-    if multi::count(&bytes) > 1 {
+    if multi::count(bytes) > 1 {
         return Err("the other images in the file would be lost".to_owned());
     }
     if matches!(motion::find(source), Ok(Some(_))) {
         return Err("the embedded video would be lost".to_owned());
     }
-    if rotate::animated(&bytes, format).map_err(|e| e.to_string())? {
+    if rotate::animated(bytes, format).map_err(|e| e.to_string())? {
         return Err("the other frames of the animation would be lost".to_owned());
     }
     Ok(())
 }
 
-/// The image encoded in `format`; JPEG without alpha.
-fn encode(image: &DecodedImage, format: ImageFormat) -> Result<Vec<u8>, String> {
+/// The image encoded in `format`, with the metadata `kept` that JPEG, PNG
+/// and WebP hold; JPEG without alpha.
+fn encode(image: &DecodedImage, format: ImageFormat, kept: &Kept) -> Result<Vec<u8>, String> {
     let rgba = RgbaImage::from_raw(image.width, image.height, image.rgba.to_vec())
         .ok_or("the pixels do not match the image size")?;
-    let image = DynamicImage::ImageRgba8(rgba);
-    let mut out = Cursor::new(Vec::new());
-    let result = match format {
+    let (width, height) = rgba.dimensions();
+    let mut out = Vec::new();
+    match format {
         ImageFormat::Jpeg => {
-            JpegEncoder::new_with_quality(&mut out, JPEG_QUALITY).encode_image(&image.to_rgb8())
+            let mut encoder = JpegEncoder::new_with_quality(&mut out, JPEG_QUALITY);
+            if kept
+                .exif
+                .as_deref()
+                .is_some_and(|e| !metadata::fits_jpeg(e))
+            {
+                return Err("its EXIF is too large for a JPEG".to_owned());
+            }
+            keep(&mut encoder, kept)?;
+            let rgb = DynamicImage::ImageRgba8(rgba).to_rgb8();
+            encoder
+                .write_image(rgb.as_raw(), width, height, ExtendedColorType::Rgb8)
+                .map_err(|e| e.to_string())?;
         }
-        _ => image.write_to(&mut out, format),
-    };
-    result.map_err(|e| e.to_string())?;
-    Ok(out.into_inner())
+        ImageFormat::Png => {
+            let mut encoder = PngEncoder::new(&mut out);
+            keep(&mut encoder, kept)?;
+            encoder
+                .write_image(rgba.as_raw(), width, height, ExtendedColorType::Rgba8)
+                .map_err(|e| e.to_string())?;
+        }
+        ImageFormat::WebP => {
+            let mut encoder = image_webp::WebPEncoder::new(&mut out);
+            encoder.set_exif_metadata(kept.exif.clone().unwrap_or_default());
+            encoder.set_icc_profile(kept.icc.clone().unwrap_or_default());
+            encoder.set_xmp_metadata(kept.xmp.clone().unwrap_or_default());
+            encoder
+                .encode(rgba.as_raw(), width, height, image_webp::ColorType::Rgba8)
+                .map_err(|e| e.to_string())?;
+            return Ok(out);
+        }
+        _ => {
+            let mut cursor = Cursor::new(Vec::new());
+            DynamicImage::ImageRgba8(rgba)
+                .write_to(&mut cursor, format)
+                .map_err(|e| e.to_string())?;
+            return Ok(cursor.into_inner());
+        }
+    }
+    match &kept.xmp {
+        Some(xmp) => metadata::with_xmp(&out, format, xmp),
+        None => Ok(out),
+    }
+}
+
+/// Hands the EXIF and colour profile of `kept` to `encoder`.
+fn keep(encoder: &mut impl ImageEncoder, kept: &Kept) -> Result<(), String> {
+    if let Some(exif) = &kept.exif {
+        encoder
+            .set_exif_metadata(exif.clone())
+            .map_err(|e| e.to_string())?;
+    }
+    if let Some(icc) = &kept.icc {
+        encoder
+            .set_icc_profile(icc.clone())
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 /// Writes a new file at `target` through a temporary file next to it, with

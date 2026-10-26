@@ -186,7 +186,7 @@ fn reset_jpeg_orientation(jpeg: &mut [u8]) -> Option<()> {
 }
 
 /// Sets the orientation tag of the first IFD of TIFF-structured EXIF to 1.
-fn reset_tiff_orientation(tiff: &mut [u8]) -> Option<()> {
+pub(crate) fn reset_tiff_orientation(tiff: &mut [u8]) -> Option<()> {
     let little = match tiff.get(0..2)? {
         b"II" => true,
         b"MM" => false,

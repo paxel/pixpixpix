@@ -319,6 +319,123 @@ fn fix_png_crc(bytes: &mut [u8], start: usize, end: usize) -> Option<()> {
     Some(())
 }
 
+/// The metadata an edited image keeps from the file it was made from.
+#[derive(Debug, Default)]
+pub(crate) struct Kept {
+    /// TIFF-structured EXIF, upright and without its thumbnail: the pixels
+    /// written are turned upright and edited.
+    pub exif: Option<Vec<u8>>,
+    /// The colour profile the pixels are in.
+    pub icc: Option<Vec<u8>>,
+    pub xmp: Option<Vec<u8>>,
+}
+
+/// What of the metadata of the file `source`, held in `bytes`, an edited
+/// image keeps: EXIF, colour profile and XMP, whatever of them there is. A
+/// TIFF's EXIF is the whole file and is not kept.
+pub(crate) fn kept(source: &Path, bytes: &[u8]) -> Kept {
+    let format = image::guess_format(bytes).ok();
+    let exif = (format != Some(ImageFormat::Tiff))
+        .then(|| {
+            Reader::new()
+                .read_from_container(&mut Cursor::new(bytes))
+                .ok()
+        })
+        .flatten()
+        .map(|exif| exif.buf().to_vec())
+        .filter(|tiff| !tiff.is_empty())
+        .map(|mut tiff| {
+            // An EXIF without orientation or thumbnail is kept as it is.
+            let _ = rotate::reset_tiff_orientation(&mut tiff);
+            let _ = unlink_thumbnail(&mut tiff);
+            tiff
+        });
+    let mut decoder = ImageReader::open(source)
+        .ok()
+        .and_then(|reader| reader.with_guessed_format().ok())
+        .and_then(|reader| reader.into_decoder().ok());
+    let icc = decoder
+        .as_mut()
+        .and_then(|d| d.icc_profile().ok().flatten())
+        .filter(|icc| !icc.is_empty());
+    let xmp = decoder
+        .as_mut()
+        .and_then(|d| d.xmp_metadata().ok().flatten())
+        .filter(|xmp| !xmp.is_empty());
+    Kept { exif, icc, xmp }
+}
+
+/// Ends the IFD chain of the TIFF-structured EXIF block `tiff` after the
+/// first IFD, so the thumbnail of the unedited image behind it is gone.
+fn unlink_thumbnail(tiff: &mut [u8]) -> Option<()> {
+    let little = match tiff.get(0..2)? {
+        b"II" => true,
+        b"MM" => false,
+        _ => return None,
+    };
+    let ifd = read_u32(tiff, 4, little)?;
+    let count = usize::from(read_u16(tiff, ifd, little)?);
+    let next = ifd.checked_add(2)?.checked_add(count.checked_mul(12)?)?;
+    tiff.get_mut(next..next.checked_add(4)?)?.fill(0);
+    Some(())
+}
+
+/// The largest data a JPEG segment holds.
+const JPEG_SEGMENT: usize = 65533;
+
+/// Whether the EXIF block `tiff` fits in a JPEG segment.
+pub(crate) fn fits_jpeg(tiff: &[u8]) -> bool {
+    tiff.len().saturating_add(JPEG_EXIF.len()) <= JPEG_SEGMENT
+}
+
+/// The JPEG or PNG `bytes` with the XMP packet `xmp` added: in a JPEG after
+/// its other header segments, in a PNG as an `iTXt` chunk before its image
+/// data, where readers look for it.
+pub(crate) fn with_xmp(bytes: &[u8], format: ImageFormat, xmp: &[u8]) -> Result<Vec<u8>, String> {
+    let (at, part) = match format {
+        ImageFormat::Jpeg => {
+            let at = jpeg_parts(bytes)
+                .ok_or(BROKEN_FILE)?
+                .iter()
+                .take_while(|p| {
+                    bytes
+                        .get(p.whole.start.saturating_add(1))
+                        .is_some_and(|m| (0xE0..=0xEF).contains(m))
+                })
+                .last()
+                .map_or(2, |p| p.whole.end);
+            let data = [JPEG_XMP, xmp].concat();
+            if data.len() > JPEG_SEGMENT {
+                return Err("its XMP is too large for a JPEG".to_owned());
+            }
+            let length = u16::try_from(data.len().saturating_add(2)).map_err(|e| e.to_string())?;
+            (
+                at,
+                [&[0xFF, 0xE1], &length.to_be_bytes()[..], &data].concat(),
+            )
+        }
+        ImageFormat::Png => {
+            let end = png_parts(bytes)
+                .ok_or(BROKEN_FILE)?
+                .iter()
+                .find(|p| bytes.get(p.whole.start.saturating_add(4)..p.data.start) == Some(b"IDAT"))
+                .map(|p| p.whole.start)
+                .ok_or(BROKEN_FILE)?;
+            // Uncompressed, without language or translated keyword.
+            let chunk = [&b"iTXt"[..], PNG_XMP, &[0, 0, 0, 0], xmp].concat();
+            let length = u32::try_from(chunk.len().saturating_sub(4)).map_err(|e| e.to_string())?;
+            let crc = crc32fast::hash(&chunk);
+            (
+                end,
+                [&length.to_be_bytes()[..], &chunk, &crc.to_be_bytes()].concat(),
+            )
+        }
+        _ => return Ok(bytes.to_vec()),
+    };
+    let (head, tail) = bytes.split_at_checked(at).ok_or(BROKEN_FILE)?;
+    Ok([head, &part, tail].concat())
+}
+
 /// What a removal takes out of a file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Strip {

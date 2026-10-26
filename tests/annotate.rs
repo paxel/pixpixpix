@@ -371,3 +371,141 @@ fn the_crop_is_applied_after_the_shapes_and_before_the_turn() {
     let written = decoded(&target).unwrap();
     assert_eq!((written.width, written.height), (50, 100));
 }
+
+/// The XMP packet of [`described_jpeg`].
+const XMP: &[u8] = b"<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF/></x:xmpmeta>";
+/// The colour profile of [`described_jpeg`]; only its bytes matter.
+const ICC: &[u8] = &[7; 300];
+
+/// A white 200x100 JPEG with the EXIF of `orientation6.jpg` (turned), a
+/// colour profile and XMP.
+fn described_jpeg(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    use image::ImageEncoder;
+    let source = fs::read(fixture("orientation6.jpg"))?;
+    let exif = exif::Reader::new().read_from_container(&mut std::io::Cursor::new(&source))?;
+    let mut bytes = Vec::new();
+    let mut encoder = image::codecs::jpeg::JpegEncoder::new(&mut bytes);
+    encoder.set_exif_metadata(exif.buf().to_vec())?;
+    encoder.set_icc_profile(ICC.to_vec())?;
+    encoder.write_image(
+        &[0xff; 200 * 100 * 3],
+        200,
+        100,
+        image::ExtendedColorType::Rgb8,
+    )?;
+    let data = [&b"http://ns.adobe.com/xap/1.0/\0"[..], XMP].concat();
+    let length = (data.len() + 2) as u16;
+    let segment = [&[0xFF, 0xE1], &length.to_be_bytes()[..], &data].concat();
+    bytes.splice(2..2, segment);
+    fs::write(path, bytes)?;
+    Ok(())
+}
+
+/// The EXIF, colour profile and XMP of a file.
+type Described = (exif::Exif, Option<Vec<u8>>, Option<Vec<u8>>);
+
+/// The [`Described`] of the file at `path`.
+fn described(path: &Path) -> Result<Described, Box<dyn std::error::Error>> {
+    use image::ImageDecoder;
+    let bytes = fs::read(path)?;
+    let exif = exif::Reader::new().read_from_container(&mut std::io::Cursor::new(&bytes))?;
+    let mut decoder = image::ImageReader::open(path)?
+        .with_guessed_format()?
+        .into_decoder()?;
+    Ok((exif, decoder.icc_profile()?, decoder.xmp_metadata()?))
+}
+
+fn orientation(exif: &exif::Exif) -> Option<u32> {
+    exif.get_field(exif::Tag::Orientation, exif::In::PRIMARY)?
+        .value
+        .get_uint(0)
+}
+
+#[test]
+fn overwrite_keeps_the_metadata_upright() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a.jpg");
+    described_jpeg(&path).unwrap();
+    let (before, _, _) = described(&path).unwrap();
+    assert_eq!(orientation(&before), Some(6));
+    annotate::save(&path, &white(200, 100), Rotation::None, &[arrow()], &path).unwrap();
+    let (after, icc, xmp) = described(&path).unwrap();
+    assert_eq!(orientation(&after), Some(1));
+    let primary = |e: &exif::Exif| {
+        e.fields()
+            .filter(|f| f.ifd_num == exif::In::PRIMARY)
+            .count()
+    };
+    assert_eq!(primary(&after), primary(&before));
+    assert_eq!(icc.as_deref(), Some(ICC));
+    assert_eq!(xmp.as_deref(), Some(XMP));
+    let written = decoded(&path).unwrap();
+    assert_eq!((written.width, written.height), (200, 100));
+}
+
+#[test]
+fn save_as_new_keeps_the_metadata_in_jpeg_png_and_webp() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("a.jpg");
+    described_jpeg(&source).unwrap();
+    for name in ["b.jpg", "b.png", "b.webp"] {
+        let target = dir.path().join(name);
+        annotate::save(
+            &source,
+            &white(200, 100),
+            Rotation::Right,
+            &[arrow()],
+            &target,
+        )
+        .unwrap();
+        let (exif, icc, xmp) = described(&target).unwrap();
+        assert_eq!(orientation(&exif), Some(1), "{name}");
+        assert_eq!(icc.as_deref(), Some(ICC), "{name}");
+        assert_eq!(xmp.as_deref(), Some(XMP), "{name}");
+        let written = decoded(&target).unwrap();
+        assert_eq!((written.width, written.height), (100, 200), "{name}");
+    }
+}
+
+#[test]
+fn the_thumbnail_of_the_unedited_image_is_not_kept() {
+    use image::ImageEncoder;
+    // EXIF turned right, with a thumbnail IFD behind the first.
+    let entry = |tag: u16, value: u16| {
+        [
+            &tag.to_le_bytes()[..],
+            &3u16.to_le_bytes(),
+            &1u32.to_le_bytes(),
+            &value.to_le_bytes(),
+            &[0, 0],
+        ]
+        .concat()
+    };
+    let tiff = [
+        &b"II*\0"[..],
+        &8u32.to_le_bytes(),
+        &1u16.to_le_bytes(),
+        &entry(0x0112, 6),
+        &26u32.to_le_bytes(),
+        &1u16.to_le_bytes(),
+        &entry(0x0103, 6),
+        &0u32.to_le_bytes(),
+    ]
+    .concat();
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("a.jpg");
+    let mut bytes = Vec::new();
+    let mut encoder = image::codecs::jpeg::JpegEncoder::new(&mut bytes);
+    encoder.set_exif_metadata(tiff).unwrap();
+    encoder
+        .write_image(&[0xff; 4 * 2 * 3], 4, 2, image::ExtendedColorType::Rgb8)
+        .unwrap();
+    fs::write(&source, bytes).unwrap();
+    let (before, _, _) = described(&source).unwrap();
+    assert!(before.fields().any(|f| f.ifd_num == exif::In::THUMBNAIL));
+    let target = dir.path().join("b.jpg");
+    annotate::save(&source, &white(2, 4), Rotation::None, &[], &target).unwrap();
+    let (after, _, _) = described(&target).unwrap();
+    assert_eq!(orientation(&after), Some(1));
+    assert!(!after.fields().any(|f| f.ifd_num == exif::In::THUMBNAIL));
+}
