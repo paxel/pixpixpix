@@ -151,6 +151,7 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
                     show_image(ui, path, image, view.zoom, textures, &mut events);
                 }
                 Screen::Error { path, message } => show_error(ui, path.as_deref(), message),
+                Screen::NoImages { folders, .. } => show_no_images(ui, *folders),
             }
         });
     events
@@ -384,5 +385,18 @@ fn show_error(ui: &mut egui::Ui, path: Option<&Path>, message: &str) {
                 ui.label(RichText::new(OPEN_HINT).color(DIM_TEXT));
             }
         });
+    });
+}
+
+/// The placeholder of a previewed folder without media, with its subfolder
+/// count once known.
+fn show_no_images(ui: &mut egui::Ui, folders: Option<usize>) {
+    let text = match folders {
+        None => "No images".to_owned(),
+        Some(1) => "No images · 1 folder".to_owned(),
+        Some(n) => format!("No images · {n} folders"),
+    };
+    ui.centered_and_justified(|ui| {
+        ui.label(RichText::new(text).color(DIM_TEXT).size(15.0));
     });
 }

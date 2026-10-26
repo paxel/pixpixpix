@@ -178,8 +178,9 @@ fn start_with_a_folder_or_nothing_uses_its_first_image() {
 }
 
 #[test]
-fn start_with_an_empty_folder_explains_why() {
+fn start_with_an_empty_folder_names_it_and_explains_why() {
     let dir = tempfile::tempdir().unwrap();
-    let message = startup::resolve(Some(dir.path()), Path::new("/")).unwrap_err();
-    assert!(message.starts_with("No images in"), "{message}");
+    let none = startup::resolve(Some(dir.path()), Path::new("/")).unwrap_err();
+    assert_eq!(none.dir, dir.path());
+    assert!(none.message.starts_with("No images in"), "{}", none.message);
 }

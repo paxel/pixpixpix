@@ -83,7 +83,11 @@ fn n_opens_the_column_on_the_current_folder_focused() {
     let mut core = browsing();
     assert_eq!(
         press(&mut core, Key::N),
-        [Command::ListDirs(PathBuf::from("/p"))]
+        [
+            Command::ListDirs(PathBuf::from("/p")),
+            // The parent's first image, for the nav cache.
+            Command::ListFolder(PathBuf::from("/")),
+        ]
     );
     assert_eq!(core.view().focus, Focus::Dirs);
     assert_eq!(column(&core).unwrap().dir, Path::new("/p"));
@@ -154,8 +158,10 @@ fn keys_go_to_the_focused_area() {
 #[test]
 fn entering_a_folder_cancels_the_old_work_and_lists_the_new_one() {
     let mut core = column_open();
-    let commands = press(&mut core, Key::Down);
-    assert!(commands.is_empty());
+    assert_eq!(
+        press(&mut core, Key::Down),
+        [Command::ListFolder(PathBuf::from("/p/y"))]
+    );
     assert_eq!(
         press(&mut core, Key::Enter),
         [
@@ -257,6 +263,9 @@ fn left_escape_and_backspace_go_to_the_parent_highlighting_the_folder_left() {
                 Command::WatchFolder(PathBuf::from("/p")),
                 Command::ListFolder(PathBuf::from("/p")),
                 Command::ListDirs(PathBuf::from("/p")),
+                // The nav cache: the new parent and the folder left.
+                Command::ListFolder(PathBuf::from("/")),
+                Command::ListFolder(PathBuf::from("/p/y")),
             ],
             "{key:?}"
         );

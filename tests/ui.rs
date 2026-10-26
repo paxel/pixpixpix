@@ -8,6 +8,7 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
 use pixpixpix::core::{Command, Core, Event, Scale, Screen};
 use pixpixpix::decode::DecodedImage;
+use pixpixpix::startup::NoFile;
 use pixpixpix::ui;
 
 struct State {
@@ -61,7 +62,10 @@ fn image_is_drawn_with_its_file_name() {
 
 #[test]
 fn nothing_to_open_shows_the_message() {
-    let (core, _) = Core::start(Err("No images in /x".into()));
+    let (core, _) = Core::start(Err(NoFile {
+        dir: PathBuf::from("/x"),
+        message: "No images in /x".into(),
+    }));
     let mut h = harness(core);
     h.run();
     h.get_by_label("No images in /x");
@@ -85,7 +89,10 @@ const OPEN_HINT: &str = "Press O to open it in another app";
 
 #[test]
 fn nothing_to_open_has_no_open_hint() {
-    let (core, _) = Core::start(Err("No images in /x".into()));
+    let (core, _) = Core::start(Err(NoFile {
+        dir: PathBuf::from("/x"),
+        message: "No images in /x".into(),
+    }));
     let mut h = harness(core);
     h.run();
     assert!(h.query_by_label(OPEN_HINT).is_none());
@@ -317,7 +324,13 @@ fn column_open() -> Harness<'static, State> {
     h.run();
     h.key_press(egui::Key::N);
     h.run();
-    assert_eq!(h.state().commands, [Command::ListDirs(PathBuf::from("/p"))]);
+    assert_eq!(
+        h.state().commands,
+        [
+            Command::ListDirs(PathBuf::from("/p")),
+            Command::ListFolder(PathBuf::from("/"))
+        ]
+    );
     h.state_mut().core.handle(Event::DirsListed {
         dir: PathBuf::from("/p"),
         result: Ok(vec![PathBuf::from("/p/holidays"), PathBuf::from("/p/work")]),
@@ -382,4 +395,62 @@ fn tab_switches_the_key_line_between_column_and_image_view() {
     h.run();
     h.get_by_label("Left/Right");
     assert!(h.query_by_label("Up/Down").is_none());
+}
+
+fn listed(h: &mut Harness<'static, State>, dir: &str, files: Result<Vec<PathBuf>, String>) {
+    h.state_mut().core.handle(Event::FolderListed {
+        dir: PathBuf::from(dir),
+        result: files,
+    });
+    h.run();
+}
+
+#[test]
+fn the_highlighted_folder_is_previewed_with_the_band_following() {
+    let mut h = column_open();
+    listed(
+        &mut h,
+        "/p/holidays",
+        Ok(vec![PathBuf::from("/p/holidays/beach.jpg")]),
+    );
+    h.state_mut().core.handle(Event::Decoded {
+        path: PathBuf::from("/p/holidays/beach.jpg"),
+        result: Ok(DecodedImage {
+            width: 2,
+            height: 1,
+            rgba: Arc::from(vec![255; 8]),
+        }),
+    });
+    h.run();
+    h.get_by_role_and_label(Role::Image, "beach.jpg");
+    h.get_by_role_and_label(Role::Button, "beach.jpg");
+    assert!(h.query_by_label("a.jpg").is_none());
+}
+
+#[test]
+fn a_folder_without_images_shows_a_placeholder_with_its_subfolder_count() {
+    let mut h = column_open();
+    h.key_press(egui::Key::ArrowDown);
+    h.run();
+    listed(&mut h, "/p/work", Ok(Vec::new()));
+    h.get_by_label("No images");
+    h.state_mut().core.handle(Event::DirsListed {
+        dir: PathBuf::from("/p/work"),
+        result: Ok(vec![
+            PathBuf::from("/p/work/a"),
+            PathBuf::from("/p/work/b"),
+            PathBuf::from("/p/work/c"),
+        ]),
+    });
+    h.run();
+    h.get_by_label("No images · 3 folders");
+}
+
+#[test]
+fn entering_an_unreadable_folder_shows_the_error() {
+    let mut h = column_open();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    listed(&mut h, "/p/holidays", Err("permission denied".into()));
+    h.get_by_label("Cannot read /p/holidays: permission denied");
 }

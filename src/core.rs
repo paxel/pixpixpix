@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use crate::decode::DecodedImage;
 use crate::folder;
+use crate::startup::NoFile;
 
 #[derive(Debug, Clone, Copy)]
 enum Step {
@@ -141,6 +142,12 @@ pub enum Screen {
     Error {
         path: Option<PathBuf>,
         message: String,
+    },
+    /// The previewed subfolder has no media files directly in it.
+    NoImages {
+        dir: PathBuf,
+        /// How many subfolders it has; absent until they are counted.
+        folders: Option<usize>,
     },
 }
 
@@ -401,6 +408,11 @@ pub struct View {
 
 pub struct Core {
     view: View,
+    /// What the main area shows for the current folder; the view shows a
+    /// preview instead while there is one.
+    screen: Screen,
+    /// The band for the current folder; see [`Core::screen`].
+    band: Vec<Thumb>,
     first_frame_shown: bool,
     /// The file the main area is about, if any.
     current: Option<PathBuf>,
@@ -419,30 +431,100 @@ pub struct Core {
     /// The subfolder to highlight once the dir column is listed: the folder
     /// just left by going up.
     came_from: Option<PathBuf>,
+    /// The folder given on the command line when it had no file to show.
+    start_dir: Option<PathBuf>,
+    /// The nav cache: the first image of the parent folder and of the
+    /// highlighted subfolder, by folder, while the dir column is open.
+    nav: BTreeMap<PathBuf, Nav>,
+}
+
+/// What the nav cache knows of a folder.
+#[derive(Debug)]
+struct Nav {
+    state: NavState,
+    /// How many subfolders a folder without media has, once counted.
+    folders: Option<usize>,
+}
+
+#[derive(Debug)]
+enum NavState {
+    /// Waiting for the listing of the folder.
+    Listing,
+    /// The folder could not be read.
+    Failed(String),
+    /// The folder has no media files.
+    Empty,
+    /// Waiting for the decode of the folder's first file.
+    Decoding(PathBuf),
+    Done(PathBuf, Result<DecodedImage, String>),
+}
+
+impl Nav {
+    const LISTING: Self = Self {
+        state: NavState::Listing,
+        folders: None,
+    };
+
+    /// The main area and band previewing `dir` from this entry.
+    fn preview(&self, dir: &Path) -> (Screen, Vec<Thumb>) {
+        match &self.state {
+            NavState::Listing => (
+                Screen::Listing {
+                    dir: dir.to_path_buf(),
+                },
+                Vec::new(),
+            ),
+            NavState::Failed(message) => (
+                Screen::Error {
+                    path: None,
+                    message: cannot_read(dir, message),
+                },
+                Vec::new(),
+            ),
+            NavState::Empty => (
+                Screen::NoImages {
+                    dir: dir.to_path_buf(),
+                    folders: self.folders,
+                },
+                Vec::new(),
+            ),
+            NavState::Decoding(path) => (Screen::Loading { path: path.clone() }, Vec::new()),
+            NavState::Done(path, result) => (
+                screen(path, result.clone()),
+                vec![Thumb {
+                    path: path.clone(),
+                    image: result.as_ref().ok().cloned(),
+                    current: true,
+                }],
+            ),
+        }
+    }
 }
 
 impl Core {
-    /// Starts on `start`, the file chosen from the command line, or the reason
-    /// there is none. Returns the commands to run right away.
-    pub fn start(start: Result<PathBuf, String>) -> (Self, Vec<Command>) {
+    /// Starts on `start`, the file chosen from the command line, or the folder
+    /// without one and the reason. Returns the commands to run right away.
+    pub fn start(start: Result<PathBuf, NoFile>) -> (Self, Vec<Command>) {
         let current = start.as_ref().ok().cloned();
         let decoding = current.iter().cloned().collect();
-        let (screen, commands) = match start {
+        let (screen, commands, start_dir) = match start {
             Ok(path) => (
                 Screen::Loading { path: path.clone() },
                 vec![Command::Decode(path)],
+                None,
             ),
-            Err(message) => (
+            Err(NoFile { dir, message }) => (
                 Screen::Error {
                     path: None,
                     message,
                 },
                 Vec::new(),
+                Some(dir),
             ),
         };
         let core = Self {
             view: View {
-                screen,
+                screen: screen.clone(),
                 band: Vec::new(),
                 fullscreen: false,
                 key_line: KeyLine {
@@ -455,6 +537,8 @@ impl Core {
                 focus: Focus::Image,
                 dir_column: None,
             },
+            screen,
+            band: Vec::new(),
             first_frame_shown: false,
             current,
             dir: None,
@@ -463,6 +547,8 @@ impl Core {
             cache: BTreeMap::new(),
             decoding,
             came_from: None,
+            start_dir,
+            nav: BTreeMap::new(),
         };
         (core, commands)
     }
@@ -476,6 +562,13 @@ impl Core {
     }
 
     pub fn handle(&mut self, event: Event) -> Vec<Command> {
+        let mut commands = self.dispatch(event);
+        commands.extend(self.sync_nav());
+        self.publish();
+        commands
+    }
+
+    fn dispatch(&mut self, event: Event) -> Vec<Command> {
         match event {
             Event::Key(key) => self.key(key),
             Event::Decoded { path, result } => self.decoded(path, result),
@@ -501,6 +594,104 @@ impl Core {
         }
     }
 
+    /// The highlighted subfolder while the dir column has the focus: the main
+    /// area and the band preview it.
+    fn previewed(&self) -> Option<&Path> {
+        if self.view.focus != Focus::Dirs {
+            return None;
+        }
+        let column = self.view.dir_column.as_ref()?;
+        column
+            .highlight
+            .and_then(|i| column.dirs.get(i))
+            .map(PathBuf::as_path)
+    }
+
+    /// Shows the preview if there is one, otherwise the current folder.
+    fn publish(&mut self) {
+        let preview = self
+            .previewed()
+            .and_then(|dir| Some(self.nav.get(dir)?.preview(dir)));
+        (self.view.screen, self.view.band) =
+            preview.unwrap_or_else(|| (self.screen.clone(), self.band.clone()));
+    }
+
+    /// The folders the nav cache holds while the dir column is open: the
+    /// highlighted subfolder, the parent, and the folder just left until it is
+    /// highlighted.
+    fn nav_wanted(&self) -> Vec<PathBuf> {
+        let Some(column) = &self.view.dir_column else {
+            return Vec::new();
+        };
+        let highlighted = column.highlight.and_then(|i| column.dirs.get(i)).cloned();
+        let parent = column.dir.parent().map(Path::to_path_buf);
+        highlighted
+            .into_iter()
+            .chain(parent)
+            .chain(self.came_from.clone())
+            .collect()
+    }
+
+    /// Fits the nav cache to the folders it should hold: work for the others
+    /// is cancelled, missing ones are listed.
+    fn sync_nav(&mut self) -> Vec<Command> {
+        let wanted = self.nav_wanted();
+        let (keep, gone): (BTreeMap<_, _>, BTreeMap<_, _>) = std::mem::take(&mut self.nav)
+            .into_iter()
+            .partition(|(dir, _)| wanted.contains(dir));
+        self.nav = keep;
+        let mut commands: Vec<Command> = gone
+            .into_values()
+            .filter_map(|nav| match nav.state {
+                NavState::Decoding(path) => Some(Command::CancelDecode(path)),
+                _ => None,
+            })
+            .collect();
+        for dir in wanted {
+            if !self.nav.contains_key(&dir) {
+                self.nav.insert(dir.clone(), Nav::LISTING);
+                commands.push(Command::ListFolder(dir));
+            }
+        }
+        commands
+    }
+
+    /// A nav folder listed: its first file is decoded, a folder without media
+    /// gets its subfolders counted.
+    fn nav_listed(&mut self, dir: &Path, result: Result<Vec<PathBuf>, String>) -> Vec<Command> {
+        let Some(nav) = self
+            .nav
+            .get_mut(dir)
+            .filter(|n| matches!(n.state, NavState::Listing))
+        else {
+            return Vec::new();
+        };
+        match result.map(|files| files.into_iter().next()) {
+            Ok(Some(first)) => {
+                nav.state = NavState::Decoding(first.clone());
+                vec![Command::Decode(first)]
+            }
+            Ok(None) => {
+                nav.state = NavState::Empty;
+                vec![Command::ListDirs(dir.to_path_buf())]
+            }
+            Err(message) => {
+                nav.state = NavState::Failed(message);
+                Vec::new()
+            }
+        }
+    }
+
+    fn nav_decoded(&mut self, path: PathBuf, result: Result<DecodedImage, String>) {
+        let waiting = self
+            .nav
+            .values_mut()
+            .find(|n| matches!(&n.state, NavState::Decoding(p) if *p == path));
+        if let Some(nav) = waiting {
+            nav.state = NavState::Done(path, result);
+        }
+    }
+
     /// The first image is on screen: now the folder may be read and watched.
     /// The watch starts first, so no change between the two is missed.
     fn first_frame(&mut self) -> Vec<Command> {
@@ -512,7 +703,8 @@ impl Core {
             .current
             .as_deref()
             .and_then(Path::parent)
-            .map(Path::to_path_buf);
+            .map(Path::to_path_buf)
+            .or_else(|| self.start_dir.take());
         match &self.dir {
             Some(dir) => vec![
                 Command::WatchFolder(dir.clone()),
@@ -523,16 +715,22 @@ impl Core {
     }
 
     /// A folder that cannot be read is reported and leaves the files as they
-    /// were; the current image stays. A current file that vanished from the folder gives way to the
+    /// were; the current image stays, a folder just entered shows the error. A current file that vanished from the folder gives way to the
     /// file after it, or the last one; with no files left the folder's
     /// emptiness is shown until a file appears.
     fn folder_listed(&mut self, dir: &Path, result: Result<Vec<PathBuf>, String>) -> Vec<Command> {
         if self.dir.as_deref() != Some(dir) {
-            return Vec::new();
+            return self.nav_listed(dir, result);
         }
         let files = match result {
             Ok(files) => files,
             Err(message) => {
+                if matches!(self.screen, Screen::Listing { .. }) {
+                    self.screen = Screen::Error {
+                        path: None,
+                        message: cannot_read(dir, &message),
+                    };
+                }
                 self.view.folder_error = Some(message);
                 return Vec::new();
             }
@@ -560,7 +758,7 @@ impl Core {
             Some(path) => self.go_to(path),
             None => {
                 self.current = None;
-                self.view.screen = Screen::Error {
+                self.screen = Screen::Error {
                     path: None,
                     message: format!("No images in {}", dir.display()),
                 };
@@ -623,16 +821,23 @@ impl Core {
         vec![Command::ListDirs(dir)]
     }
 
+    /// Lists the column's subfolders, keeping the highlight on the folder just
+    /// left or the one highlighted so far; or counts a nav folder's subfolders.
     fn dirs_listed(&mut self, dir: &Path, result: Result<Vec<PathBuf>, String>) {
         let Some(column) = self.view.dir_column.as_mut().filter(|c| c.dir == dir) else {
+            if let (Some(nav), Ok(dirs)) = (self.nav.get_mut(dir), result) {
+                nav.folders = Some(dirs.len());
+            }
             return;
         };
         match result {
             Ok(dirs) => {
+                let highlighted = column.highlight.and_then(|i| column.dirs.get(i)).cloned();
                 let index = self
                     .came_from
                     .take()
-                    .and_then(|from| dirs.iter().position(|d| *d == from))
+                    .or(highlighted)
+                    .and_then(|keep| dirs.iter().position(|d| *d == keep))
                     .unwrap_or(0);
                 column.highlight = (index < dirs.len()).then_some(index);
                 column.dirs = dirs;
@@ -691,17 +896,47 @@ impl Core {
     /// Makes `dir` the current folder, like a start there: all work of the old
     /// folder is cancelled and dropped, and once it is listed its first file
     /// is shown before any neighbour is decoded.
+    /// A first image the nav cache holds for `dir` shows at once.
     fn enter(&mut self, dir: PathBuf) -> Vec<Command> {
+        // The folder left becomes the parent or a subfolder of the new one, so
+        // its first image stays in the nav cache.
+        let first = self.files.first().cloned();
+        if let (Some(left), Some(first)) = (self.dir.clone(), first) {
+            let state = match self.cache.remove(&first) {
+                Some(result) => Some(NavState::Done(first, result)),
+                None => self
+                    .decoding
+                    .remove(&first)
+                    .then_some(NavState::Decoding(first)),
+            };
+            if let Some(state) = state {
+                let nav = Nav {
+                    state,
+                    folders: None,
+                };
+                self.nav.insert(left, nav);
+            }
+        }
         let mut commands: Vec<Command> = std::mem::take(&mut self.decoding)
             .into_iter()
             .map(Command::CancelDecode)
             .collect();
         self.cache.clear();
         self.files.clear();
-        self.current = None;
         self.came_from = None;
         self.dir = Some(dir.clone());
-        self.view.screen = Screen::Listing { dir: dir.clone() };
+        let cached = self.nav.remove(&dir).map(|n| n.state);
+        (self.current, self.screen) = match cached {
+            Some(NavState::Done(path, result)) => {
+                self.cache.insert(path.clone(), result.clone());
+                (Some(path.clone()), screen(&path, result))
+            }
+            Some(NavState::Decoding(path)) => {
+                self.decoding.insert(path.clone());
+                (Some(path.clone()), Screen::Loading { path })
+            }
+            _ => (None, Screen::Listing { dir: dir.clone() }),
+        };
         self.view.key_line.notice = None;
         self.view.folder_error = None;
         self.view.dir_column = Some(DirColumn {
@@ -828,7 +1063,7 @@ impl Core {
     fn go_to(&mut self, path: PathBuf) -> Vec<Command> {
         self.current = Some(path.clone());
         let mut commands = Vec::new();
-        self.view.screen = match self.cache.get(&path) {
+        self.screen = match self.cache.get(&path) {
             Some(result) => screen(&path, result.clone()),
             None => {
                 if self.decoding.insert(path.clone()) {
@@ -843,11 +1078,12 @@ impl Core {
 
     fn decoded(&mut self, path: PathBuf, result: Result<DecodedImage, String>) -> Vec<Command> {
         if !self.decoding.remove(&path) {
+            self.nav_decoded(path, result);
             return Vec::new();
         }
-        let waiting = matches!(&self.view.screen, Screen::Loading { path: p } if *p == path);
+        let waiting = matches!(&self.screen, Screen::Loading { path: p } if *p == path);
         if waiting {
-            self.view.screen = screen(&path, result.clone());
+            self.screen = screen(&path, result.clone());
         }
         self.cache.insert(path, result);
         self.refresh()
@@ -899,14 +1135,14 @@ impl Core {
                 .partition(|p| window.contains(p));
         self.decoding = keep;
         let mut commands: Vec<Command> = cancel.into_iter().map(Command::CancelDecode).collect();
-        if !matches!(self.view.screen, Screen::Loading { .. }) {
+        if !matches!(self.screen, Screen::Loading { .. }) {
             for path in self.neighbours() {
                 if !self.cache.contains_key(&path) && self.decoding.insert(path.clone()) {
                     commands.push(Command::Decode(path));
                 }
             }
         }
-        self.view.band = window
+        self.band = window
             .into_iter()
             .filter_map(|path| {
                 let image = self.cache.get(&path)?.as_ref().ok().cloned();
@@ -919,6 +1155,11 @@ impl Core {
             .collect();
         commands
     }
+}
+
+/// The message for a folder that cannot be read.
+fn cannot_read(dir: &Path, message: &str) -> String {
+    format!("Cannot read {}: {message}", dir.display())
 }
 
 fn screen(path: &Path, result: Result<DecodedImage, String>) -> Screen {

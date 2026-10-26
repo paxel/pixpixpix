@@ -6,6 +6,7 @@ use std::sync::Arc;
 use pixpixpix::core::{Command, Core, Event, Key, KeyPress, Notice, Screen, Thumb};
 use pixpixpix::decode::DecodedImage;
 use pixpixpix::folder;
+use pixpixpix::startup::NoFile;
 
 fn image() -> DecodedImage {
     DecodedImage {
@@ -76,7 +77,10 @@ fn decode_of_another_file_is_ignored() {
 
 #[test]
 fn nothing_to_open_shows_the_reason_and_decodes_nothing() {
-    let (core, commands) = Core::start(Err("No images in /x".into()));
+    let (core, commands) = Core::start(Err(NoFile {
+        dir: PathBuf::from("/x"),
+        message: "No images in /x".into(),
+    }));
     assert!(commands.is_empty());
     assert_eq!(
         core.view().screen,
@@ -165,9 +169,18 @@ fn folder_is_listed_and_watched_only_after_the_first_frame() {
 }
 
 #[test]
-fn nothing_to_open_lists_no_folder() {
-    let (mut core, _) = Core::start(Err("No images in /x".into()));
-    assert!(core.handle(Event::FirstFrameShown).is_empty());
+fn a_folder_with_nothing_to_open_is_watched_and_listed_after_the_first_frame() {
+    let (mut core, _) = Core::start(Err(NoFile {
+        dir: PathBuf::from("/x"),
+        message: "No images in /x".into(),
+    }));
+    assert_eq!(
+        core.handle(Event::FirstFrameShown),
+        [
+            Command::WatchFolder(PathBuf::from("/x")),
+            Command::ListFolder(PathBuf::from("/x"))
+        ]
+    );
 }
 
 #[test]

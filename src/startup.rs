@@ -6,9 +6,17 @@ use std::path::{Path, PathBuf};
 
 use crate::folder;
 
-/// The file to open for `arg` (relative to `cwd`), or the message to show when
-/// there is none. No argument means the current directory.
-pub fn resolve(arg: Option<&Path>, cwd: &Path) -> Result<PathBuf, String> {
+/// A folder given on the command line that has no file to show.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoFile {
+    pub dir: PathBuf,
+    /// Why there is nothing to show.
+    pub message: String,
+}
+
+/// The file to open for `arg` (relative to `cwd`), or the folder and the message
+/// to show when there is none. No argument means the current directory.
+pub fn resolve(arg: Option<&Path>, cwd: &Path) -> Result<PathBuf, NoFile> {
     let target = match arg {
         Some(p) if p.is_absolute() => p.to_path_buf(),
         Some(p) => cwd.join(p),
@@ -17,9 +25,13 @@ pub fn resolve(arg: Option<&Path>, cwd: &Path) -> Result<PathBuf, String> {
     if !target.is_dir() {
         return Ok(target);
     }
-    match folder::first_media(&target) {
-        Ok(Some(file)) => Ok(file),
-        Ok(None) => Err(format!("No images in {}", target.display())),
-        Err(e) => Err(format!("Cannot read {}: {e}", target.display())),
-    }
+    let message = match folder::first_media(&target) {
+        Ok(Some(file)) => return Ok(file),
+        Ok(None) => format!("No images in {}", target.display()),
+        Err(e) => format!("Cannot read {}: {e}", target.display()),
+    };
+    Err(NoFile {
+        dir: target,
+        message,
+    })
 }
