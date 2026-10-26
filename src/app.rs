@@ -16,7 +16,9 @@ use crate::decode::DecodedImage;
 use crate::geometry::{self, Geometry};
 use crate::rotate::Rotation;
 use crate::video::{Playback, Report};
-use crate::{decode, external, folder, motion, rotate, settings, startup, trash, ui, watch};
+use crate::{
+    decode, external, folder, motion, rotate, settings, startup, thumbnails, trash, ui, watch,
+};
 
 pub const APP_ID: &str = "io.github.paxel.pixpixpix";
 
@@ -455,13 +457,16 @@ impl Worker {
 
     /// The thumbnail threads, started on the first thumbnail. However fast
     /// the overview scrolls, no more than these decode at once; a job
-    /// cancelled while waiting is skipped.
+    /// cancelled while waiting is skipped. Thumbnails come from and go to
+    /// the thumbnail cache.
     fn thumbnailer(&mut self) -> &Sender<ThumbnailJob> {
         self.thumbnailer.get_or_insert_with(|| {
             let (jobs, inbox) = channel::<ThumbnailJob>();
             let inbox = Arc::new(Mutex::new(inbox));
+            let cache = thumbnails::default_root();
             for _ in 0..THUMBNAIL_THREADS {
                 let inbox = Arc::clone(&inbox);
+                let cache = cache.clone();
                 let events = self.events.clone();
                 let ctx = self.ctx.clone();
                 std::thread::spawn(move || {
@@ -474,9 +479,12 @@ impl Worker {
                         let Ok((path, cancel)) = job else {
                             return;
                         };
-                        let Some(result) =
-                            decode::decode_thumbnail(&path, decode::THUMBNAIL_SIZE, &cancel)
-                        else {
+                        let Some(result) = thumbnails::thumbnail(
+                            cache.as_deref(),
+                            &path,
+                            decode::THUMBNAIL_SIZE,
+                            &cancel,
+                        ) else {
                             continue;
                         };
                         // The app may already be gone; nothing to report to then.

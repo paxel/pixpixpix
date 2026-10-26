@@ -27,6 +27,7 @@ pub mod multi;
 pub mod rotate;
 pub mod settings;
 pub mod startup;
+pub mod thumbnails;
 pub mod trash;
 pub mod turbojpeg;
 pub mod ui;

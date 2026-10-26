@@ -88,7 +88,7 @@ pub fn decode_thumbnail(
 }
 
 /// `image` shrunk to fit `max` pixels a side.
-fn shrink(image: DecodedImage, max: u32) -> DecodedImage {
+pub fn shrink(image: DecodedImage, max: u32) -> DecodedImage {
     if image.width <= max && image.height <= max {
         return image;
     }

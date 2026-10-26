@@ -37,7 +37,9 @@ eframe = { version = "0.35", default-features = false, features = ["accesskit", 
 egui = "0.35"
 image = { version = "0.25", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tiff", "webp"] }
 libloading = "0.8"
+md5 = "0.8"
 notify = "8.2"
+png = "0.18"
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.9"
 tempfile = "3"
