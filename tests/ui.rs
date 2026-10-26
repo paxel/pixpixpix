@@ -744,3 +744,30 @@ fn x_reaches_the_core_and_a_failure_shows_in_the_key_line() {
     h.run();
     h.get_by_label("Cannot trash a.jpg: Permission denied");
 }
+
+#[test]
+fn c_reaches_the_core_and_the_outcome_shows_in_the_key_line() {
+    let mut h = harness(browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]));
+    h.run();
+    h.get_by_label("C");
+    h.get_by_label("copy");
+    h.key_press(egui::Key::R);
+    h.key_press(egui::Key::C);
+    h.run();
+    assert!(matches!(
+        h.state().commands.last(),
+        Some(Command::Copy {
+            path,
+            rotation: pixpixpix::rotate::Rotation::Right,
+            ..
+        }) if path == Path::new("/p/a.jpg")
+    ));
+    h.state_mut().core.handle(Event::Copied(Ok(())));
+    h.run();
+    h.get_by_label("copied");
+    h.state_mut()
+        .core
+        .handle(Event::Copied(Err("Cannot copy a.jpg: no display".into())));
+    h.run();
+    h.get_by_label("Cannot copy a.jpg: no display");
+}

@@ -14,6 +14,7 @@
 )]
 
 pub mod app;
+pub mod clipboard;
 pub mod core;
 pub mod decode;
 pub mod external;

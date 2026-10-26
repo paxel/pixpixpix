@@ -131,6 +131,7 @@ fn map_key(key: egui::Key) -> Option<Key> {
         egui::Key::O => Key::O,
         egui::Key::L => Key::L,
         egui::Key::X => Key::X,
+        egui::Key::C => Key::C,
         _ => return None,
     })
 }
@@ -388,6 +389,7 @@ fn show_key_line(ui: &mut egui::Ui, view: &View) {
             let text = match notice {
                 Notice::FirstImage => "first image",
                 Notice::LastImage => "last image",
+                Notice::Copied => "copied",
             };
             ui.label(RichText::new(text).color(NOTICE_TEXT));
         }
@@ -402,6 +404,9 @@ fn show_key_line(ui: &mut egui::Ui, view: &View) {
             ui.label(RichText::new(error).color(ERROR_TEXT));
         }
         if let Some(error) = &view.trash_error {
+            ui.label(RichText::new(error).color(ERROR_TEXT));
+        }
+        if let Some(error) = &view.copy_error {
             ui.label(RichText::new(error).color(ERROR_TEXT));
         }
     });

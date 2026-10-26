@@ -47,6 +47,7 @@ pub enum Key {
     O,
     L,
     X,
+    C,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -144,6 +145,8 @@ pub enum Event {
         path: PathBuf,
         result: Result<(), String>,
     },
+    /// A [`Command::Copy`] finished.
+    Copied(Result<(), String>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -188,6 +191,13 @@ pub enum Command {
     },
     /// Move the file to the system trash, answered by [`Event::Trashed`].
     Trash(PathBuf),
+    /// Put the file and its pixels, turned by `rotation`, on the clipboard,
+    /// answered by [`Event::Copied`].
+    Copy {
+        path: PathBuf,
+        image: DecodedImage,
+        rotation: Rotation,
+    },
     SetFullscreen(bool),
     Quit,
 }
@@ -235,11 +245,13 @@ pub struct KeyHint {
     pub action: &'static str,
 }
 
-/// Why the last key did nothing.
+/// Why the last key did nothing, or what it did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Notice {
     FirstImage,
     LastImage,
+    /// The last `c` put the image on the clipboard.
+    Copied,
 }
 
 /// The bottom line: the keys of the focused area and an optional notice.
@@ -279,6 +291,10 @@ const IMAGE_VIEW_KEYS: &[KeyHint] = &[
     KeyHint {
         keys: "Enter",
         action: "write rotation",
+    },
+    KeyHint {
+        keys: "C",
+        action: "copy",
     },
     KeyHint {
         keys: "O",
@@ -592,6 +608,8 @@ pub struct View {
     pub rotation_error: Option<String>,
     /// Why the last file could not be moved to the trash.
     pub trash_error: Option<String>,
+    /// Why the last `c` could not put the image on the clipboard.
+    pub copy_error: Option<String>,
 }
 
 pub struct Core {
@@ -752,6 +770,7 @@ impl Core {
                 rotation: Rotation::None,
                 rotation_error: None,
                 trash_error: None,
+                copy_error: None,
             },
             screen,
             band: Vec::new(),
@@ -846,6 +865,13 @@ impl Core {
             }
             Event::RotationWritten { path, result } => self.rotation_written(path, result),
             Event::Trashed { path, result } => self.trashed(&path, result),
+            Event::Copied(result) => {
+                match result {
+                    Ok(()) => self.view.key_line.notice = Some(Notice::Copied),
+                    Err(message) => self.view.copy_error = Some(message),
+                }
+                Vec::new()
+            }
         }
     }
 
@@ -1408,6 +1434,7 @@ impl Core {
             }
             Key::Enter => self.write_rotation(),
             Key::X => self.trash(),
+            Key::C => self.copy(),
             _ => Vec::new(),
         }
     }
@@ -1440,6 +1467,22 @@ impl Core {
             }
         }
         commands
+    }
+
+    /// Puts the current image on the clipboard as shown, its pending rotation
+    /// included. A file that does not show as an image has nothing to copy.
+    fn copy(&mut self) -> Vec<Command> {
+        let Screen::Image { path, image } = &self.screen else {
+            return Vec::new();
+        };
+        let command = Command::Copy {
+            path: path.clone(),
+            image: image.clone(),
+            rotation: self.rotation,
+        };
+        self.view.key_line.notice = None;
+        self.view.copy_error = None;
+        vec![command]
     }
 
     /// A trashed file is gone from the folder for good. A file that could not
@@ -1630,6 +1673,7 @@ impl Core {
         self.current = Some(path.clone());
         self.view.open_error = None;
         self.view.trash_error = None;
+        self.view.copy_error = None;
         let mut commands = Vec::new();
         self.screen = match self.cache.get(&path) {
             Some(result) => screen(&path, result.clone()),

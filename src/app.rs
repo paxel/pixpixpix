@@ -10,8 +10,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Instant;
 
+use crate::clipboard::Clipboard;
 use crate::core::{Command, Core, Event, Screen};
+use crate::decode::DecodedImage;
 use crate::geometry::{self, Geometry};
+use crate::rotate::Rotation;
 use crate::{decode, external, folder, rotate, settings, startup, trash, ui, watch};
 
 pub const APP_ID: &str = "io.github.paxel.pixpixpix";
@@ -36,6 +39,7 @@ pub fn run() -> ExitCode {
         watcher: None,
         search: None,
         settings_path: settings::default_path(),
+        copier: None,
     };
     for command in &commands {
         worker.spawn(command);
@@ -112,7 +116,12 @@ struct Worker {
     search: Option<Arc<AtomicBool>>,
     /// Where the settings file lives; absent without a config directory.
     settings_path: Option<PathBuf>,
+    /// Hands copies to the clipboard thread, started on the first copy.
+    copier: Option<Sender<CopyJob>>,
 }
+
+/// One `c`: the file and its pixels as shown.
+type CopyJob = (PathBuf, DecodedImage, Rotation);
 
 /// Why there is no settings file to read or write.
 const NO_CONFIG_DIR: &str = "No configuration directory found";
@@ -237,8 +246,42 @@ impl Worker {
                     Some(Event::Trashed { path, result })
                 });
             }
+            Command::Copy {
+                path,
+                image,
+                rotation,
+            } => {
+                let job = (path.clone(), image.clone(), *rotation);
+                if self.copier().send(job).is_err() {
+                    // The app may already be gone; nothing to report to then.
+                    let _ = self.events.send(Event::Copied(Err(
+                        "Cannot copy: the clipboard stopped".to_owned(),
+                    )));
+                }
+            }
             Command::SetFullscreen(_) | Command::Quit => {}
         }
+    }
+
+    /// The clipboard thread, started on the first copy. One thread copies in
+    /// the order of the keys and keeps the clipboard served while the app
+    /// runs.
+    fn copier(&mut self) -> &Sender<CopyJob> {
+        self.copier.get_or_insert_with(|| {
+            let (jobs, inbox) = channel::<CopyJob>();
+            let events = self.events.clone();
+            let ctx = self.ctx.clone();
+            std::thread::spawn(move || {
+                let mut clipboard = Clipboard::default();
+                for (path, image, rotation) in inbox {
+                    let result = clipboard.copy(&path, &image, rotation);
+                    // The app may already be gone; nothing to report to then.
+                    let _ = events.send(Event::Copied(result));
+                    ctx.request_repaint();
+                }
+            });
+            jobs
+        })
     }
 
     /// Forgets the token of a decode that reported back.
@@ -294,7 +337,8 @@ impl App {
                 | Command::SaveSettings(_)
                 | Command::OpenExternally { .. }
                 | Command::WriteRotation { .. }
-                | Command::Trash(_) => {
+                | Command::Trash(_)
+                | Command::Copy { .. } => {
                     self.worker.spawn(&command);
                 }
             }
