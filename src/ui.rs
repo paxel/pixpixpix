@@ -8,8 +8,8 @@ use std::sync::Arc;
 use egui::{Color32, ColorImage, RichText, TextureHandle, TextureOptions};
 
 use crate::core::{
-    DirColumn, Event, Focus, InnerImages, Key, KeyPress, Notice, Points, Screen, Thumb, Video,
-    VideoStep, View, Zoom,
+    DirColumn, Event, Focus, InnerImages, Key, KeyPress, MotionKind, Notice, Points, Screen, Thumb,
+    Video, VideoStep, View, Zoom,
 };
 use crate::decode::DecodedImage;
 use crate::folder;
@@ -216,6 +216,9 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
             if let Some(inner) = view.inner {
                 show_inner(ui, inner);
             }
+            if let Some(kind) = view.motion {
+                show_motion(ui, kind);
+            }
         });
     if view.settings_open {
         show_settings(
@@ -260,6 +263,10 @@ fn show_band(
                     } else if thumb.animated {
                         paint_animated_badge(ui.painter(), rect);
                         (rect, response, format!("{name} (animated)"))
+                    } else if let Some(kind) = thumb.motion {
+                        paint_motion_badge(ui.painter(), rect, kind);
+                        let kind = motion_name(kind).to_lowercase();
+                        (rect, response, format!("{name} ({kind})"))
                     } else if thumb.images > 1 {
                         paint_images_badge(ui.painter(), rect, thumb.images);
                         (rect, response, format!("{name} ({} images)", thumb.images))
@@ -363,6 +370,34 @@ fn paint_images_badge(painter: &egui::Painter, rect: egui::Rect, images: usize) 
         egui::FontId::proportional(10.0),
         ANIMATED_MARK,
     );
+}
+
+/// The badge of a Live Photo or Motion Photo thumb in its bottom left corner.
+fn paint_motion_badge(painter: &egui::Painter, rect: egui::Rect, kind: MotionKind) {
+    let text = match kind {
+        MotionKind::LivePhoto => "LIVE",
+        MotionKind::MotionPhoto => "MOTION",
+    };
+    let badge = egui::Rect::from_min_size(
+        egui::pos2(rect.min.x + 3.0, rect.max.y - 15.0),
+        egui::vec2(40.0, 12.0),
+    );
+    painter.rect_filled(badge, 2.0, ANIMATED_BADGE);
+    painter.text(
+        badge.center(),
+        egui::Align2::CENTER_CENTER,
+        text,
+        egui::FontId::proportional(9.0),
+        ANIMATED_MARK,
+    );
+}
+
+/// What a photo with a video of the moment is called.
+fn motion_name(kind: MotionKind) -> &'static str {
+    match kind {
+        MotionKind::LivePhoto => "Live Photo",
+        MotionKind::MotionPhoto => "Motion Photo",
+    }
 }
 
 /// The current folder's name over its subfolders, the highlighted one painted
@@ -660,6 +695,25 @@ fn show_inner(ui: &mut egui::Ui, inner: InnerImages) {
         rect,
         egui::Label::new(
             RichText::new(text)
+                .color(TEXT)
+                .background_color(ANIMATED_BADGE),
+        )
+        .selectable(false),
+    );
+}
+
+/// That the image shown is a Live Photo or Motion Photo, in the top left
+/// corner.
+fn show_motion(ui: &mut egui::Ui, kind: MotionKind) {
+    let area = ui.max_rect();
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(area.min.x + 6.0, area.min.y + 6.0),
+        egui::vec2(100.0, 20.0),
+    );
+    ui.put(
+        rect,
+        egui::Label::new(
+            RichText::new(motion_name(kind))
                 .color(TEXT)
                 .background_color(ANIMATED_BADGE),
         )

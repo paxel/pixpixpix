@@ -1008,3 +1008,36 @@ fn modified_arrows_seek_the_video_and_plain_ones_change_the_file() {
     h.run();
     h.get_by_role_and_label(Role::Image, "b.jpg");
 }
+
+#[test]
+fn live_and_motion_photos_are_marked_and_space_plays_their_video() {
+    let mut core = browsing("/p/a.heic", &["/p/a.heic", "/p/a.mov", "/p/b.jpg"]);
+    decoded(&mut core, "/p/b.jpg");
+    core.handle(Event::MotionPhoto(PathBuf::from("/p/b.jpg")));
+    let mut h = harness(core);
+    h.run();
+    h.get_by_label("Live Photo");
+    h.get_by_role_and_label(Role::Button, "a.heic (live photo)");
+    h.get_by_role_and_label(Role::Button, "b.jpg (motion photo)");
+    assert!(
+        h.query_by_role_and_label(Role::Button, "a.mov (video)")
+            .is_none()
+    );
+    assert!(h.query_by_label("Play").is_none());
+    h.get_by_label("play motion");
+    h.key_press(egui::Key::Space);
+    h.run();
+    assert_eq!(
+        h.state().commands.last(),
+        Some(&Command::PlayVideo {
+            path: PathBuf::from("/p/a.mov"),
+            muted: false,
+            paused: false,
+        })
+    );
+    h.get_by_label("pause");
+    h.key_press(egui::Key::ArrowRight);
+    h.run();
+    h.get_by_label("Motion Photo");
+    assert!(h.query_by_label("Live Photo").is_none());
+}

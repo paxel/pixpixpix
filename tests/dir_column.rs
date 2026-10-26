@@ -192,7 +192,10 @@ fn entering_a_folder_shows_its_first_image_before_any_neighbour() {
     );
     assert_eq!(
         decoded(&mut core, "/p/x/1.jpg"),
-        [Command::Decode(PathBuf::from("/p/x/2.jpg"))]
+        [
+            Command::Decode(PathBuf::from("/p/x/2.jpg")),
+            Command::FindMotion(PathBuf::from("/p/x/1.jpg"))
+        ]
     );
     assert!(matches!(
         &core.view().screen,
@@ -266,6 +269,7 @@ fn left_escape_and_backspace_go_to_the_parent_highlighting_the_folder_left() {
                 // The nav cache: the new parent and the folder left.
                 Command::ListFolder(PathBuf::from("/")),
                 Command::ListFolder(PathBuf::from("/p/y")),
+                Command::FindMotion(PathBuf::from("/p/a.jpg")),
             ],
             "{key:?}"
         );

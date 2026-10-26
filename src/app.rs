@@ -16,7 +16,7 @@ use crate::decode::DecodedImage;
 use crate::geometry::{self, Geometry};
 use crate::rotate::Rotation;
 use crate::video::{Playback, Report};
-use crate::{decode, external, folder, rotate, settings, startup, trash, ui, watch};
+use crate::{decode, external, folder, motion, rotate, settings, startup, trash, ui, watch};
 
 pub const APP_ID: &str = "io.github.paxel.pixpixpix";
 
@@ -366,6 +366,14 @@ impl Worker {
                 }
             }
             Command::StopVideo => self.playback = None,
+            Command::FindMotion(path) => {
+                let path = path.clone();
+                self.run(move || {
+                    // A file that cannot be read is no Motion Photo to show.
+                    let found = motion::find(&path).ok().flatten();
+                    found.map(|_| Event::MotionPhoto(path))
+                });
+            }
             Command::SetFullscreen(_) | Command::Quit => {}
         }
     }
@@ -464,7 +472,8 @@ impl App {
                 | Command::ResumeVideo
                 | Command::MuteVideo(_)
                 | Command::SeekVideo(_)
-                | Command::StopVideo => {
+                | Command::StopVideo
+                | Command::FindMotion(_) => {
                     self.worker.spawn(&command);
                 }
             }

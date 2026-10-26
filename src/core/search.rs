@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use super::{Command, Core, Focus, NavState, Screen, Thumb, screen};
 use crate::decode::DecodedImage;
-use crate::folder::Found;
+use crate::folder::{self, Found};
 
 #[derive(Debug)]
 pub(super) enum Search {
@@ -86,7 +86,7 @@ impl Core {
             self.search = Some(Search::NothingFound { dir });
             return Vec::new();
         };
-        let files: Vec<PathBuf> = files
+        let files: Vec<PathBuf> = folder::without_live_videos(files)
             .into_iter()
             .take(self.view.settings.cache_per_side.saturating_add(1))
             .collect();
@@ -190,6 +190,7 @@ impl Core {
                             animated: false,
                             images: 1,
                             video: false,
+                            motion: None,
                         })
                     })
                     .collect();

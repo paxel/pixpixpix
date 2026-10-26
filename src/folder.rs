@@ -2,7 +2,7 @@
 //! natural name order every list in the app uses.
 
 use std::cmp::Ordering;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{self, AtomicBool};
@@ -33,6 +33,54 @@ const VIDEO_EXTENSIONS: &[&str] = &[
 /// True when the file name has an extension of a video format.
 pub fn is_video(path: &Path) -> bool {
     has_extension(path, VIDEO_EXTENSIONS)
+}
+
+/// Extensions of the photos of an Apple Live Photo, lower case.
+const LIVE_PHOTO_EXTENSIONS: &[&str] = &["heic", "heif", "jpg", "jpeg"];
+
+/// Extensions of JPEG, lower case.
+const JPEG_EXTENSIONS: &[&str] = &["jpg", "jpeg", "jpe"];
+
+/// True when the file name has an extension of JPEG, the format of Google
+/// and Samsung Motion Photos.
+pub fn is_jpeg(path: &Path) -> bool {
+    has_extension(path, JPEG_EXTENSIONS)
+}
+
+/// The Apple Live Photos among `files`: each photo (HEIC/HEIF or JPEG) with
+/// the MOV of the same base name, ignoring case, in the same folder, as photo
+/// to MOV. A base name pairs once, its first photo with its first MOV in the
+/// order given.
+pub fn live_photos(files: &[PathBuf]) -> BTreeMap<PathBuf, PathBuf> {
+    let key = |path: &Path| {
+        let stem = path.file_stem()?.to_string_lossy().to_lowercase();
+        Some((path.parent()?.to_path_buf(), stem))
+    };
+    let mut movs = BTreeMap::new();
+    for file in files.iter().filter(|f| has_extension(f, &["mov"])) {
+        if let Some(key) = key(file) {
+            movs.entry(key).or_insert(file);
+        }
+    }
+    let mut pairs = BTreeMap::new();
+    for photo in files
+        .iter()
+        .filter(|f| has_extension(f, LIVE_PHOTO_EXTENSIONS))
+    {
+        if let Some(mov) = key(photo).and_then(|k| movs.remove(&k)) {
+            pairs.insert(photo.clone(), mov.clone());
+        }
+    }
+    pairs
+}
+
+/// `files` without the MOVs of their Live Photos.
+pub fn without_live_videos(files: Vec<PathBuf>) -> Vec<PathBuf> {
+    let live = live_photos(&files);
+    files
+        .into_iter()
+        .filter(|f| !live.values().any(|mov| mov == f))
+        .collect()
 }
 
 /// True when the file is something navigation shows.

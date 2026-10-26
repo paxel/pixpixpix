@@ -165,7 +165,8 @@ fn folder_is_listed_and_watched_only_after_the_first_frame() {
         [
             Command::LoadSettings,
             Command::WatchFolder(PathBuf::from("/p")),
-            Command::ListFolder(PathBuf::from("/p"))
+            Command::ListFolder(PathBuf::from("/p")),
+            Command::FindMotion(PathBuf::from("/p/a.jpg"))
         ]
     );
 }
@@ -333,10 +334,14 @@ fn neighbours_are_decoded_only_after_the_current_image_is_shown() {
     let mut core = browsing_fifteen("f07.jpg");
     assert_eq!(
         decoded(&mut core, "f07.jpg"),
-        decodes(&[
-            "f08.jpg", "f06.jpg", "f09.jpg", "f05.jpg", "f10.jpg", "f04.jpg", "f11.jpg", "f03.jpg",
-            "f12.jpg", "f02.jpg"
-        ])
+        [
+            decodes(&[
+                "f08.jpg", "f06.jpg", "f09.jpg", "f05.jpg", "f10.jpg", "f04.jpg", "f11.jpg",
+                "f03.jpg", "f12.jpg", "f02.jpg"
+            ]),
+            vec![Command::FindMotion(p("f07.jpg"))]
+        ]
+        .concat()
     );
 }
 
@@ -363,9 +368,13 @@ fn neighbours_stop_at_the_folder_ends() {
     let mut core = browsing_fifteen("f01.jpg");
     assert_eq!(
         decoded(&mut core, "f01.jpg"),
-        decodes(&[
-            "f02.jpg", "f00.jpg", "f03.jpg", "f04.jpg", "f05.jpg", "f06.jpg"
-        ])
+        [
+            decodes(&[
+                "f02.jpg", "f00.jpg", "f03.jpg", "f04.jpg", "f05.jpg", "f06.jpg"
+            ]),
+            vec![Command::FindMotion(p("f01.jpg"))]
+        ]
+        .concat()
     );
 }
 
@@ -507,7 +516,8 @@ fn band_shows_the_cached_images_in_folder_order_with_the_current_one_marked() {
             current: false,
             animated: false,
             images: 1,
-            video: false
+            video: false,
+            motion: None
         })
     );
 }
@@ -532,7 +542,8 @@ fn broken_files_are_in_the_band_without_an_image() {
             current: false,
             animated: false,
             images: 1,
-            video: false
+            video: false,
+            motion: None
         })
     );
 }

@@ -1,5 +1,6 @@
 //! Videos through libmpv, loaded on the first one: the first frame of a file,
-//! and playback that reports frame after frame.
+//! and playback that reports frame after frame. The video of a Motion Photo
+//! plays from a copy in the cache folder, removed when it stops.
 
 use std::ffi::CString;
 use std::path::{Path, PathBuf};
@@ -11,6 +12,7 @@ use std::time::{Duration, Instant};
 use crate::core::VideoStep;
 use crate::decode::DecodedImage;
 use crate::mpv::{self, Mpv, Player, PlayerEvent};
+use crate::{folder, motion};
 
 /// libmpv, loaded on the first video.
 static MPV: OnceLock<Result<Mpv, String>> = OnceLock::new();
@@ -151,7 +153,8 @@ pub struct Playback {
 impl Playback {
     /// Plays the video at `path` from the start, or shows its first frame if
     /// `paused`, with sound unless `muted`, reporting to `report` from the
-    /// playing thread until stopped, the end or a failure.
+    /// playing thread until stopped, the end or a failure. A photo at `path`
+    /// plays the video of the Motion Photo it is.
     pub fn start(
         path: PathBuf,
         muted: bool,
@@ -220,8 +223,14 @@ fn play(
         ("osd-level", "0"),
         ("mute", flag(muted)),
     ];
+    // Declared before the player, so the copy goes once the player is gone.
+    let clip = if folder::is_video(path) {
+        None
+    } else {
+        Some(motion::extract(path, &clip_dir())?)
+    };
     let player = mpv()?.player(&options, wakeup)?;
-    player.load_file(path)?;
+    player.load_file(clip.as_ref().map_or(path, |c| c.path()))?;
     let mut size = Size::default();
     let mut ready = false;
     // A frame was drawn, so the file is loaded and can be seeked.
@@ -281,6 +290,13 @@ fn play(
             }
         }
     }
+}
+
+/// Where the videos of Motion Photos are copied to play: the cache folder,
+/// or the system's temporary folder without one.
+fn clip_dir() -> PathBuf {
+    directories::ProjectDirs::from("io.github", "paxel", "pixpixpix")
+        .map_or_else(std::env::temp_dir, |dirs| dirs.cache_dir().to_path_buf())
 }
 
 /// Asks mpv for the seek, returning what it waits for: a frame step forward

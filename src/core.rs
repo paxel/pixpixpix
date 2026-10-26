@@ -192,6 +192,9 @@ pub enum Event {
     /// The [`Command::SeekVideo`] running on the video at the path drew its
     /// frame, or failed.
     VideoSeeked(PathBuf),
+    /// The file a [`Command::FindMotion`] looked at is a Motion Photo; other
+    /// files are not reported.
+    MotionPhoto(PathBuf),
 }
 
 /// A step through a video.
@@ -289,6 +292,9 @@ pub enum Command {
     MuteVideo(bool),
     /// The video player is no longer needed; it reports nothing more.
     StopVideo,
+    /// Find out whether the JPEG is a Motion Photo, answered by
+    /// [`Event::MotionPhoto`] if it is.
+    FindMotion(PathBuf),
     SetFullscreen(bool),
     Quit,
 }
@@ -413,6 +419,13 @@ const IMAGE_VIEW_KEYS: &[KeyHint] = &[
 const INNER_KEYS: KeyHint = KeyHint {
     keys: "Up/Down",
     action: "images in the file",
+};
+
+/// Image view keys of a Live Photo or Motion Photo whose video is not
+/// started, listed after the first.
+const MOTION_KEYS: KeyHint = KeyHint {
+    keys: "Space",
+    action: "play motion",
 };
 
 /// Image view keys of a video, listed after the first; they say what a press
@@ -588,6 +601,17 @@ pub struct Thumb {
     pub images: usize,
     /// The file is a video, shown by its first frame.
     pub video: bool,
+    /// The file is a photo with a video of the moment.
+    pub motion: Option<MotionKind>,
+}
+
+/// The kind of a photo with a video of the moment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MotionKind {
+    /// An Apple Live Photo: the photo and a MOV of the same name.
+    LivePhoto,
+    /// A Google or Samsung Motion Photo: a JPEG with the video inside.
+    MotionPhoto,
 }
 
 /// The video shown in the main area.
@@ -766,8 +790,11 @@ pub struct View {
     pub next_frame_in: Option<Duration>,
     /// While the main area shows a multi-image file: which of its images.
     pub inner: Option<InnerImages>,
-    /// While the main area shows a video.
+    /// While the main area shows a video, or plays the video of a Live Photo
+    /// or Motion Photo.
     pub video: Option<Video>,
+    /// While the main area shows a Live Photo or Motion Photo.
+    pub motion: Option<MotionKind>,
 }
 
 pub struct Core {
@@ -832,12 +859,24 @@ pub struct Core {
     video: Option<CurrentVideo>,
     /// Whether videos play without sound; kept from video to video.
     muted: bool,
+    /// The Live Photos of the folder from its last listing, photo to MOV; the
+    /// MOVs are left out of [`Core::files`].
+    live: BTreeMap<PathBuf, PathBuf>,
+    /// Cached JPEGs asked about being a Motion Photo.
+    probed: BTreeSet<PathBuf>,
+    /// The cached files found to be Motion Photos.
+    motion_photos: BTreeSet<PathBuf>,
 }
 
 /// The video of the main area.
 #[derive(Debug)]
 struct CurrentVideo {
+    /// The file shown.
     path: PathBuf,
+    /// What plays: the file itself, or the MOV of a Live Photo.
+    source: PathBuf,
+    /// The file is a Live Photo or Motion Photo, a still until played.
+    motion: bool,
     /// A player was asked for and has not ended or failed.
     started: bool,
     playing: bool,
@@ -982,6 +1021,7 @@ impl Nav {
                     animated: false,
                     images: 1,
                     video: false,
+                    motion: None,
                 }],
             ),
         }
@@ -1035,6 +1075,7 @@ impl Core {
                 next_frame_in: None,
                 inner: None,
                 video: None,
+                motion: None,
             },
             screen,
             band: Vec::new(),
@@ -1062,6 +1103,9 @@ impl Core {
             inner: None,
             video: None,
             muted: false,
+            live: BTreeMap::new(),
+            probed: BTreeSet::new(),
+            motion_photos: BTreeSet::new(),
         };
         (core, commands)
     }
@@ -1085,6 +1129,7 @@ impl Core {
         commands.extend(self.sync_nav());
         commands.extend(self.sync_animation());
         commands.extend(self.sync_inner());
+        commands.extend(self.sync_motion());
         commands.extend(self.sync_video());
         self.publish();
         commands
@@ -1179,6 +1224,12 @@ impl Core {
             Event::VideoFailed { path, message } => self.video_stopped(&path, Some(message)),
             Event::StepVideo(step) => self.step_video(step),
             Event::VideoSeeked(path) => self.video_seeked(&path),
+            Event::MotionPhoto(path) => {
+                if self.probed.contains(&path) {
+                    self.motion_photos.insert(path);
+                }
+                Vec::new()
+            }
         }
     }
 
@@ -1236,14 +1287,22 @@ impl Core {
             (None, Some(Animation::Playing { next_in, .. })) => Some(*next_in),
             _ => None,
         };
+        // A still of a Live Photo or Motion Photo shows no player.
         self.view.video = match (&preview, &self.video) {
-            (None, Some(video)) => Some(Video {
-                playing: video.playing,
-                muted: self.muted,
-                error: video.error.clone(),
-            }),
+            (None, Some(video)) if !video.motion || video.started || video.error.is_some() => {
+                Some(Video {
+                    playing: video.playing,
+                    muted: self.muted,
+                    error: video.error.clone(),
+                })
+            }
             _ => None,
         };
+        let shown = match (&preview, &self.screen) {
+            (None, Screen::Image { path, .. }) => Some(path),
+            _ => None,
+        };
+        self.view.motion = shown.and_then(|path| self.motion_kind(path));
         (self.view.screen, self.view.band) =
             preview.unwrap_or_else(|| (self.screen.clone(), self.band.clone()));
         for thumb in &mut self.view.band {
@@ -1254,6 +1313,15 @@ impl Core {
             };
             thumb.video = thumb.image.is_some() && folder::is_video(&thumb.path);
         }
+        let kinds: Vec<Option<MotionKind>> = self
+            .view
+            .band
+            .iter()
+            .map(|t| t.image.as_ref().and_then(|_| self.motion_kind(&t.path)))
+            .collect();
+        for (thumb, kind) in self.view.band.iter_mut().zip(kinds) {
+            thumb.motion = kind;
+        }
         if self.view.focus == Focus::Image && !self.view.settings_open {
             let mut keys = focus_keys(Focus::Image, self.view.dir_column.is_some());
             if self.view.inner.is_some() {
@@ -1261,11 +1329,56 @@ impl Core {
             }
             if let Some(video) = &self.view.video {
                 keys.splice(1..1, video_keys(video));
+            } else if self.view.motion.is_some() {
+                keys.insert(1, MOTION_KEYS);
+            }
+            if self.plays_video() {
                 keys.retain(|k| !matches!(k.keys, "L/R" | "Enter"));
             }
             self.view.key_line.keys = keys;
         }
         self.publish_band_highlight();
+    }
+
+    /// What kind of photo with a video of the moment `path` is, if any.
+    fn motion_kind(&self, path: &Path) -> Option<MotionKind> {
+        if self.live.contains_key(path) {
+            Some(MotionKind::LivePhoto)
+        } else if self.motion_photos.contains(path) {
+            Some(MotionKind::MotionPhoto)
+        } else {
+            None
+        }
+    }
+
+    /// Whether the main area shows a video or plays the video of a photo, so
+    /// there is nothing to turn.
+    fn plays_video(&self) -> bool {
+        self.video.as_ref().is_some_and(|v| !v.motion || v.started)
+    }
+
+    /// Once the first image is on screen, asks of every cached JPEG whether
+    /// it is a Motion Photo, once while it stays cached; a Live Photo is not
+    /// asked.
+    fn sync_motion(&mut self) -> Vec<Command> {
+        let cache = &self.cache;
+        self.probed.retain(|p| cache.contains_key(p));
+        self.motion_photos.retain(|p| cache.contains_key(p));
+        if !self.first_frame_shown {
+            return Vec::new();
+        }
+        let wanted: Vec<PathBuf> = cache
+            .iter()
+            .filter(|(path, result)| {
+                result.is_ok()
+                    && folder::is_jpeg(path)
+                    && !self.live.contains_key(*path)
+                    && !self.probed.contains(*path)
+            })
+            .map(|(path, _)| path.clone())
+            .collect();
+        self.probed.extend(wanted.iter().cloned());
+        wanted.into_iter().map(Command::FindMotion).collect()
     }
 
     /// Fits the inner images to the current file: one holding several starts
@@ -1341,15 +1454,27 @@ impl Core {
     /// Fits the video to the current file: a video shown by its first frame
     /// may be played; the player of a file left is stopped.
     fn sync_video(&mut self) -> Vec<Command> {
-        let wanted = self.current.as_ref().filter(|current| {
-            folder::is_video(current)
-                && matches!(&self.screen, Screen::Image { path, .. } if path == *current)
-        });
-        if self.video.as_ref().map(|v| &v.path) == wanted {
+        let wanted = self
+            .current
+            .as_ref()
+            .filter(
+                |current| matches!(&self.screen, Screen::Image { path, .. } if path == *current),
+            )
+            .and_then(|path| {
+                let source = if folder::is_video(path) || self.motion_photos.contains(path) {
+                    path
+                } else {
+                    self.live.get(path)?
+                };
+                Some((path, source))
+            });
+        if self.video.as_ref().map(|v| (&v.path, &v.source)) == wanted {
             return Vec::new();
         }
-        let new = wanted.map(|path| CurrentVideo {
+        let new = wanted.map(|(path, source)| CurrentVideo {
             path: path.clone(),
+            source: source.clone(),
+            motion: !folder::is_video(path),
             started: false,
             playing: false,
             error: None,
@@ -1379,7 +1504,7 @@ impl Core {
             (true, false) => {
                 video.started = true;
                 vec![Command::PlayVideo {
-                    path: video.path.clone(),
+                    path: video.source.clone(),
                     muted: self.muted,
                     paused: false,
                 }]
@@ -1403,7 +1528,7 @@ impl Core {
             video.started = true;
             video.error = None;
             commands.push(Command::PlayVideo {
-                path: video.path.clone(),
+                path: video.source.clone(),
                 muted,
                 paused: true,
             });
@@ -1426,7 +1551,7 @@ impl Core {
         let Some(video) = self
             .video
             .as_mut()
-            .filter(|v| v.started && v.seeking && v.path == path)
+            .filter(|v| v.started && v.seeking && v.source == path)
         else {
             return Vec::new();
         };
@@ -1449,29 +1574,34 @@ impl Core {
 
     /// A frame of the video playing replaces the one shown.
     fn video_frame(&mut self, path: PathBuf, image: DecodedImage) {
-        let playing = self
+        let Some(video) = self
             .video
             .as_ref()
-            .is_some_and(|v| v.started && v.path == path);
-        if let (
-            true,
-            Screen::Image {
-                path: p,
-                image: shown,
-            },
-        ) = (playing, &mut self.screen)
-            && *p == path
+            .filter(|v| v.started && v.source == path)
+        else {
+            return;
+        };
+        if let Screen::Image {
+            path: p,
+            image: shown,
+        } = &mut self.screen
+            && *p == video.path
         {
             *shown = image;
         }
     }
 
     /// The video played to its end, or failed with `error`: it shows its
-    /// first frame again, ready to play anew.
-    fn video_stopped(&mut self, path: &Path, error: Option<String>) -> Vec<Command> {
-        let Some(video) = self.video.as_mut().filter(|v| v.started && v.path == path) else {
+    /// first frame, or the still of its photo, again, ready to play anew.
+    fn video_stopped(&mut self, source: &Path, error: Option<String>) -> Vec<Command> {
+        let Some(video) = self
+            .video
+            .as_mut()
+            .filter(|v| v.started && v.source == source)
+        else {
             return Vec::new();
         };
+        let path = video.path.as_path();
         video.started = false;
         video.playing = false;
         video.error = error;
@@ -1697,9 +1827,10 @@ impl Core {
     /// A folder that cannot be read is reported and leaves the files as they
     /// were; the current image stays, a folder just entered shows the error.
     /// Dot files are dropped unless shown, files on their way to the trash
-    /// always. A current file that vanished from the folder gives way to the
-    /// file after it, or the last one; with no files left the folder's
-    /// emptiness is shown until a file appears.
+    /// always, the MOV of a Live Photo too. A current file that vanished from
+    /// the folder gives way to the file after it, or the last one, a MOV to
+    /// its photo; with no files left the folder's emptiness is shown until a
+    /// file appears.
     fn folder_listed(&mut self, dir: &Path, result: Result<Vec<PathBuf>, String>) -> Vec<Command> {
         if self.dir.as_deref() != Some(dir) {
             return self.nav_listed(dir, result);
@@ -1719,10 +1850,18 @@ impl Core {
         };
         self.view.folder_error = None;
         self.all_files = Some(files.clone());
-        let files: Vec<PathBuf> = files
+        let mut files: Vec<PathBuf> = files
             .into_iter()
             .filter(|f| (self.dots || !folder::is_dot(f)) && !self.trashing.contains(f))
             .collect();
+        self.live = folder::live_photos(&files);
+        files.retain(|f| !self.live.values().any(|mov| mov == f));
+        let photo = self.current.as_ref().and_then(|c| {
+            let mut pairs = self.live.iter();
+            pairs
+                .find(|(_, mov)| *mov == c)
+                .map(|(photo, _)| photo.clone())
+        });
         let vanished = self
             .current
             .as_ref()
@@ -1730,15 +1869,16 @@ impl Core {
             .cloned();
         let empty_before = self.current.is_none();
         self.files = files;
-        let replacement = match vanished {
-            Some(gone) => {
+        let replacement = match (photo, vanished) {
+            (Some(photo), _) => Some(photo),
+            (None, Some(gone)) => {
                 let after = |f: &&PathBuf| {
                     folder::natural_cmp(&folder::file_name(f), &folder::file_name(&gone)).is_gt()
                 };
                 self.files.iter().find(after).or(self.files.last()).cloned()
             }
-            None if empty_before => self.files.first().cloned(),
-            None => return self.refresh(),
+            (None, None) if empty_before => self.files.first().cloned(),
+            (None, None) => return self.refresh(),
         };
         self.view.key_line.notice = None;
         match replacement {
@@ -2033,6 +2173,7 @@ impl Core {
             .collect();
         self.cache.clear();
         self.files.clear();
+        self.live.clear();
         self.all_files = None;
         self.column_dirs = None;
         self.dots = false;
@@ -2107,8 +2248,9 @@ impl Core {
         }
     }
 
-    /// Sends the current file, broken or not, to the trash and shows the next
-    /// one, or the previous one after the last, at once. A folder left without
+    /// Sends the current file, broken or not, to the trash, with the MOV of
+    /// a Live Photo, and shows the next one, or the previous one after the
+    /// last, at once. A folder left without
     /// files shows so and opens the dir column, focused. Nothing to trash
     /// before the folder is listed.
     fn trash(&mut self) -> Vec<Command> {
@@ -2123,8 +2265,10 @@ impl Core {
             return Vec::new();
         }
         self.view.trash_error = None;
-        self.trashing.insert(path.clone());
-        let mut commands = vec![Command::Trash(path)];
+        let files: Vec<PathBuf> = self.live.get(&path).cloned().into_iter().collect();
+        let files = [vec![path], files].concat();
+        self.trashing.extend(files.iter().cloned());
+        let mut commands: Vec<Command> = files.into_iter().map(Command::Trash).collect();
         // The listing without the file steps on as if the watcher reported it.
         commands.extend(self.folder_listed(&dir, Ok(listing)));
         if self.current.is_none() {
@@ -2154,15 +2298,20 @@ impl Core {
     }
 
     /// A trashed file is gone from the folder for good. A file that could not
-    /// be trashed is back in navigation, and the failure is shown.
+    /// be trashed is back in navigation, and the failure is shown, after any
+    /// other of the same `x`.
     fn trashed(&mut self, path: &Path, result: Result<(), String>) -> Vec<Command> {
         self.trashing.remove(path);
         if let Err(message) = result {
+            let before = self.view.trash_error.take();
             let commands = match (self.dir.clone(), self.all_files.clone()) {
                 (Some(dir), Some(files)) => self.folder_listed(&dir, Ok(files)),
                 _ => Vec::new(),
             };
-            self.view.trash_error = Some(message);
+            self.view.trash_error = Some(match before {
+                Some(before) => format!("{before}\n{message}"),
+                None => message,
+            });
             return commands;
         }
         if let Some(files) = &mut self.all_files {
@@ -2172,12 +2321,13 @@ impl Core {
     }
 
     /// The current file while it shows as an image and no rotation of it is
-    /// being written. A video cannot be turned.
+    /// being written. A video cannot be turned, nor a photo while its video
+    /// plays.
     fn rotatable(&self) -> Option<&PathBuf> {
         let Screen::Image { path, .. } = &self.screen else {
             return None;
         };
-        (self.writing.as_ref() != Some(path) && !folder::is_video(path)).then_some(path)
+        (self.writing.as_ref() != Some(path) && !self.plays_video()).then_some(path)
     }
 
     /// Turns the image on screen only, keeping the image point in the middle
@@ -2450,6 +2600,7 @@ impl Core {
                     animated: false,
                     images: 1,
                     video: false,
+                    motion: None,
                 })
             })
             .collect();
