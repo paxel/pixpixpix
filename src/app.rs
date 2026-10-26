@@ -99,17 +99,34 @@ impl Worker {
     /// Starts the background part of `command`; commands for the window itself
     /// are handled by the app.
     fn spawn(&self, command: &Command) {
-        if let Command::Decode(path) = command {
-            let path = path.clone();
-            let events = self.events.clone();
-            let ctx = self.ctx.clone();
-            std::thread::spawn(move || {
-                let result = decode::decode_file(&path);
-                // The app may already be gone; nothing to report to then.
-                let _ = events.send(Event::Decoded { path, result });
-                ctx.request_repaint();
-            });
+        match command {
+            Command::Decode(path) => {
+                let path = path.clone();
+                self.run(move || {
+                    let result = decode::decode_file(&path);
+                    Event::Decoded { path, result }
+                });
+            }
+            Command::ListFolder(dir) => {
+                let dir = dir.clone();
+                self.run(move || {
+                    let result = folder::list_media(&dir).map_err(|e| e.to_string());
+                    Event::FolderListed { dir, result }
+                });
+            }
+            Command::SetFullscreen(_) | Command::Quit => {}
         }
+    }
+
+    /// Runs `job` on its own thread and sends its event back.
+    fn run(&self, job: impl FnOnce() -> Event + Send + 'static) {
+        let events = self.events.clone();
+        let ctx = self.ctx.clone();
+        std::thread::spawn(move || {
+            // The app may already be gone; nothing to report to then.
+            let _ = events.send(job());
+            ctx.request_repaint();
+        });
     }
 }
 
@@ -133,7 +150,7 @@ impl App {
                 Command::SetFullscreen(on) => {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(on));
                 }
-                Command::Decode(_) => self.worker.spawn(&command),
+                Command::Decode(_) | Command::ListFolder(_) => self.worker.spawn(&command),
             }
         }
         let title_after = title(self.core.view());

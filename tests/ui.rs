@@ -94,3 +94,51 @@ fn command_q_reaches_the_core() {
     h.run();
     assert_eq!(h.state().commands, [Command::Quit]);
 }
+
+/// Shown on `path` with its folder listed as `files`.
+fn browsing(path: &str, files: &[&str]) -> Core {
+    let mut core = shown(path);
+    core.handle(Event::FirstFrameShown);
+    core.handle(Event::FolderListed {
+        dir: PathBuf::from("/p"),
+        result: Ok(files.iter().map(PathBuf::from).collect()),
+    });
+    core
+}
+
+#[test]
+fn key_line_lists_the_image_view_keys() {
+    let mut h = harness(shown("/p/cat.jpg"));
+    h.run();
+    h.get_by_label("Left/Right");
+    h.get_by_label("F");
+    h.get_by_label(if cfg!(target_os = "macos") {
+        "Cmd+Q"
+    } else {
+        "Ctrl+Q"
+    });
+}
+
+#[test]
+fn right_arrow_asks_for_the_next_file() {
+    let mut h = harness(browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]));
+    h.run();
+    h.key_press(egui::Key::ArrowRight);
+    h.run();
+    assert_eq!(
+        h.state().commands,
+        [Command::Decode(PathBuf::from("/p/b.jpg"))]
+    );
+}
+
+#[test]
+fn ends_show_first_and_last_image_in_the_key_line() {
+    let mut h = harness(browsing("/p/a.jpg", &["/p/a.jpg"]));
+    h.run();
+    h.key_press(egui::Key::ArrowLeft);
+    h.run();
+    h.get_by_label("first image");
+    h.key_press(egui::Key::ArrowRight);
+    h.run();
+    h.get_by_label("last image");
+}

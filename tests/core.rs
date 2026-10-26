@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use pixpixpix::core::{Command, Core, Event, Key, KeyPress, Screen};
+use pixpixpix::core::{Command, Core, Event, Key, KeyPress, Notice, Screen};
 use pixpixpix::decode::DecodedImage;
 
 fn image() -> DecodedImage {
@@ -122,4 +122,131 @@ fn first_frame_is_recorded() {
     assert!(!core.first_frame_shown());
     core.handle(Event::FirstFrameShown);
     assert!(core.first_frame_shown());
+}
+
+fn press(core: &mut Core, key: Key) -> Vec<Command> {
+    core.handle(Event::Key(KeyPress::plain(key)))
+}
+
+/// Started on `path`, first frame shown, folder listed as `files`.
+fn browsing(path: &str, files: &[&str]) -> Core {
+    let mut core = started(path);
+    let commands = core.handle(Event::FirstFrameShown);
+    assert_eq!(commands, [Command::ListFolder(PathBuf::from("/p"))]);
+    core.handle(Event::FolderListed {
+        dir: PathBuf::from("/p"),
+        result: Ok(files.iter().map(PathBuf::from).collect()),
+    });
+    core
+}
+
+#[test]
+fn folder_is_listed_only_after_the_first_frame() {
+    let (mut core, commands) = Core::start(Ok(PathBuf::from("/p/a.jpg")));
+    assert!(!commands.contains(&Command::ListFolder(PathBuf::from("/p"))));
+    core.handle(Event::Decoded {
+        path: PathBuf::from("/p/a.jpg"),
+        result: Ok(image()),
+    });
+    assert_eq!(
+        core.handle(Event::FirstFrameShown),
+        [Command::ListFolder(PathBuf::from("/p"))]
+    );
+}
+
+#[test]
+fn nothing_to_open_lists_no_folder() {
+    let (mut core, _) = Core::start(Err("No images in /x".into()));
+    assert!(core.handle(Event::FirstFrameShown).is_empty());
+}
+
+#[test]
+fn right_and_left_step_through_the_listed_order() {
+    let mut core = browsing(
+        "/p/img2.jpg",
+        &["/p/img1.jpg", "/p/img2.jpg", "/p/img10.jpg"],
+    );
+    assert_eq!(
+        press(&mut core, Key::Right),
+        [Command::Decode(PathBuf::from("/p/img10.jpg"))]
+    );
+    assert_eq!(
+        core.view().screen,
+        Screen::Loading {
+            path: PathBuf::from("/p/img10.jpg")
+        }
+    );
+    assert_eq!(
+        press(&mut core, Key::Left),
+        [Command::Decode(PathBuf::from("/p/img2.jpg"))]
+    );
+    assert_eq!(
+        press(&mut core, Key::Left),
+        [Command::Decode(PathBuf::from("/p/img1.jpg"))]
+    );
+    assert_eq!(core.view().key_line.notice, None);
+}
+
+#[test]
+fn right_on_the_last_image_stays_and_says_so() {
+    let mut core = browsing("/p/b.jpg", &["/p/a.jpg", "/p/b.jpg"]);
+    core.handle(Event::Decoded {
+        path: PathBuf::from("/p/b.jpg"),
+        result: Ok(image()),
+    });
+    assert!(press(&mut core, Key::Right).is_empty());
+    assert_eq!(core.view().key_line.notice, Some(Notice::LastImage));
+    assert!(matches!(core.view().screen, Screen::Image { .. }));
+}
+
+#[test]
+fn left_on_the_first_image_stays_and_says_so() {
+    let mut core = browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]);
+    assert!(press(&mut core, Key::Left).is_empty());
+    assert_eq!(core.view().key_line.notice, Some(Notice::FirstImage));
+}
+
+#[test]
+fn moving_away_from_an_end_clears_the_notice() {
+    let mut core = browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]);
+    press(&mut core, Key::Left);
+    press(&mut core, Key::Right);
+    assert_eq!(core.view().key_line.notice, None);
+}
+
+#[test]
+fn arrows_do_nothing_before_the_folder_is_listed() {
+    let mut core = started("/p/a.jpg");
+    assert!(press(&mut core, Key::Right).is_empty());
+    assert!(press(&mut core, Key::Left).is_empty());
+    assert_eq!(core.view().key_line.notice, None);
+}
+
+#[test]
+fn decode_of_the_new_current_file_is_shown() {
+    let mut core = browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]);
+    press(&mut core, Key::Right);
+    core.handle(Event::Decoded {
+        path: PathBuf::from("/p/b.jpg"),
+        result: Ok(image()),
+    });
+    assert_eq!(
+        core.view().screen,
+        Screen::Image {
+            path: PathBuf::from("/p/b.jpg"),
+            image: image()
+        }
+    );
+}
+
+#[test]
+fn key_line_lists_the_image_view_keys() {
+    let core = started("/p/a.jpg");
+    let keys: Vec<&str> = core.view().key_line.keys.iter().map(|k| k.keys).collect();
+    let quit = if cfg!(target_os = "macos") {
+        "Cmd+Q"
+    } else {
+        "Ctrl+Q"
+    };
+    assert_eq!(keys, ["Left/Right", "F", quit]);
 }

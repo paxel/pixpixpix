@@ -6,13 +6,15 @@ use std::path::{Path, PathBuf};
 
 use egui::{Color32, ColorImage, RichText, TextureHandle, TextureOptions};
 
-use crate::core::{Event, Key, KeyPress, Screen, View};
+use crate::core::{Event, Key, KeyLine, KeyPress, Notice, Screen, View};
 use crate::decode::DecodedImage;
 use crate::folder;
 
 const BACKGROUND: Color32 = Color32::from_rgb(0x12, 0x12, 0x14);
 const TEXT: Color32 = Color32::from_rgb(0xe8, 0xe8, 0xea);
 const ERROR_TEXT: Color32 = Color32::from_rgb(0xff, 0xb4, 0xa8);
+const DIM_TEXT: Color32 = Color32::from_rgb(0x9a, 0x9a, 0xa0);
+const NOTICE_TEXT: Color32 = Color32::from_rgb(0xff, 0xd5, 0x80);
 
 /// GPU textures of decoded images, uploaded once per path.
 #[derive(Default)]
@@ -72,12 +74,19 @@ fn map_key(key: egui::Key) -> Option<Key> {
         egui::Key::F => Key::F,
         egui::Key::Q => Key::Q,
         egui::Key::Escape => Key::Escape,
+        egui::Key::ArrowLeft => Key::Left,
+        egui::Key::ArrowRight => Key::Right,
         _ => return None,
     })
 }
 
 /// Draws the whole window.
 pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) {
+    egui::Panel::bottom("key_line")
+        .resizable(false)
+        .show_separator_line(false)
+        .frame(egui::Frame::NONE.fill(BACKGROUND).inner_margin(6.0))
+        .show(ui, |ui| show_key_line(ui, &view.key_line));
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE.fill(BACKGROUND))
         .show(ui, |ui| match &view.screen {
@@ -85,6 +94,23 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) {
             Screen::Image { path, image } => show_image(ui, path, image, textures),
             Screen::Error { path, message } => show_error(ui, path.as_deref(), message),
         });
+}
+
+fn show_key_line(ui: &mut egui::Ui, key_line: &KeyLine) {
+    ui.horizontal(|ui| {
+        for hint in &key_line.keys {
+            ui.label(RichText::new(hint.keys).color(TEXT).strong());
+            ui.label(RichText::new(hint.action).color(DIM_TEXT));
+            ui.add_space(12.0);
+        }
+        if let Some(notice) = key_line.notice {
+            let text = match notice {
+                Notice::FirstImage => "first image",
+                Notice::LastImage => "last image",
+            };
+            ui.label(RichText::new(text).color(NOTICE_TEXT));
+        }
+    });
 }
 
 fn show_image(ui: &mut egui::Ui, path: &Path, image: &DecodedImage, textures: &mut Textures) {
