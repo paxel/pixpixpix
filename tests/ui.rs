@@ -6,7 +6,7 @@ use std::sync::Arc;
 use egui::accesskit::{Role, Toggled};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
-use pixpixpix::core::{Command, Core, Event, Scale, Screen};
+use pixpixpix::core::{Command, Core, Event, Scale, Screen, VideoStep};
 use pixpixpix::decode::DecodedImage;
 use pixpixpix::settings::Settings;
 use pixpixpix::startup::NoFile;
@@ -890,6 +890,7 @@ fn clicking_play_or_space_plays_and_pauses_the_video() {
         Some(&Command::PlayVideo {
             path: PathBuf::from("/p/a.mp4"),
             muted: false,
+            paused: false,
         })
     );
     assert!(h.query_by_label("Play").is_none());
@@ -954,4 +955,56 @@ fn dragging_a_zoomed_video_pans_it_without_playing() {
     let zoom = h.state().core.view().zoom;
     assert!((zoom.center_x - 0.55).abs() < 1e-4, "{}", zoom.center_x);
     assert!(!h.state().core.view().video.as_ref().unwrap().playing);
+}
+
+#[test]
+fn a_paused_video_shows_step_buttons_that_seek_without_playing() {
+    let mut h = harness(browsing_videos());
+    h.run();
+    for label in ["-30s", "-10s", "-1 frame", "+1 frame", "+10s"] {
+        h.get_by_role_and_label(Role::Button, label);
+    }
+    h.get_by_role_and_label(Role::Button, "+30s").click();
+    h.run();
+    assert_eq!(
+        h.state().commands,
+        [
+            Command::PlayVideo {
+                path: PathBuf::from("/p/a.mp4"),
+                muted: false,
+                paused: true,
+            },
+            Command::SeekVideo(VideoStep::Seconds(30)),
+        ]
+    );
+    assert!(!h.state().core.view().video.as_ref().unwrap().playing);
+}
+
+#[test]
+fn a_playing_video_hides_the_step_buttons() {
+    let mut core = browsing_videos();
+    core.handle(Event::Clicked);
+    let mut h = harness(core);
+    h.run();
+    assert!(h.query_by_label("+10s").is_none());
+    assert!(h.query_by_label("-1 frame").is_none());
+}
+
+#[test]
+fn modified_arrows_seek_the_video_and_plain_ones_change_the_file() {
+    let mut core = browsing_videos();
+    core.handle(Event::Clicked);
+    let mut h = harness(core);
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::ArrowLeft);
+    h.run();
+    assert_eq!(
+        h.state().commands.last(),
+        Some(&Command::SeekVideo(VideoStep::Seconds(-10)))
+    );
+    h.get_by_label("Shift+Left/Right");
+    h.get_by_label("Alt+Left/Right");
+    h.key_press(egui::Key::ArrowRight);
+    h.run();
+    h.get_by_role_and_label(Role::Image, "b.jpg");
 }

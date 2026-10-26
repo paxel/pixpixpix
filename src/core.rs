@@ -187,6 +187,20 @@ pub enum Event {
         path: PathBuf,
         message: String,
     },
+    /// A step button of the video was clicked.
+    StepVideo(VideoStep),
+    /// The [`Command::SeekVideo`] running on the video at the path drew its
+    /// frame, or failed.
+    VideoSeeked(PathBuf),
+}
+
+/// A step through a video.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VideoStep {
+    /// Back or forward by whole seconds.
+    Seconds(i32),
+    /// Back or forward by frames; one at a time in [`Command::SeekVideo`].
+    Frames(i32),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -260,7 +274,13 @@ pub enum Command {
     PlayVideo {
         path: PathBuf,
         muted: bool,
+        /// Start paused on the first frame instead.
+        paused: bool,
     },
+    /// Seek the video of [`Command::PlayVideo`] by the step, a frame step
+    /// pausing it; answered by [`Event::VideoSeeked`] once the frame there is
+    /// drawn. Never sent while one runs.
+    SeekVideo(VideoStep),
     /// Pause the playing video, keeping its frame.
     PauseVideo,
     /// Play the paused video on.
@@ -397,7 +417,7 @@ const INNER_KEYS: KeyHint = KeyHint {
 
 /// Image view keys of a video, listed after the first; they say what a press
 /// does now.
-fn video_keys(video: &Video) -> [KeyHint; 2] {
+fn video_keys(video: &Video) -> [KeyHint; 5] {
     [
         KeyHint {
             keys: "Space",
@@ -406,6 +426,22 @@ fn video_keys(video: &Video) -> [KeyHint; 2] {
         KeyHint {
             keys: "M",
             action: if video.muted { "unmute" } else { "mute" },
+        },
+        KeyHint {
+            keys: "Shift+Left/Right",
+            action: "10 s",
+        },
+        KeyHint {
+            keys: if cfg!(target_os = "macos") {
+                "Cmd+Left/Right"
+            } else {
+                "Ctrl+Left/Right"
+            },
+            action: "30 s",
+        },
+        KeyHint {
+            keys: "Alt+Left/Right",
+            action: "frame",
         },
     ]
 }
@@ -807,6 +843,44 @@ struct CurrentVideo {
     playing: bool,
     /// Why it could not be played.
     error: Option<String>,
+    /// A [`Command::SeekVideo`] runs.
+    seeking: bool,
+    /// The step still to take once the running seek is done.
+    pending: Option<VideoStep>,
+}
+
+impl CurrentVideo {
+    /// The seek to run now: none while one runs; frames one at a time.
+    fn next_seek(&mut self) -> Option<Command> {
+        if self.seeking {
+            return None;
+        }
+        let (now, left) = match self.pending.take()? {
+            VideoStep::Seconds(0) | VideoStep::Frames(0) => return None,
+            VideoStep::Seconds(s) => (VideoStep::Seconds(s), None),
+            VideoStep::Frames(f) => {
+                let one = f.signum();
+                let rest = f.saturating_sub(one);
+                (
+                    VideoStep::Frames(one),
+                    (rest != 0).then_some(VideoStep::Frames(rest)),
+                )
+            }
+        };
+        self.pending = left;
+        self.seeking = true;
+        Some(Command::SeekVideo(now))
+    }
+}
+
+impl VideoStep {
+    /// The same step the other way.
+    fn back(self) -> Self {
+        match self {
+            Self::Seconds(s) => Self::Seconds(s.saturating_neg()),
+            Self::Frames(f) => Self::Frames(f.saturating_neg()),
+        }
+    }
 }
 
 /// The image shown of a multi-image file.
@@ -1103,6 +1177,8 @@ impl Core {
             }
             Event::VideoEnded(path) => self.video_stopped(&path, None),
             Event::VideoFailed { path, message } => self.video_stopped(&path, Some(message)),
+            Event::StepVideo(step) => self.step_video(step),
+            Event::VideoSeeked(path) => self.video_seeked(&path),
         }
     }
 
@@ -1185,6 +1261,7 @@ impl Core {
             }
             if let Some(video) = &self.view.video {
                 keys.splice(1..1, video_keys(video));
+                keys.retain(|k| !matches!(k.keys, "L/R" | "Enter"));
             }
             self.view.key_line.keys = keys;
         }
@@ -1276,6 +1353,8 @@ impl Core {
             started: false,
             playing: false,
             error: None,
+            seeking: false,
+            pending: None,
         });
         match std::mem::replace(&mut self.video, new) {
             Some(CurrentVideo { started: true, .. }) => vec![Command::StopVideo],
@@ -1298,9 +1377,57 @@ impl Core {
                 vec![Command::PlayVideo {
                     path: video.path.clone(),
                     muted: self.muted,
+                    paused: false,
                 }]
             }
         }
+    }
+
+    /// Steps through the video shown: at once when no seek runs, else once the
+    /// running one is done. A video never started gets a paused player first;
+    /// a frame step pauses.
+    fn step_video(&mut self, step: VideoStep) -> Vec<Command> {
+        let muted = self.muted;
+        let Some(video) = self.video.as_mut() else {
+            return Vec::new();
+        };
+        if matches!(step, VideoStep::Frames(_)) {
+            video.playing = false;
+        }
+        let mut commands = Vec::new();
+        if !video.started {
+            video.started = true;
+            video.error = None;
+            commands.push(Command::PlayVideo {
+                path: video.path.clone(),
+                muted,
+                paused: true,
+            });
+        }
+        video.pending = Some(match (video.pending, step) {
+            (Some(VideoStep::Seconds(a)), VideoStep::Seconds(b)) => {
+                VideoStep::Seconds(a.saturating_add(b))
+            }
+            (Some(VideoStep::Frames(a)), VideoStep::Frames(b)) => {
+                VideoStep::Frames(a.saturating_add(b))
+            }
+            _ => step,
+        });
+        commands.extend(video.next_seek());
+        commands
+    }
+
+    /// The running seek is done; the step waiting, if any, is taken.
+    fn video_seeked(&mut self, path: &Path) -> Vec<Command> {
+        let Some(video) = self
+            .video
+            .as_mut()
+            .filter(|v| v.started && v.seeking && v.path == path)
+        else {
+            return Vec::new();
+        };
+        video.seeking = false;
+        video.next_seek().into_iter().collect()
     }
 
     /// Turns the sound of videos off or on while a video is shown.
@@ -1344,6 +1471,8 @@ impl Core {
         video.started = false;
         video.playing = false;
         video.error = error;
+        video.seeking = false;
+        video.pending = None;
         if let Some(Ok(image)) = self.cache.get(path) {
             self.screen = Screen::Image {
                 path: path.to_path_buf(),
@@ -1660,6 +1789,17 @@ impl Core {
                     Focus::Band => self.set_focus(Focus::Image),
                 }
                 Vec::new()
+            }
+            (Key::Left | Key::Right, _)
+                if self.view.focus == Focus::Image && (key.command || key.shift || key.alt) =>
+            {
+                let forward = key.key == Key::Right;
+                let step = match (key.alt, key.command) {
+                    (true, _) => VideoStep::Frames(1),
+                    (false, true) => VideoStep::Seconds(30),
+                    (false, false) => VideoStep::Seconds(10),
+                };
+                self.step_video(if forward { step } else { step.back() })
             }
             (_, true) => Vec::new(),
             _ => match self.view.focus {

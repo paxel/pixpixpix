@@ -9,7 +9,7 @@ use egui::{Color32, ColorImage, RichText, TextureHandle, TextureOptions};
 
 use crate::core::{
     DirColumn, Event, Focus, InnerImages, Key, KeyPress, Notice, Points, Screen, Thumb, Video,
-    View, Zoom,
+    VideoStep, View, Zoom,
 };
 use crate::decode::DecodedImage;
 use crate::folder;
@@ -585,10 +585,39 @@ fn show_image(
     }
 }
 
-/// Over a video's frame: a big play triangle while it is not playing, which
-/// a click plays, and why it cannot be played.
+/// The step buttons of a video not playing, in order.
+const VIDEO_STEPS: [(&str, VideoStep); 6] = [
+    ("-30s", VideoStep::Seconds(-30)),
+    ("-10s", VideoStep::Seconds(-10)),
+    ("-1 frame", VideoStep::Frames(-1)),
+    ("+1 frame", VideoStep::Frames(1)),
+    ("+10s", VideoStep::Seconds(10)),
+    ("+30s", VideoStep::Seconds(30)),
+];
+
+/// Over a video's frame: a big play triangle and step buttons while it is not
+/// playing, which a click plays, and why it cannot be played.
 fn show_video(ui: &mut egui::Ui, video: &Video, events: &mut Vec<Event>) {
     let area = ui.max_rect();
+    if !video.playing {
+        // A row in the middle, above the place of the error.
+        let rect = egui::Rect::from_center_size(
+            egui::pos2(area.center().x, area.max.y - 78.0),
+            egui::vec2(VIDEO_STEPS.len() as f32 * 72.0, 32.0),
+        );
+        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+            ui.horizontal(|ui| {
+                for (label, step) in VIDEO_STEPS {
+                    let button = egui::Button::new(RichText::new(label).color(TEXT))
+                        .fill(ANIMATED_BADGE)
+                        .min_size(egui::vec2(64.0, 28.0));
+                    if ui.add(button).clicked() {
+                        events.push(Event::StepVideo(step));
+                    }
+                }
+            });
+        });
+    }
     if !video.playing {
         let radius = (area.width().min(area.height()) / 8.0).clamp(24.0, 64.0);
         let rect = egui::Rect::from_center_size(area.center(), egui::Vec2::splat(radius * 2.0));

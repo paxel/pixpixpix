@@ -321,23 +321,29 @@ impl Worker {
                     )));
                 }
             }
-            Command::PlayVideo { path, muted } => {
+            Command::PlayVideo {
+                path,
+                muted,
+                paused,
+            } => {
                 let events = self.events.clone();
                 let ctx = self.ctx.clone();
                 let played = path.clone();
                 // The old player stops before the new one starts.
                 self.playback = None;
-                self.playback = Some(Playback::start(path.clone(), *muted, move |report| {
+                let report = move |report| {
                     let path = played.clone();
                     let event = match report {
                         Report::Frame(image) => Event::VideoFrame { path, image },
                         Report::Ended => Event::VideoEnded(path),
+                        Report::Seeked => Event::VideoSeeked(path),
                         Report::Failed(message) => Event::VideoFailed { path, message },
                     };
                     // The app may already be gone; nothing to report to then.
                     let _ = events.send(event);
                     ctx.request_repaint();
-                }));
+                };
+                self.playback = Some(Playback::start(path.clone(), *muted, *paused, report));
             }
             Command::PauseVideo => {
                 if let Some(playback) = &self.playback {
@@ -352,6 +358,11 @@ impl Worker {
             Command::MuteVideo(muted) => {
                 if let Some(playback) = &self.playback {
                     playback.mute(*muted);
+                }
+            }
+            Command::SeekVideo(step) => {
+                if let Some(playback) = &self.playback {
+                    playback.seek(*step);
                 }
             }
             Command::StopVideo => self.playback = None,
@@ -452,6 +463,7 @@ impl App {
                 | Command::PauseVideo
                 | Command::ResumeVideo
                 | Command::MuteVideo(_)
+                | Command::SeekVideo(_)
                 | Command::StopVideo => {
                     self.worker.spawn(&command);
                 }

@@ -1,14 +1,16 @@
 //! Videos through libmpv, loaded on the first one: the first frame of a file,
 //! and playback that reports frame after frame.
 
+use std::ffi::CString;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::time::{Duration, Instant};
 
+use crate::core::VideoStep;
 use crate::decode::DecodedImage;
-use crate::mpv::{self, Mpv, PlayerEvent};
+use crate::mpv::{self, Mpv, Player, PlayerEvent};
 
 /// libmpv, loaded on the first video.
 static MPV: OnceLock<Result<Mpv, String>> = OnceLock::new();
@@ -43,7 +45,10 @@ impl Size {
         match event {
             PlayerEvent::Width(width) => self.width = *width,
             PlayerEvent::Height(height) => self.height = *height,
-            PlayerEvent::Ended(_) | PlayerEvent::Other => {}
+            PlayerEvent::Ended(_)
+            | PlayerEvent::Restarted
+            | PlayerEvent::CommandFailed(_)
+            | PlayerEvent::Other => {}
         }
     }
 
@@ -113,6 +118,8 @@ pub enum Report {
     Frame(DecodedImage),
     /// The video played to its end.
     Ended,
+    /// The seek asked for drew its frame, or failed.
+    Seeked,
     /// The video cannot be played, with mpv's message or why mpv is missing.
     Failed(String),
 }
@@ -123,7 +130,17 @@ enum Ask {
     Wake,
     Pause(bool),
     Mute(bool),
+    Seek(VideoStep),
     Stop,
+}
+
+/// What the running seek waits for before it is done.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Awaiting {
+    /// mpv to restart playback at the new position.
+    Restart,
+    /// The frame there to be drawn.
+    Frame,
 }
 
 /// A video playing on its own thread; dropping it stops the video.
@@ -132,14 +149,19 @@ pub struct Playback {
 }
 
 impl Playback {
-    /// Plays the video at `path` from the start, with sound unless `muted`,
-    /// reporting to `report` from the playing thread until stopped, the end or
-    /// a failure.
-    pub fn start(path: PathBuf, muted: bool, report: impl Fn(Report) + Send + 'static) -> Self {
+    /// Plays the video at `path` from the start, or shows its first frame if
+    /// `paused`, with sound unless `muted`, reporting to `report` from the
+    /// playing thread until stopped, the end or a failure.
+    pub fn start(
+        path: PathBuf,
+        muted: bool,
+        paused: bool,
+        report: impl Fn(Report) + Send + 'static,
+    ) -> Self {
         let (asks, inbox) = channel();
         let wakeup = asks.clone();
         std::thread::spawn(move || {
-            if let Err(message) = play(&path, muted, wakeup, &inbox, &report) {
+            if let Err(message) = play(&path, [muted, paused], wakeup, &inbox, &report) {
                 report(Report::Failed(message));
             }
         });
@@ -158,6 +180,12 @@ impl Playback {
         self.ask(Ask::Mute(muted));
     }
 
+    /// Seeks by `step`, reported by [`Report::Seeked`] once the frame there
+    /// is drawn. Asked before the first frame, it waits for it.
+    pub fn seek(&self, step: VideoStep) {
+        self.ask(Ask::Seek(step));
+    }
+
     fn ask(&self, ask: Ask) {
         // The thread is gone after the end or a failure; nothing to ask then.
         let _ = self.asks.send(ask);
@@ -173,7 +201,7 @@ impl Drop for Playback {
 /// Plays until stopped, the end or a failure, then lets the player go.
 fn play(
     path: &Path,
-    muted: bool,
+    [muted, paused]: [bool; 2],
     asks: Sender<Ask>,
     inbox: &Receiver<Ask>,
     report: &impl Fn(Report),
@@ -187,11 +215,28 @@ fn play(
             }
         }
     });
-    let options = [("pause", "no"), ("osd-level", "0"), ("mute", flag(muted))];
+    let options = [
+        ("pause", flag(paused)),
+        ("osd-level", "0"),
+        ("mute", flag(muted)),
+    ];
     let player = mpv()?.player(&options, wakeup)?;
     player.load_file(path)?;
     let mut size = Size::default();
     let mut ready = false;
+    // A frame was drawn, so the file is loaded and can be seeked.
+    let mut drawn = false;
+    // A seek asked before that.
+    let mut early = None;
+    let mut seeking = None;
+    // Starts a seek; one that cannot start is done at once.
+    let seek = |step| match start_seek(&player, step) {
+        Ok(awaiting) => Some(awaiting),
+        Err(_) => {
+            report(Report::Seeked);
+            None
+        }
+    };
     loop {
         let mut asked = vec![inbox.recv().map_err(|_| "mpv stopped".to_owned())?];
         asked.extend(inbox.try_iter());
@@ -200,6 +245,8 @@ fn play(
                 Ask::Wake => {}
                 Ask::Pause(paused) => player.set(c"pause", c_flag(paused))?,
                 Ask::Mute(muted) => player.set(c"mute", c_flag(muted))?,
+                Ask::Seek(step) if drawn => seeking = seek(step),
+                Ask::Seek(step) => early = Some(step),
                 Ask::Stop => return Ok(()),
             }
         }
@@ -210,13 +257,48 @@ fn play(
                     return Ok(());
                 }
                 PlayerEvent::Ended(Some(message)) => return Err(message),
+                PlayerEvent::Restarted if seeking == Some(Awaiting::Restart) => {
+                    seeking = Some(Awaiting::Frame);
+                }
+                PlayerEvent::CommandFailed(_) if seeking.is_some() => {
+                    seeking = None;
+                    report(Report::Seeked);
+                }
                 event => size.update(&event),
             }
         }
         ready |= player.frame_ready();
         if ready && let Some((width, height)) = size.target() {
             ready = false;
+            drawn = true;
             report(Report::Frame(player.render(width, height)?));
+            if seeking == Some(Awaiting::Frame) {
+                seeking = None;
+                report(Report::Seeked);
+            }
+            if let Some(step) = early.take() {
+                seeking = seek(step);
+            }
+        }
+    }
+}
+
+/// Asks mpv for the seek, returning what it waits for: a frame step forward
+/// only plays on, everything else restarts playback elsewhere.
+fn start_seek(player: &Player, step: VideoStep) -> Result<Awaiting, String> {
+    match step {
+        VideoStep::Seconds(seconds) => {
+            let seconds = CString::new(seconds.to_string()).map_err(|e| e.to_string())?;
+            player.command(&[c"seek", &seconds, c"relative+exact"])?;
+            Ok(Awaiting::Restart)
+        }
+        VideoStep::Frames(frames) if frames > 0 => {
+            player.command(&[c"frame-step"])?;
+            Ok(Awaiting::Frame)
+        }
+        VideoStep::Frames(_) => {
+            player.command(&[c"frame-back-step"])?;
+            Ok(Awaiting::Restart)
         }
     }
 }

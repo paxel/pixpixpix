@@ -39,7 +39,7 @@ pub const LIBRARY_NAMES: &[&str] = if cfg!(target_os = "macos") {
 #[repr(C)]
 struct MpvEvent {
     event_id: c_int,
-    _error: c_int,
+    error: c_int,
     reply_userdata: u64,
     data: *mut c_void,
 }
@@ -68,8 +68,12 @@ struct RenderParam {
 
 /// `MPV_EVENT_NONE`.
 const EVENT_NONE: c_int = 0;
+/// `MPV_EVENT_COMMAND_REPLY`.
+const EVENT_COMMAND_REPLY: c_int = 5;
 /// `MPV_EVENT_END_FILE`.
 const EVENT_END_FILE: c_int = 7;
+/// `MPV_EVENT_PLAYBACK_RESTART`.
+const EVENT_PLAYBACK_RESTART: c_int = 21;
 /// `MPV_EVENT_PROPERTY_CHANGE`.
 const EVENT_PROPERTY_CHANGE: c_int = 22;
 /// `MPV_END_FILE_REASON_EOF`.
@@ -102,6 +106,8 @@ const UPDATE_FRAME: u64 = 1;
 /// The `reply_userdata` of the observed display width and height.
 const WIDTH_ID: u64 = 1;
 const HEIGHT_ID: u64 = 2;
+/// The `reply_userdata` of commands sent with [`Player::command`].
+const COMMAND_ID: u64 = 3;
 
 type Handle = *mut c_void;
 type RenderContext = *mut c_void;
@@ -221,6 +227,10 @@ pub enum PlayerEvent {
     Height(Option<u32>),
     /// The file ended, with mpv's message when it could not be played.
     Ended(Option<String>),
+    /// Playback restarted after a seek, or after the file was loaded.
+    Restarted,
+    /// A [`Player::command`] failed, with mpv's message.
+    CommandFailed(String),
     /// Anything else.
     Other,
 }
@@ -334,6 +344,20 @@ impl Player {
         self.mpv.check(code)
     }
 
+    /// Runs a command, such as `seek 10 relative`, without waiting for it; a
+    /// failure is reported as [`PlayerEvent::CommandFailed`].
+    pub fn command(&self, args: &[&CStr]) -> Result<(), String> {
+        let mut args: Vec<*const c_char> = args
+            .iter()
+            .map(|a| a.as_ptr())
+            .chain(std::iter::once(ptr::null()))
+            .collect();
+        // SAFETY: a NULL-terminated list of strings that live through the
+        // call, which copies them.
+        let code = unsafe { (self.mpv.command)(self.handle, COMMAND_ID, args.as_mut_ptr()) };
+        self.mpv.check(code)
+    }
+
     /// Sets a property, such as `pause` or `mute`, without waiting for it.
     pub fn set(&self, name: &CStr, value: &CStr) -> Result<(), String> {
         let mut value = value.as_ptr();
@@ -368,6 +392,10 @@ impl Player {
                         END_FILE_REASON_EOF => PlayerEvent::Ended(None),
                         _ => PlayerEvent::Other,
                     })
+                }
+                EVENT_PLAYBACK_RESTART => Some(PlayerEvent::Restarted),
+                EVENT_COMMAND_REPLY if event.reply_userdata == COMMAND_ID && event.error < 0 => {
+                    Some(PlayerEvent::CommandFailed(self.mpv.message(event.error)))
                 }
                 EVENT_PROPERTY_CHANGE if !event.data.is_null() => {
                     let property = &*event.data.cast::<EventProperty>();

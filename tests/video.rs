@@ -135,6 +135,7 @@ fn space_starts_pauses_and_resumes_the_video() {
         [Command::PlayVideo {
             path: p("a.mp4"),
             muted: false,
+            paused: false,
         }]
     );
     assert_eq!(core.view().video, video(true, false));
@@ -152,6 +153,7 @@ fn a_click_on_the_video_plays_and_pauses_it() {
         [Command::PlayVideo {
             path: p("a.mp4"),
             muted: false,
+            paused: false,
         }]
     );
     assert_eq!(core.handle(Event::Clicked), [Command::PauseVideo]);
@@ -177,6 +179,7 @@ fn m_toggles_the_sound_kept_from_video_to_video() {
         [Command::PlayVideo {
             path: p("a.mp4"),
             muted: true,
+            paused: false,
         }]
     );
     assert_eq!(press(&mut core, Key::M), [Command::MuteVideo(false)]);
@@ -221,6 +224,7 @@ fn moving_on_stops_the_video_and_coming_back_shows_its_first_frame() {
         [Command::PlayVideo {
             path: p("a.mp4"),
             muted: false,
+            paused: false,
         }]
     );
 }
@@ -255,6 +259,7 @@ fn the_end_shows_the_first_frame_ready_to_play_anew() {
         [Command::PlayVideo {
             path: p("a.mp4"),
             muted: false,
+            paused: false,
         }]
     );
 }
