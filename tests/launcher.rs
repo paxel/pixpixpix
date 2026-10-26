@@ -182,3 +182,13 @@ fn a_cellar_binary_registers_the_stable_bin_symlink() {
         None
     );
 }
+
+#[test]
+fn a_flatpak_sandbox_is_told_apart_by_its_info_file() {
+    // Inside a Flatpak the launcher is the exported one, so nothing is written
+    // into the host's data dir.
+    let root = tempfile::tempdir().unwrap();
+    assert!(!launcher::in_flatpak(root.path()));
+    fs::write(root.path().join(".flatpak-info"), "[Application]\n").unwrap();
+    assert!(launcher::in_flatpak(root.path()));
+}

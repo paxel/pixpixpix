@@ -13,7 +13,8 @@
 //! Rules: only an entry carrying the `X-Pixpixpix-Managed` marker is ever
 //! overwritten, a hand-written or distro-installed one is left alone; nothing
 //! is written when the content is current; every failure is swallowed, a
-//! missing menu entry is never worth failing a start over.
+//! missing menu entry is never worth failing a start over. Inside a Flatpak
+//! nothing is written: Flatpak exports the bundle's own entry and icon.
 
 use std::fs;
 use std::io;
@@ -34,6 +35,9 @@ pub const MARKER: &str = "X-Pixpixpix-Managed=true";
 /// call from a thread of its own. Best effort: errors and a home-less
 /// environment are ignored.
 pub fn register() {
+    if in_flatpak(Path::new("/")) {
+        return;
+    }
     let Some(data_home) = data_home() else {
         return;
     };
@@ -43,6 +47,12 @@ pub fn register() {
     if let Ok(true) = register_at(&data_home, &exec) {
         refresh_caches(&data_home);
     }
+}
+
+/// Whether the file system at `root` is a Flatpak sandbox's, which always
+/// carries `/.flatpak-info`.
+pub fn in_flatpak(root: &Path) -> bool {
+    root.join(".flatpak-info").is_file()
 }
 
 /// `$XDG_DATA_HOME`, else `$HOME/.local/share`.

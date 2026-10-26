@@ -181,11 +181,56 @@ aom plugin. Some distributions package these separately.
 
 ### Homebrew (macOS and Linux)
 
-Coming with the `paxel/tap` Homebrew tap.
+From the `paxel/tap` tap. Install by the full name: Homebrew then trusts just this
+formula or cask from the tap, not the whole tap (see Homebrew's
+[Tap Trust](https://docs.brew.sh/Tap-Trust)).
+
+On Linux (x86_64 and aarch64), the formula:
+
+```sh
+brew install paxel/tap/pixpixpix
+```
+
+It puts pixpixpix into the application menu and into "Open with" for images and
+videos, never as the default app. The native libraries come from your distribution,
+see above.
+
+On macOS (Apple Silicon), the cask installs `pixpixpix.app` with libmpv bundled, plus
+the `pixpixpix` and `pix3` commands:
+
+```sh
+brew install --cask paxel/tap/pixpixpix
+```
+
+The app is not signed, so macOS blocks its first start: allow it once in System
+Settings > Privacy & Security > "Open Anyway", or run
+`xattr -dr com.apple.quarantine /Applications/pixpixpix.app`.
 
 ### Flatpak (Linux)
 
-Coming as a Flatpak bundle on each GitHub release, with a one-line install script.
+Each release carries a Flatpak bundle for x86_64 and aarch64, with libmpv, libheif
+and libturbojpeg included. This installs the latest one for the current user:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/paxel/pixpixpix/summer/packaging/flatpak/install.sh | sh
+```
+
+It needs `flatpak` and `curl`. The script adds the Flathub remote (`--user`, if it
+is not there yet) only for the runtime, installs the bundle with `--user` and writes
+`pixpixpix` and `pix3` commands that start the Flatpak to `~/.local/bin`. Running it
+again updates to the latest release.
+
+The Flatpak sees your home, `/media`, `/run/media` and `/mnt`. `o` opens files in
+your default apps through the desktop portal; other apps named in the settings
+cannot be started from the sandbox. Its settings live in
+`~/.var/app/io.github.paxel.pixpixpix`.
+
+To uninstall:
+
+```sh
+flatpak uninstall --user io.github.paxel.pixpixpix
+rm ~/.local/bin/pixpixpix ~/.local/bin/pix3
+```
 
 ### Release tarballs
 
@@ -230,4 +275,5 @@ The name nods to the band Pigs Pigs Pigs Pigs Pigs Pigs Pigs
 ## License
 
 [MIT](LICENSE). libmpv, which pixpixpix loads at runtime when it is installed, comes
-under its own licence (GPL or LGPL, depending on how it was built).
+under its own licence (GPL or LGPL, depending on how it was built). The macOS app and
+the Flatpak bundle include libmpv and are therefore GPL licensed.

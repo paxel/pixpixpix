@@ -7,12 +7,15 @@
 #              launcher entry, the icons and install-icon.sh for the formula;
 #              macOS also packs pixpixpix.app with libmpv bundled, zipped for
 #              the cask (packaging/macos/pack.sh)
+#   flatpak  - per architecture a Flatpak bundle, pixpixpix-<ver>-x86_64.flatpak
+#              and -aarch64.flatpak, from the Linux tarball's binary and libmpv
+#              built in flatpak-builder (packaging/flatpak), natively on each runner
 #   release  - GitHub Release, notes = the CHANGELOG section for the tag
 #   tap      - renders the Linux formula and the macOS cask with the artifacts'
 #              checksums and pushes them to paxel/homebrew-tap as
 #              Formula/pixpixpix.rb and Casks/pixpixpix.rb (CHANNEL_PAT)
 #
-# The Flatpak job (#35) hangs off `release` once it exists.
+# packaging/flatpak/install.sh installs the latest release's bundle.
 name: Release
 
 on:
@@ -88,9 +91,47 @@ jobs:
           name: ${{ matrix.platform }}
           path: dist/*
 
+  flatpak:
+    name: Flatpak (${{ matrix.arch }})
+    needs: build
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-26.08
+      options: --privileged
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: linux-${{ matrix.arch }}
+          path: dist
+      - name: The release binary where the manifest takes it from
+        id: ver
+        run: |
+          ver=${GITHUB_REF_NAME#v}
+          mkdir -p target/release
+          tar -C target/release -xzf "dist/pixpixpix-${ver}-linux-${{ matrix.arch }}.tar.gz" ./pixpixpix
+          echo "ver=$ver" >> "$GITHUB_OUTPUT"
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@79327416609af08178ad73b352877e51450790b3 # v6.8
+        with:
+          manifest-path: packaging/flatpak/io.github.paxel.pixpixpix.yml
+          bundle: pixpixpix-${{ steps.ver.outputs.ver }}-${{ matrix.arch }}.flatpak
+          arch: ${{ matrix.arch }}
+          upload-artifact: false
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: flatpak-${{ matrix.arch }}
+          path: pixpixpix-${{ steps.ver.outputs.ver }}-${{ matrix.arch }}.flatpak
+
   release:
     name: GitHub Release
-    needs: build
+    needs: [build, flatpak]
     runs-on: ubuntu-latest
     permissions:
       contents: write

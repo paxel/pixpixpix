@@ -249,3 +249,197 @@ fn the_app_offers_every_supported_type_in_open_with_but_claims_no_default() {
             .count()
     );
 }
+
+/// What a run of the Flatpak install script did.
+struct Install {
+    succeeded: bool,
+    /// Standard output and error.
+    output: String,
+    /// The calls of the fake curl and flatpak, one per line.
+    log: String,
+}
+
+/// Runs packaging/flatpak/install.sh on a Linux `machine` with `home` as the
+/// home, against fakes that log their calls: curl, whose latest release is
+/// `latest`, flatpak (left out without `with_flatpak`) and uname. The real
+/// tools on the PATH are only those the script needs, plus `extra_path`.
+fn flatpak_install(
+    home: &Path,
+    machine: &str,
+    latest: &str,
+    with_flatpak: bool,
+    extra_path: Option<&Path>,
+) -> std::io::Result<Install> {
+    let bin = tempfile::tempdir()?;
+    for tool in ["mkdir", "mktemp", "rm", "chmod"] {
+        let found = ["/usr/bin", "/bin"]
+            .iter()
+            .map(|dir| Path::new(dir).join(tool))
+            .find(|path| path.exists())
+            .ok_or_else(|| std::io::Error::other(format!("no {tool}")))?;
+        std::os::unix::fs::symlink(found, bin.path().join(tool))?;
+    }
+    let fake = |name: &str, body: &str| {
+        let path = bin.path().join(name);
+        fs::write(&path, format!("#!/bin/sh\n{body}"))?;
+        fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+    };
+    fake(
+        "uname",
+        "case $1 in -s) echo Linux ;; -m) echo \"$MACHINE\" ;; esac\n",
+    )?;
+    fake(
+        "curl",
+        r#"echo "curl $*" >>"$LOG"
+out=/dev/null
+effective=
+while [ $# -gt 0 ]; do
+  case $1 in
+    -o) out=$2; shift ;;
+    -w) effective=1; shift ;;
+  esac
+  shift
+done
+if [ -n "$effective" ]; then printf '%s' "$LATEST"; else echo bundle >"$out"; fi
+"#,
+    )?;
+    if with_flatpak {
+        fake(
+            "flatpak",
+            r#"echo "flatpak $*" >>"$LOG"
+for last; do :; done
+if [ "$1" = install ]; then read -r content <"$last"; echo "installed $content" >>"$LOG"; fi
+"#,
+        )?;
+    }
+    let log = home.join("calls.log");
+    let mut path = bin.path().as_os_str().to_owned();
+    if let Some(extra) = extra_path {
+        path.push(":");
+        path.push(extra);
+    }
+    let output = Command::new("/bin/sh")
+        .arg("packaging/flatpak/install.sh")
+        .env_clear()
+        .env("HOME", home)
+        .env("PATH", path)
+        .env("MACHINE", machine)
+        .env("LATEST", latest)
+        .env("LOG", &log)
+        .output()?;
+    Ok(Install {
+        succeeded: output.status.success(),
+        output: format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ),
+        log: fs::read_to_string(&log).unwrap_or_default(),
+    })
+}
+
+const LATEST: &str = "https://github.com/paxel/pixpixpix/releases/tag/v1.2.3";
+const WRAPPER: &str = "#!/bin/sh\nexec flatpak run io.github.paxel.pixpixpix \"$@\"\n";
+
+#[test]
+fn the_install_script_installs_the_latest_bundle_with_its_runtime_and_both_wrappers() {
+    let home = tempfile::tempdir().unwrap();
+    let run = flatpak_install(home.path(), "x86_64", LATEST, true, None).unwrap();
+    assert!(run.succeeded, "{}", run.output);
+    let calls: Vec<&str> = run.log.lines().collect();
+    assert_eq!(calls.len(), 5, "{}", run.log);
+    assert_eq!(
+        calls[0],
+        "curl -fsSLI -o /dev/null -w %{url_effective} https://github.com/paxel/pixpixpix/releases/latest"
+    );
+    assert!(calls[1].starts_with("curl -fSL --progress-bar -o "));
+    assert!(calls[1].ends_with(
+        "/pixpixpix-1.2.3-x86_64.flatpak https://github.com/paxel/pixpixpix/releases/download/v1.2.3/pixpixpix-1.2.3-x86_64.flatpak"
+    ));
+    assert_eq!(
+        calls[2],
+        "flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo"
+    );
+    assert!(
+        calls[3].starts_with("flatpak install --user -y --noninteractive --reinstall --bundle ")
+    );
+    assert!(calls[3].ends_with("/pixpixpix-1.2.3-x86_64.flatpak"));
+    // The downloaded bundle is what gets installed.
+    assert_eq!(calls[4], "installed bundle");
+    for name in ["pixpixpix", "pix3"] {
+        let wrapper = home.path().join(".local/bin").join(name);
+        assert_eq!(fs::read_to_string(&wrapper).unwrap(), WRAPPER);
+        let mode =
+            std::os::unix::fs::PermissionsExt::mode(&fs::metadata(&wrapper).unwrap().permissions());
+        assert_eq!(mode & 0o777, 0o755);
+    }
+    assert!(run.output.contains("is not on your PATH"), "{}", run.output);
+}
+
+#[test]
+fn the_install_script_picks_the_aarch64_bundle_and_notes_nothing_with_the_bin_dir_on_the_path() {
+    let home = tempfile::tempdir().unwrap();
+    let bin_dir = home.path().join(".local/bin");
+    let run = flatpak_install(home.path(), "arm64", LATEST, true, Some(&bin_dir)).unwrap();
+    assert!(run.succeeded, "{}", run.output);
+    assert!(run.log.contains("/pixpixpix-1.2.3-aarch64.flatpak https://github.com/paxel/pixpixpix/releases/download/v1.2.3/pixpixpix-1.2.3-aarch64.flatpak\n"));
+    assert!(
+        !run.output.contains("is not on your PATH"),
+        "{}",
+        run.output
+    );
+}
+
+#[test]
+fn the_install_script_stops_with_the_reason_before_touching_anything() {
+    let cases = [
+        ("x86_64", LATEST, false, "flatpak is not installed"),
+        ("riscv64", LATEST, true, "no bundle for riscv64"),
+        (
+            "x86_64",
+            "https://github.com/paxel/pixpixpix/releases",
+            true,
+            "no release found",
+        ),
+    ];
+    for (machine, latest, with_flatpak, reason) in cases {
+        let home = tempfile::tempdir().unwrap();
+        let run = flatpak_install(home.path(), machine, latest, with_flatpak, None).unwrap();
+        assert!(!run.succeeded);
+        assert!(run.output.contains(reason), "{}", run.output);
+        assert!(!run.log.contains("flatpak"), "{}", run.log);
+        assert!(!home.path().join(".local/bin").exists());
+    }
+}
+
+#[test]
+fn the_flatpak_command_starts_the_binary_with_the_host_data_dir_for_the_trash() {
+    let app = tempfile::tempdir().unwrap();
+    fs::create_dir_all(app.path().join("bin")).unwrap();
+    fs::create_dir_all(app.path().join("libexec")).unwrap();
+    fs::copy(
+        "packaging/flatpak/pixpixpix.sh",
+        app.path().join("bin/pixpixpix"),
+    )
+    .unwrap();
+    let binary = app.path().join("libexec/pixpixpix");
+    fs::write(&binary, "#!/bin/sh\necho \"$XDG_DATA_HOME $*\"\n").unwrap();
+    fs::set_permissions(&binary, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let run = |host: Option<&str>| {
+        let mut command = Command::new(app.path().join("bin/pixpixpix"));
+        command
+            .args(["a.jpg", "b c.png"])
+            .env("HOME", "/home/u")
+            .env(
+                "XDG_DATA_HOME",
+                "/home/u/.var/app/io.github.paxel.pixpixpix/data",
+            )
+            .env_remove("HOST_XDG_DATA_HOME");
+        if let Some(host) = host {
+            command.env("HOST_XDG_DATA_HOME", host);
+        }
+        String::from_utf8(command.output().unwrap().stdout).unwrap()
+    };
+    assert_eq!(run(None), "/home/u/.local/share a.jpg b c.png\n");
+    assert_eq!(run(Some("/data")), "/data a.jpg b c.png\n");
+}

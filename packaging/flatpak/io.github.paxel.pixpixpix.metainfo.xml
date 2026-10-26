@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.paxel.pixpixpix</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>pixpixpix</name>
+  <summary>Fast keyboard-first image and video viewer</summary>
+  <developer id="io.github.paxel">
+    <name>Patrick Zimmer</name>
+  </developer>
+  <description>
+    <p>
+      pixpixpix puts the image you open on screen as fast as possible and lets you
+      browse its folder with the arrow keys, with neighbours preloaded and a
+      thumbnail band.
+    </p>
+    <ul>
+      <li>JPEG, PNG, GIF, WebP, BMP, TIFF, HEIC/HEIF and AVIF, animations and multi-image files</li>
+      <li>Videos, Apple Live Photos and Motion Photos through libmpv, with frame stepping</li>
+      <li>A directory column and an overview gallery across all subfolders</li>
+      <li>Rotate, trash, copy and open in another app with one key</li>
+      <li>Arrows, text, shapes, pixelation, crop and exact-size export behind one save dialog</li>
+      <li>A metadata view that fixes capture dates and removes location or all EXIF</li>
+    </ul>
+    <p>
+      This bundle includes libmpv, which makes it GPL licensed; pixpixpix itself is MIT.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.paxel.pixpixpix.desktop</launchable>
+  <url type="homepage">https://github.com/paxel/pixpixpix</url>
+  <url type="bugtracker">https://github.com/paxel/pixpixpix/issues</url>
+  <provides>
+    <binary>pixpixpix</binary>
+  </provides>
+  <content_rating type="oars-1.1"/>
+</component>
