@@ -18,6 +18,7 @@ pub mod core;
 pub mod decode;
 pub mod folder;
 pub mod geometry;
+pub mod settings;
 pub mod startup;
 pub mod ui;
 pub mod watch;

@@ -334,6 +334,7 @@ fn the_key_line_lists_the_keys_of_the_focused_area() {
             "N",
             "B",
             "Tab",
+            "S",
             "F",
             quit
         ]
@@ -341,6 +342,17 @@ fn the_key_line_lists_the_keys_of_the_focused_area() {
     press(&mut core, Key::Tab);
     assert_eq!(
         key_names(&core),
-        ["Left/Right", "+/-", "0", "1", "N", "B", "Tab", "F", quit]
+        [
+            "Left/Right",
+            "+/-",
+            "0",
+            "1",
+            "N",
+            "B",
+            "Tab",
+            "S",
+            "F",
+            quit
+        ]
     );
 }

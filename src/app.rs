@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use crate::core::{Command, Core, Event, Screen};
 use crate::geometry::{self, Geometry};
-use crate::{decode, folder, startup, ui, watch};
+use crate::{decode, folder, settings, startup, ui, watch};
 
 pub const APP_ID: &str = "io.github.paxel.pixpixpix";
 
@@ -35,6 +35,7 @@ pub fn run() -> ExitCode {
         decodes: HashMap::new(),
         watcher: None,
         search: None,
+        settings_path: settings::default_path(),
     };
     for command in &commands {
         worker.spawn(command);
@@ -109,7 +110,12 @@ struct Worker {
     watcher: Option<notify::RecommendedWatcher>,
     /// Cancellation token of the running search.
     search: Option<Arc<AtomicBool>>,
+    /// Where the settings file lives; absent without a config directory.
+    settings_path: Option<PathBuf>,
 }
+
+/// Why there is no settings file to read or write.
+const NO_CONFIG_DIR: &str = "No configuration directory found";
 
 impl Worker {
     /// Starts the background part of `command`; commands for the window itself
@@ -178,6 +184,27 @@ impl Worker {
                     Err(e) => eprintln!("pixpixpix: cannot watch {}: {e}", dir.display()),
                 }
             }
+            Command::LoadSettings => {
+                let path = self.settings_path.clone();
+                self.run(move || {
+                    let result = match path {
+                        Some(path) => settings::load(&path),
+                        None => Err(NO_CONFIG_DIR.to_owned()),
+                    };
+                    Some(Event::SettingsLoaded(result))
+                });
+            }
+            // Written right away, so writes cannot overtake each other; the
+            // file is a few bytes.
+            Command::SaveSettings(values) => {
+                let result = match &self.settings_path {
+                    Some(path) => settings::save(path, values),
+                    None => Err(NO_CONFIG_DIR.to_owned()),
+                };
+                // The app may already be gone; nothing to report to then.
+                let _ = self.events.send(Event::SettingsSaved(result));
+                self.ctx.request_repaint();
+            }
             Command::SetFullscreen(_) | Command::Quit => {}
         }
     }
@@ -230,7 +257,9 @@ impl App {
                 | Command::WatchFolder(_)
                 | Command::ListDirs(_)
                 | Command::Search { .. }
-                | Command::CancelSearch => {
+                | Command::CancelSearch
+                | Command::LoadSettings
+                | Command::SaveSettings(_) => {
                     self.worker.spawn(&command);
                 }
             }

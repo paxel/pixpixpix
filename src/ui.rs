@@ -11,6 +11,7 @@ use crate::core::{
 };
 use crate::decode::DecodedImage;
 use crate::folder;
+use crate::settings::{self, Settings};
 
 const BACKGROUND: Color32 = Color32::from_rgb(0x12, 0x12, 0x14);
 const TEXT: Color32 = Color32::from_rgb(0xe8, 0xe8, 0xea);
@@ -32,6 +33,8 @@ const DIR_COLUMN_WIDTH: f32 = 220.0;
 const THUMB_HEIGHT: f32 = 64.0;
 /// Below the error of a file that failed to decode.
 const OPEN_HINT: &str = "Press O to open it in another app";
+/// The label of the cache size in the settings screen.
+const CACHE_LABEL: &str = "Cached images per side";
 
 /// GPU textures of decoded images, uploaded once per path.
 #[derive(Default)]
@@ -107,6 +110,7 @@ fn map_key(key: egui::Key) -> Option<Key> {
         egui::Key::Period => Key::Period,
         egui::Key::R => Key::R,
         egui::Key::B => Key::B,
+        egui::Key::S => Key::S,
         _ => return None,
     })
 }
@@ -163,6 +167,14 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
                 Screen::NothingBelow { .. } => show_status(ui, "No images below"),
             }
         });
+    if view.settings_open {
+        show_settings(
+            ui.ctx(),
+            &view.settings,
+            view.settings_error.as_deref(),
+            &mut events,
+        );
+    }
     events
 }
 
@@ -295,6 +307,34 @@ fn show_dir_column(ui: &mut egui::Ui, column: &DirColumn, focused: bool) {
                 if highlighted && !ui.clip_rect().contains_rect(rect) {
                     ui.scroll_to_rect(rect, None);
                 }
+            }
+        });
+}
+
+/// The settings screen over the dimmed window; a changed value is reported
+/// with all settings. Closing it is the core's business.
+fn show_settings(
+    ctx: &egui::Context,
+    values: &Settings,
+    error: Option<&str>,
+    events: &mut Vec<Event>,
+) {
+    egui::Modal::new(egui::Id::new("settings"))
+        .frame(egui::Frame::NONE.fill(BACKGROUND).inner_margin(16.0))
+        .show(ctx, |ui| {
+            ui.label(RichText::new("Settings").color(TEXT).strong().size(18.0));
+            ui.add_space(8.0);
+            let mut changed = values.clone();
+            ui.add(
+                egui::Slider::new(&mut changed.cache_per_side, settings::CACHE_PER_SIDE)
+                    .text(RichText::new(CACHE_LABEL).color(TEXT)),
+            );
+            if changed != *values {
+                events.push(Event::SettingsChanged(changed));
+            }
+            if let Some(error) = error {
+                ui.add_space(8.0);
+                ui.label(RichText::new(error).color(ERROR_TEXT));
             }
         });
 }

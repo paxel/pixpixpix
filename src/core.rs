@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use crate::decode::DecodedImage;
 use crate::folder::{self, Found};
+use crate::settings::Settings;
 use crate::startup::NoFile;
 
 mod search;
@@ -41,6 +42,7 @@ pub enum Key {
     Period,
     R,
     B,
+    S,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118,6 +120,13 @@ pub enum Event {
         dots: bool,
         found: Option<Found>,
     },
+    /// The settings asked for with [`Command::LoadSettings`], or why the file
+    /// cannot be used.
+    SettingsLoaded(Result<Settings, String>),
+    /// The settings screen changed a value.
+    SettingsChanged(Settings),
+    /// A [`Command::SaveSettings`] finished.
+    SettingsSaved(Result<(), String>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -143,6 +152,10 @@ pub enum Command {
     /// The running search is no longer needed; it reports nothing once
     /// cancelled.
     CancelSearch,
+    /// Read the settings file, answered by [`Event::SettingsLoaded`].
+    LoadSettings,
+    /// Write the settings file, answered by [`Event::SettingsSaved`].
+    SaveSettings(Settings),
     SetFullscreen(bool),
     Quit,
 }
@@ -306,8 +319,24 @@ const BAND_TAB_TO_IMAGE: KeyHint = KeyHint {
 /// Keys of every focus area, listed last.
 const GLOBAL_KEYS: &[KeyHint] = &[
     KeyHint {
+        keys: "S",
+        action: "settings",
+    },
+    KeyHint {
         keys: "F",
         action: "fullscreen",
+    },
+    KeyHint {
+        keys: QUIT_KEYS,
+        action: "quit",
+    },
+];
+
+/// The keys while the settings screen is open.
+const SETTINGS_KEYS: &[KeyHint] = &[
+    KeyHint {
+        keys: "S/Esc",
+        action: "close",
     },
     KeyHint {
         keys: QUIT_KEYS,
@@ -362,9 +391,6 @@ pub struct Thumb {
     pub image: Option<DecodedImage>,
     pub current: bool,
 }
-
-/// How many neighbours per side are kept decoded unless configured otherwise.
-const DEFAULT_CACHE_PER_SIDE: usize = 5;
 
 /// Zoom factor of one `+`/`-` press.
 const KEY_ZOOM_STEP: f32 = 1.25;
@@ -485,6 +511,13 @@ pub struct View {
     pub band_highlight: Option<usize>,
     /// Absent while the column is closed.
     pub dir_column: Option<DirColumn>,
+    /// The settings in effect.
+    pub settings: Settings,
+    /// Whether the settings screen is open; it gets every key then.
+    pub settings_open: bool,
+    /// Why the settings file could not be read or written; the defaults are
+    /// in effect after a failed read.
+    pub settings_error: Option<String>,
 }
 
 pub struct Core {
@@ -511,8 +544,6 @@ pub struct Core {
     dots: bool,
     /// The one-shot `r` search of the dir column.
     search: Option<Search>,
-    /// How many neighbours per side of the current file are kept decoded.
-    cache_per_side: usize,
     /// Decode results of the files in the window around the current one.
     /// Failures are kept too, so a broken file is not decoded again and again.
     cache: BTreeMap<PathBuf, Result<DecodedImage, String>>,
@@ -633,6 +664,9 @@ impl Core {
                 focus: Focus::Image,
                 band_highlight: None,
                 dir_column: None,
+                settings: Settings::default(),
+                settings_open: false,
+                settings_error: None,
             },
             screen,
             band: Vec::new(),
@@ -644,7 +678,6 @@ impl Core {
             column_dirs: None,
             dots: false,
             search: None,
-            cache_per_side: DEFAULT_CACHE_PER_SIDE,
             cache: BTreeMap::new(),
             decoding,
             came_from: None,
@@ -695,7 +728,32 @@ impl Core {
                 Vec::new()
             }
             Event::Searched { dir, dots, found } => self.searched(dir, dots, found),
+            Event::SettingsLoaded(Ok(settings)) => self.apply_settings(settings),
+            Event::SettingsLoaded(Err(message)) => {
+                self.view.settings_error = Some(message);
+                Vec::new()
+            }
+            Event::SettingsChanged(settings) => {
+                let settings = settings.clamped();
+                if settings == self.view.settings {
+                    return Vec::new();
+                }
+                let mut commands = self.apply_settings(settings.clone());
+                commands.push(Command::SaveSettings(settings));
+                commands
+            }
+            Event::SettingsSaved(result) => {
+                self.view.settings_error = result.err();
+                Vec::new()
+            }
         }
+    }
+
+    /// Puts `settings` in effect: a changed cache size re-plans the window
+    /// around the current file.
+    fn apply_settings(&mut self, settings: Settings) -> Vec<Command> {
+        self.view.settings = settings.clamped();
+        self.refresh()
     }
 
     /// Whether the dir column decides what the main area and the band show:
@@ -827,8 +885,9 @@ impl Core {
         }
     }
 
-    /// The first image is on screen: now the folder may be read and watched.
-    /// The watch starts first, so no change between the two is missed.
+    /// The first image is on screen: now the settings and the folder may be
+    /// read and the folder watched. The watch starts before the listing, so no
+    /// change between the two is missed.
     fn first_frame(&mut self) -> Vec<Command> {
         if self.first_frame_shown {
             return Vec::new();
@@ -840,13 +899,14 @@ impl Core {
             .and_then(Path::parent)
             .map(Path::to_path_buf)
             .or_else(|| self.start_dir.take());
-        match &self.dir {
-            Some(dir) => vec![
+        let mut commands = vec![Command::LoadSettings];
+        if let Some(dir) = &self.dir {
+            commands.extend([
                 Command::WatchFolder(dir.clone()),
                 Command::ListFolder(dir.clone()),
-            ],
-            None => Vec::new(),
+            ]);
         }
+        commands
     }
 
     /// A folder that cannot be read is reported and leaves the files as they
@@ -909,10 +969,28 @@ impl Core {
         }
     }
 
-    /// Keys of every focus area first, then those of the focused one.
+    /// Keys of every focus area first, then those of the focused one. The
+    /// open settings screen takes every key but quit.
     fn key(&mut self, key: KeyPress) -> Vec<Command> {
+        if self.view.settings_open {
+            match (key.key, key.command) {
+                (Key::Q, true) => return vec![Command::Quit],
+                (Key::S | Key::Escape, false) => {
+                    self.view.settings_open = false;
+                    self.view.key_line.keys =
+                        focus_keys(self.view.focus, self.view.dir_column.is_some());
+                }
+                _ => {}
+            }
+            return Vec::new();
+        }
         match (key.key, key.command) {
             (Key::Q, true) => vec![Command::Quit],
+            (Key::S, false) => {
+                self.view.settings_open = true;
+                self.view.key_line.keys = SETTINGS_KEYS.to_vec();
+                Vec::new()
+            }
             (Key::F, false) => {
                 self.view.fullscreen = !self.view.fullscreen;
                 vec![Command::SetFullscreen(self.view.fullscreen)]
@@ -1342,8 +1420,8 @@ impl Core {
         let Some(index) = self.files.iter().position(|f| f == current) else {
             return vec![current.clone()];
         };
-        let first = index.saturating_sub(self.cache_per_side);
-        let last = index.saturating_add(self.cache_per_side);
+        let first = index.saturating_sub(self.view.settings.cache_per_side);
+        let last = index.saturating_add(self.view.settings.cache_per_side);
         let len = last.saturating_sub(first).saturating_add(1);
         self.files.iter().skip(first).take(len).cloned().collect()
     }
@@ -1359,7 +1437,7 @@ impl Core {
             return Vec::new();
         };
         let mut neighbours = Vec::new();
-        for distance in 1..=self.cache_per_side {
+        for distance in 1..=self.view.settings.cache_per_side {
             let next = index.checked_add(distance).and_then(|i| self.files.get(i));
             let previous = index.checked_sub(distance).and_then(|i| self.files.get(i));
             neighbours.extend(next.into_iter().chain(previous).cloned());

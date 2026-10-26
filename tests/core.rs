@@ -140,6 +140,7 @@ fn browsing(path: &str, files: &[&str]) -> Core {
     assert_eq!(
         commands,
         [
+            Command::LoadSettings,
             Command::WatchFolder(PathBuf::from("/p")),
             Command::ListFolder(PathBuf::from("/p"))
         ]
@@ -162,6 +163,7 @@ fn folder_is_listed_and_watched_only_after_the_first_frame() {
     assert_eq!(
         core.handle(Event::FirstFrameShown),
         [
+            Command::LoadSettings,
             Command::WatchFolder(PathBuf::from("/p")),
             Command::ListFolder(PathBuf::from("/p"))
         ]
@@ -177,6 +179,7 @@ fn a_folder_with_nothing_to_open_is_watched_and_listed_after_the_first_frame() {
     assert_eq!(
         core.handle(Event::FirstFrameShown),
         [
+            Command::LoadSettings,
             Command::WatchFolder(PathBuf::from("/x")),
             Command::ListFolder(PathBuf::from("/x"))
         ]
@@ -271,7 +274,18 @@ fn key_line_lists_the_image_view_keys() {
     };
     assert_eq!(
         keys,
-        ["Left/Right", "+/-", "0", "1", "N", "B", "Tab", "F", quit]
+        [
+            "Left/Right",
+            "+/-",
+            "0",
+            "1",
+            "N",
+            "B",
+            "Tab",
+            "S",
+            "F",
+            quit
+        ]
     );
 }
 

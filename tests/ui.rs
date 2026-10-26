@@ -8,6 +8,7 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
 use pixpixpix::core::{Command, Core, Event, Scale, Screen};
 use pixpixpix::decode::DecodedImage;
+use pixpixpix::settings::Settings;
 use pixpixpix::startup::NoFile;
 use pixpixpix::ui;
 
@@ -565,4 +566,55 @@ fn the_key_line_lists_the_band_keys_while_it_has_the_focus() {
     h.run();
     h.get_by_label("+/-");
     assert!(h.query_by_label("Esc").is_none());
+}
+
+const CACHE_LABEL: &str = "Cached images per side";
+
+#[test]
+fn s_opens_and_closes_the_settings_screen() {
+    let mut h = harness(shown("/p/cat.jpg"));
+    h.run();
+    assert!(h.query_by_label("Settings").is_none());
+    h.key_press(egui::Key::S);
+    h.run();
+    h.get_by_label("Settings");
+    let slider = h.get_by_role_and_label(Role::Slider, CACHE_LABEL);
+    assert_eq!(slider.accesskit_node().numeric_value(), Some(5.0));
+    h.get_by_label("S/Esc");
+    h.key_press(egui::Key::S);
+    h.run();
+    assert!(h.query_by_label("Settings").is_none());
+}
+
+#[test]
+fn the_cache_size_is_changed_on_the_settings_screen() {
+    let mut h = harness(shown("/p/cat.jpg"));
+    h.run();
+    h.key_press(egui::Key::S);
+    h.run();
+    h.get_by_role_and_label(Role::Slider, CACHE_LABEL).focus();
+    h.run();
+    h.key_press(egui::Key::ArrowRight);
+    h.run();
+    assert_eq!(h.state().core.view().settings.cache_per_side, 6);
+    assert_eq!(
+        h.state().commands,
+        [Command::SaveSettings(Settings { cache_per_side: 6 })]
+    );
+    let slider = h.get_by_role_and_label(Role::Slider, CACHE_LABEL);
+    assert_eq!(slider.accesskit_node().numeric_value(), Some(6.0));
+}
+
+#[test]
+fn the_settings_screen_shows_why_the_file_is_unusable() {
+    let mut core = shown("/p/cat.jpg");
+    core.handle(Event::SettingsLoaded(Err(
+        "Cannot read settings.toml: bad".into()
+    )));
+    let mut h = harness(core);
+    h.run();
+    assert!(h.query_by_label("Cannot read settings.toml: bad").is_none());
+    h.key_press(egui::Key::S);
+    h.run();
+    h.get_by_label("Cannot read settings.toml: bad");
 }

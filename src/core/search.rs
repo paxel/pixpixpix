@@ -88,7 +88,7 @@ impl Core {
         };
         let files: Vec<PathBuf> = files
             .into_iter()
-            .take(self.cache_per_side.saturating_add(1))
+            .take(self.view.settings.cache_per_side.saturating_add(1))
             .collect();
         let cache = self
             .nav
