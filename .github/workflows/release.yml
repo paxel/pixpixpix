@@ -1,0 +1,110 @@
+# Release on tag: `git tag v0.1.0 && git push --tags` produces everything.
+#
+#   gate     - tag matches the crate version, then the full Linux gate
+#   build    - per target a flat tar.gz with pixpixpix, pix3, LICENSE, README.md
+#              and CHANGELOG.md: linux-x86_64, linux-aarch64 (built natively on
+#              the arm runner) and macos-arm64
+#   release  - GitHub Release, notes = the CHANGELOG section for the tag
+#
+# The Homebrew tap and Flatpak jobs (#33-#35) hang off `release` once they exist.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  gate:
+    name: Gate (Linux, full)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, 2026-10-08
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Tag matches the crate version
+        run: |
+          ver=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          tag=${GITHUB_REF_NAME#v}
+          [ "$ver" = "$tag" ] || { echo "tag v$tag != crate version $ver" >&2; exit 1; }
+      - name: Native libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libturbojpeg libheif1 libheif-plugin-libde265 libheif-plugin-dav1d libmpv2
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+
+  build:
+    name: Artifacts (${{ matrix.platform }})
+    needs: gate
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux-x86_64
+          - runner: ubuntu-24.04-arm
+            platform: linux-aarch64
+          - runner: macos-latest
+            platform: macos-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, 2026-10-08
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Build release binaries
+        run: cargo build --release
+      - name: Tarball (flat)
+        run: |
+          ver=${GITHUB_REF_NAME#v}
+          mkdir -p dist bundle
+          cp target/release/pixpixpix target/release/pix3 LICENSE README.md CHANGELOG.md bundle/
+          tar -C bundle -czf "dist/pixpixpix-${ver}-${{ matrix.platform }}.tar.gz" .
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ matrix.platform }}
+          path: dist/*
+
+  release:
+    name: GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Release notes from the CHANGELOG section
+        run: |
+          ver=${GITHUB_REF_NAME#v}
+          awk -v ver="$ver" '
+            $0 ~ "^## \\[" ver "\\]" { grab = 1; next }
+            grab && (/^## \[/ || /^---/) { exit }
+            grab { print }
+          ' CHANGELOG.md > notes.md
+          [ -s notes.md ] || echo "Release $ver." > notes.md
+      - name: Create release (idempotent - a rerun updates instead of dying)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" \
+              --title "pixpixpix $GITHUB_REF_NAME" --notes-file notes.md
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "pixpixpix $GITHUB_REF_NAME" \
+              --notes-file notes.md \
+              dist/*
+          fi

@@ -1,0 +1,59 @@
+# Gate for every push and pull request: formatting, clippy with zero warnings
+# and the full test suite on Linux x86_64, Linux aarch64 and macOS arm64.
+#
+# The native libraries pixpixpix loads at runtime (libturbojpeg, libheif with
+# its decoder plugins, libmpv) are installed on every lane, so the tests that
+# take the library-present branch really run. Clippy runs on every lane because
+# of the platform-specific code (X11 clipboard, macOS key names).
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64
+            runner: ubuntu-24.04
+          - name: Linux aarch64
+            runner: ubuntu-24.04-arm
+          - name: macOS arm64
+            runner: macos-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, 2026-10-08
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Native libraries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libturbojpeg libheif1 libheif-plugin-libde265 libheif-plugin-dav1d libmpv2
+      - name: Native libraries (macOS)
+        if: runner.os == 'macOS'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
+        run: brew install jpeg-turbo libheif mpv
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test
