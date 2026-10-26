@@ -133,7 +133,13 @@ fn press(core: &mut Core, key: Key) -> Vec<Command> {
 fn browsing(path: &str, files: &[&str]) -> Core {
     let mut core = started(path);
     let commands = core.handle(Event::FirstFrameShown);
-    assert_eq!(commands, [Command::ListFolder(PathBuf::from("/p"))]);
+    assert_eq!(
+        commands,
+        [
+            Command::WatchFolder(PathBuf::from("/p")),
+            Command::ListFolder(PathBuf::from("/p"))
+        ]
+    );
     core.handle(Event::FolderListed {
         dir: PathBuf::from("/p"),
         result: Ok(files.iter().map(PathBuf::from).collect()),
@@ -142,16 +148,19 @@ fn browsing(path: &str, files: &[&str]) -> Core {
 }
 
 #[test]
-fn folder_is_listed_only_after_the_first_frame() {
+fn folder_is_listed_and_watched_only_after_the_first_frame() {
     let (mut core, commands) = Core::start(Ok(PathBuf::from("/p/a.jpg")));
-    assert!(!commands.contains(&Command::ListFolder(PathBuf::from("/p"))));
+    assert_eq!(commands, [Command::Decode(PathBuf::from("/p/a.jpg"))]);
     core.handle(Event::Decoded {
         path: PathBuf::from("/p/a.jpg"),
         result: Ok(image()),
     });
     assert_eq!(
         core.handle(Event::FirstFrameShown),
-        [Command::ListFolder(PathBuf::from("/p"))]
+        [
+            Command::WatchFolder(PathBuf::from("/p")),
+            Command::ListFolder(PathBuf::from("/p"))
+        ]
     );
 }
 

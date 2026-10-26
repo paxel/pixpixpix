@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use crate::core::{Command, Core, Event, Screen};
 use crate::geometry::{self, Geometry};
-use crate::{decode, folder, startup, ui};
+use crate::{decode, folder, startup, ui, watch};
 
 pub const APP_ID: &str = "io.github.paxel.pixpixpix";
 
@@ -33,6 +33,7 @@ pub fn run() -> ExitCode {
         ctx: ctx.clone(),
         events,
         decodes: HashMap::new(),
+        watcher: None,
     };
     for command in &commands {
         worker.spawn(command);
@@ -99,6 +100,8 @@ struct Worker {
     events: Sender<Event>,
     /// Cancellation tokens of the decodes still running.
     decodes: HashMap<PathBuf, Arc<AtomicBool>>,
+    /// Watches the current folder while it is kept.
+    watcher: Option<notify::RecommendedWatcher>,
 }
 
 impl Worker {
@@ -126,6 +129,24 @@ impl Worker {
                     let result = folder::list_media(&dir).map_err(|e| e.to_string());
                     Some(Event::FolderListed { dir, result })
                 });
+            }
+            Command::WatchFolder(dir) => {
+                // Dropping the old watcher stops it.
+                self.watcher = None;
+                let events = self.events.clone();
+                let ctx = self.ctx.clone();
+                let watched = dir.clone();
+                let watcher = watch::watch(dir, move |result| {
+                    let dir = watched.clone();
+                    // The app may already be gone; nothing to report to then.
+                    let _ = events.send(Event::FolderListed { dir, result });
+                    ctx.request_repaint();
+                });
+                match watcher {
+                    Ok(watcher) => self.watcher = Some(watcher),
+                    // Browsing works without it, only changes go unnoticed.
+                    Err(e) => eprintln!("pixpixpix: cannot watch {}: {e}", dir.display()),
+                }
             }
             Command::SetFullscreen(_) | Command::Quit => {}
         }
@@ -173,7 +194,10 @@ impl App {
                 Command::SetFullscreen(on) => {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(on));
                 }
-                Command::Decode(_) | Command::CancelDecode(_) | Command::ListFolder(_) => {
+                Command::Decode(_)
+                | Command::CancelDecode(_)
+                | Command::ListFolder(_)
+                | Command::WatchFolder(_) => {
                     self.worker.spawn(&command);
                 }
             }

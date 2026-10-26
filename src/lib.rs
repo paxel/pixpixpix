@@ -20,5 +20,6 @@ pub mod folder;
 pub mod geometry;
 pub mod startup;
 pub mod ui;
+pub mod watch;
 
 pub use app::run;

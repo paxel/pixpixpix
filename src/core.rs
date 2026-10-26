@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use crate::decode::DecodedImage;
+use crate::folder;
 
 #[derive(Debug, Clone, Copy)]
 enum Step {
@@ -71,8 +72,9 @@ pub enum Event {
     },
     /// The first frame showing an image (or its error) reached the screen.
     FirstFrameShown,
-    /// A listing asked for with [`Command::ListFolder`] finished; the files are
-    /// in natural order.
+    /// A listing asked for with [`Command::ListFolder`] finished, or the folder
+    /// watched with [`Command::WatchFolder`] changed; the files are in natural
+    /// order.
     FolderListed {
         dir: PathBuf,
         result: Result<Vec<PathBuf>, String>,
@@ -99,6 +101,9 @@ pub enum Command {
     CancelDecode(PathBuf),
     /// List the media files of a folder, answered by [`Event::FolderListed`].
     ListFolder(PathBuf),
+    /// Watch a folder, replacing the folder watched so far, and answer every
+    /// change in it with a fresh [`Event::FolderListed`].
+    WatchFolder(PathBuf),
     SetFullscreen(bool),
     Quit,
 }
@@ -305,6 +310,8 @@ pub struct Core {
     first_frame_shown: bool,
     /// The file the main area is about, if any.
     current: Option<PathBuf>,
+    /// The folder listed and watched, once the first frame is shown.
+    dir: Option<PathBuf>,
     /// The media files of the current file's folder, in natural order; empty
     /// until listed.
     files: Vec<PathBuf>,
@@ -350,6 +357,7 @@ impl Core {
             },
             first_frame_shown: false,
             current,
+            dir: None,
             files: Vec::new(),
             cache_per_side: DEFAULT_CACHE_PER_SIDE,
             cache: BTreeMap::new(),
@@ -371,10 +379,7 @@ impl Core {
             Event::Key(key) => self.key(key),
             Event::Decoded { path, result } => self.decoded(path, result),
             Event::FirstFrameShown => self.first_frame(),
-            Event::FolderListed { dir, result } => {
-                self.folder_listed(&dir, result);
-                self.refresh()
-            }
+            Event::FolderListed { dir, result } => self.folder_listed(&dir, result),
             Event::Show(path) => self.show(path),
             Event::Viewport(size) => {
                 self.view.viewport = size;
@@ -391,27 +396,66 @@ impl Core {
         }
     }
 
-    /// The first image is on screen: now the folder may be read.
+    /// The first image is on screen: now the folder may be read and watched.
+    /// The watch starts first, so no change between the two is missed.
     fn first_frame(&mut self) -> Vec<Command> {
         if self.first_frame_shown {
             return Vec::new();
         }
         self.first_frame_shown = true;
-        match self.current.as_deref().and_then(Path::parent) {
-            Some(dir) => vec![Command::ListFolder(dir.to_path_buf())],
+        self.dir = self
+            .current
+            .as_deref()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf);
+        match &self.dir {
+            Some(dir) => vec![
+                Command::WatchFolder(dir.clone()),
+                Command::ListFolder(dir.clone()),
+            ],
             None => Vec::new(),
         }
     }
 
     /// A folder that cannot be read leaves browsing off; the current image
-    /// stays.
-    fn folder_listed(&mut self, dir: &Path, result: Result<Vec<PathBuf>, String>) {
-        let current_dir = self.current.as_deref().and_then(Path::parent);
-        if current_dir != Some(dir) {
-            return;
+    /// stays. A current file that vanished from the folder gives way to the
+    /// file after it, or the last one; with no files left the folder's
+    /// emptiness is shown until a file appears.
+    fn folder_listed(&mut self, dir: &Path, result: Result<Vec<PathBuf>, String>) -> Vec<Command> {
+        if self.dir.as_deref() != Some(dir) {
+            return Vec::new();
         }
-        if let Ok(files) = result {
-            self.files = files;
+        let Ok(files) = result else {
+            return Vec::new();
+        };
+        let vanished = self
+            .current
+            .as_ref()
+            .filter(|c| self.files.contains(c) && !files.contains(c))
+            .cloned();
+        let empty_before = self.current.is_none();
+        self.files = files;
+        let replacement = match vanished {
+            Some(gone) => {
+                let after = |f: &&PathBuf| {
+                    folder::natural_cmp(&folder::file_name(f), &folder::file_name(&gone)).is_gt()
+                };
+                self.files.iter().find(after).or(self.files.last()).cloned()
+            }
+            None if empty_before => self.files.first().cloned(),
+            None => return self.refresh(),
+        };
+        self.view.key_line.notice = None;
+        match replacement {
+            Some(path) => self.go_to(path),
+            None => {
+                self.current = None;
+                self.view.screen = Screen::Error {
+                    path: None,
+                    message: format!("No images in {}", dir.display()),
+                };
+                self.refresh()
+            }
         }
     }
 
