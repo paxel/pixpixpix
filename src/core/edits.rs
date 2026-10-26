@@ -856,6 +856,11 @@ impl Core {
                     self.parked = Some(Event::CloseRequested);
                     Some(vec![Command::KeepOpen])
                 }
+                // The file asked for opens once the dialog is answered.
+                Event::Opened(_) => {
+                    self.parked = Some(event.clone());
+                    Some(Vec::new())
+                }
                 Event::Key(_)
                 | Event::Show(_)
                 | Event::Clicked
@@ -873,7 +878,11 @@ impl Core {
         // A key or a move means the text field let go; its text is done.
         if matches!(
             event,
-            Event::Key(_) | Event::Show(_) | Event::CloseRequested | Event::Toolbar(_)
+            Event::Key(_)
+                | Event::Show(_)
+                | Event::Opened(_)
+                | Event::CloseRequested
+                | Event::Toolbar(_)
         ) {
             self.commit_text();
         }
@@ -882,7 +891,7 @@ impl Core {
         // drawn on.
         let video = self.video.is_some();
         let ask = match event {
-            Event::Show(_) | Event::CloseRequested => true,
+            Event::Show(_) | Event::Opened(_) | Event::CloseRequested => true,
             // Playing or seeking would replace the frame drawn on.
             Event::Clicked | Event::StepVideo(_) => video,
             Event::Key(key) if self.view.settings_open => key.command && key.key == Key::Q,

@@ -164,7 +164,7 @@ impl Core {
 
     /// Drops the overview, cancelling its scan and thumbnail decodes; the
     /// view behind it shows again as it was, with the focus it had.
-    fn close_overview(&mut self) -> Vec<Command> {
+    pub(super) fn close_overview(&mut self) -> Vec<Command> {
         let Some(overview) = self.view.overview.take() else {
             return Vec::new();
         };

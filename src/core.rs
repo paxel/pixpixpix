@@ -126,6 +126,9 @@ pub enum Event {
     },
     /// A thumb of the band was clicked.
     Show(PathBuf),
+    /// The system asked to open the file, as Finder's "Open With" does on
+    /// macOS.
+    Opened(PathBuf),
     /// The size of the area the image is shown in.
     Viewport(Points),
     /// The mouse wheel turned by `delta` points, positive away from the user,
@@ -1543,6 +1546,7 @@ impl Core {
             Event::FirstFrameShown => self.first_frame(),
             Event::FolderListed { dir, result } => self.folder_listed(&dir, result),
             Event::Show(path) => self.show(path),
+            Event::Opened(path) => self.opened(path),
             Event::Viewport(size) => {
                 self.view.viewport = size;
                 Vec::new()
@@ -3090,6 +3094,28 @@ impl Core {
         }
         self.view.key_line.notice = None;
         self.go_to(path)
+    }
+
+    /// The system asked to open `path`: it shows as if pixpixpix had started
+    /// on it, in place of the overview.
+    fn opened(&mut self, path: PathBuf) -> Vec<Command> {
+        let mut commands = self.close_overview();
+        // Before the first frame the folder is not read yet; the file's
+        // becomes the one read.
+        if let Some(dir) = path.parent().map(Path::to_path_buf)
+            && self.first_frame_shown
+            && self.dir.as_ref() != Some(&dir)
+        {
+            commands.extend(if self.view.dir_column.is_some() {
+                self.enter(dir)
+            } else {
+                self.switch_folder(dir)
+            });
+        }
+        self.view.key_line.notice = None;
+        commands.extend(self.go_to(path));
+        self.set_focus(Focus::Image);
+        commands
     }
 
     /// Makes `path` the current file: a cached one shows at once, otherwise it

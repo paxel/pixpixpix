@@ -2,7 +2,7 @@
 //! so pasting into an image app gives the picture and pasting into a file
 //! manager copies the file. On Linux pixpixpix owns the X11 clipboard from a
 //! window of its own and serves it as long as it runs; Wayland sessions reach
-//! it through XWayland. macOS is not supported yet.
+//! it through XWayland. On macOS both go on the general pasteboard.
 
 use std::io::Cursor;
 use std::path::Path;
@@ -124,7 +124,12 @@ impl Clipboard {
         owner.set(content)
     }
 
-    #[cfg(not(all(unix, not(target_os = "macos"))))]
+    #[cfg(target_os = "macos")]
+    fn set(&mut self, content: Content) -> Result<(), String> {
+        crate::macos::copy(&content)
+    }
+
+    #[cfg(not(unix))]
     fn set(&mut self, _content: Content) -> Result<(), String> {
         Err("the clipboard is not supported on this system yet".to_owned())
     }

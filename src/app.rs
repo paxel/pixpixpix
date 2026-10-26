@@ -35,6 +35,8 @@ pub fn run() -> ExitCode {
 
     let ctx = egui::Context::default();
     let (events, inbox) = channel();
+    #[cfg(target_os = "macos")]
+    crate::macos::open_files(events.clone(), ctx.clone());
     let (core, commands) = Core::start(start);
     let mut worker = Worker {
         ctx: ctx.clone(),

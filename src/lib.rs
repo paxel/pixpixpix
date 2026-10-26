@@ -23,6 +23,8 @@ pub mod folder;
 pub mod geometry;
 pub mod heif;
 pub mod launcher;
+#[cfg(target_os = "macos")]
+pub mod macos;
 pub mod metadata;
 pub mod motion;
 pub mod mpv;

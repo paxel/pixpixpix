@@ -25,7 +25,7 @@ neighbours are preloaded so the next image is already there.
 - **Overview.** A scrollable gallery of the current folder and every folder below it,
   with thumbnails shared with other apps through the freedesktop thumbnail cache.
 - **Act on the file.** Rotate (JPEG losslessly), move to the trash, copy to the
-  clipboard (Linux only for now, through X11 or XWayland), or open in another app.
+  clipboard, or open in another app.
 - **Videos and moving photos.** Videos play through libmpv with seeking and frame
   stepping; Apple Live Photos and Google/Samsung Motion Photos play their moment.
   Animated GIF and WebP play on their own.
