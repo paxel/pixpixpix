@@ -504,7 +504,8 @@ fn band_shows_the_cached_images_in_folder_order_with_the_current_one_marked() {
         Some(&Thumb {
             path: p("a.jpg"),
             image: Some(image()),
-            current: false
+            current: false,
+            animated: false
         })
     );
 }
@@ -526,7 +527,8 @@ fn broken_files_are_in_the_band_without_an_image() {
         Some(&Thumb {
             path: p("b.jpg"),
             image: None,
-            current: false
+            current: false,
+            animated: false
         })
     );
 }

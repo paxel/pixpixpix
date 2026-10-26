@@ -187,6 +187,7 @@ impl Core {
                             path: path.clone(),
                             image,
                             current: path == first,
+                            animated: false,
                         })
                     })
                     .collect();

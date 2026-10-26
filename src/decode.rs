@@ -6,8 +6,11 @@ use std::io::{Cursor, Read};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
-use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader};
+use image::codecs::gif::GifDecoder;
+use image::codecs::webp::WebPDecoder;
+use image::{AnimationDecoder, DynamicImage, ImageDecoder, ImageFormat, ImageReader};
 
 use crate::folder;
 use crate::heif::{self, Heif};
@@ -38,14 +41,39 @@ impl DecodedImage {
     }
 }
 
+/// The first frame of a file and whether more follow.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FirstFrame {
+    pub image: DecodedImage,
+    /// An animated GIF or WebP.
+    pub animated: bool,
+}
+
+/// One picture of an animation and how long it shows, as the file says.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Frame {
+    pub image: DecodedImage,
+    pub delay: Duration,
+}
+
 /// How much is read between two looks at the cancellation token.
 const CHUNK: u64 = 256 * 1024;
+
+/// The most pixel bytes all frames of an animation may take together; a
+/// larger one stays at its first frame.
+const MAX_ANIMATION_BYTES: usize = 512 * 1024 * 1024;
 
 /// Decodes the file at `path`, or gives up with `None` once `cancel` is set:
 /// the file is read in chunks with a look at the token between them, then
 /// decoded from memory. The error is the decoder's message, meant to be shown
-/// to the user as is.
+/// to the user as is. An animation gives its first frame.
 pub fn decode_file(path: &Path, cancel: &AtomicBool) -> Option<Result<DecodedImage, String>> {
+    decode_first_frame(path, cancel).map(|result| result.map(|first| first.image))
+}
+
+/// Like [`decode_file`], telling an animation apart; finding out reads only
+/// the file's headers.
+pub fn decode_first_frame(path: &Path, cancel: &AtomicBool) -> Option<Result<FirstFrame, String>> {
     let cancelled = || cancel.load(Ordering::Relaxed);
     let bytes = match read(path, &cancelled) {
         Ok(Some(bytes)) => bytes,
@@ -55,11 +83,130 @@ pub fn decode_file(path: &Path, cancel: &AtomicBool) -> Option<Result<DecodedIma
     if cancelled() {
         return None;
     }
-    let result = decode_bytes(path, bytes);
+    let animated = is_animated(&bytes);
+    let result = decode_bytes(path, bytes).map(|image| FirstFrame { image, animated });
     if cancelled() {
         return None;
     }
     Some(result)
+}
+
+/// Decodes every frame of the animated GIF or WebP at `path`, each the size
+/// of the first and turned like it, or gives up with `None` once `cancel` is
+/// set; the token is looked at between frames too.
+pub fn decode_frames(path: &Path, cancel: &AtomicBool) -> Option<Result<Vec<Frame>, String>> {
+    let cancelled = || cancel.load(Ordering::Relaxed);
+    let bytes = match read(path, &cancelled) {
+        Ok(Some(bytes)) => bytes,
+        Ok(None) => return None,
+        Err(e) => return Some(Err(e.to_string())),
+    };
+    let cursor = Cursor::new(bytes);
+    match image::guess_format(cursor.get_ref()) {
+        Ok(ImageFormat::Gif) => match GifDecoder::new(cursor) {
+            Ok(decoder) => frames(decoder, &cancelled),
+            Err(e) => Some(Err(e.to_string())),
+        },
+        Ok(ImageFormat::WebP) => match WebPDecoder::new(cursor) {
+            Ok(decoder) => frames(decoder, &cancelled),
+            Err(e) => Some(Err(e.to_string())),
+        },
+        _ => Some(Err("not an animated GIF or WebP".to_owned())),
+    }
+}
+
+/// The frames of `decoder`, upright, or `None` once cancelled.
+fn frames<'a>(
+    mut decoder: impl ImageDecoder + AnimationDecoder<'a>,
+    cancelled: &impl Fn() -> bool,
+) -> Option<Result<Vec<Frame>, String>> {
+    let orientation = match decoder.orientation() {
+        Ok(orientation) => orientation,
+        Err(e) => return Some(Err(e.to_string())),
+    };
+    let mut frames = Vec::new();
+    let mut bytes = 0usize;
+    for frame in decoder.into_frames() {
+        if cancelled() {
+            return None;
+        }
+        let frame = match frame {
+            Ok(frame) => frame,
+            Err(e) => return Some(Err(e.to_string())),
+        };
+        let delay = Duration::from(frame.delay());
+        let mut image = DynamicImage::ImageRgba8(frame.into_buffer());
+        image.apply_orientation(orientation);
+        let image = DecodedImage::from_dynamic(image);
+        bytes = bytes.saturating_add(image.rgba.len());
+        if bytes > MAX_ANIMATION_BYTES {
+            return Some(Err("too large to animate".to_owned()));
+        }
+        frames.push(Frame { image, delay });
+    }
+    Some(Ok(frames))
+}
+
+/// Whether `bytes` are an animated GIF or WebP.
+fn is_animated(bytes: &[u8]) -> bool {
+    match image::guess_format(bytes) {
+        Ok(ImageFormat::Gif) => gif_images(bytes) > 1,
+        Ok(ImageFormat::WebP) => {
+            WebPDecoder::new(Cursor::new(bytes)).is_ok_and(|d| d.has_animation())
+        }
+        _ => false,
+    }
+}
+
+/// How many images the GIF in `bytes` holds, counted up to two by walking
+/// its blocks without decoding any; a damaged file counts what was found.
+fn gif_images(bytes: &[u8]) -> usize {
+    let mut images = 0usize;
+    // The header and screen descriptor, then the global colour table.
+    let Some(mut at) = bytes.get(10).and_then(|flags| skip_table(*flags, 13)) else {
+        return images;
+    };
+    while images < 2 {
+        let next = match bytes.get(at) {
+            // An extension: label, then data sub-blocks.
+            Some(0x21) => at.checked_add(2).and_then(|at| skip_blocks(bytes, at)),
+            // An image: descriptor, local colour table, code size, data.
+            Some(0x2C) => {
+                images = images.saturating_add(1);
+                at.checked_add(9)
+                    .and_then(|flags| bytes.get(flags))
+                    .and_then(|flags| skip_table(*flags, at.checked_add(10)?))
+                    .and_then(|at| skip_blocks(bytes, at.checked_add(1)?))
+            }
+            _ => None,
+        };
+        match next {
+            Some(next) => at = next,
+            None => break,
+        }
+    }
+    images
+}
+
+/// Skips the colour table at `at` that a GIF descriptor's `flags` announce.
+fn skip_table(flags: u8, at: usize) -> Option<usize> {
+    if flags & 0x80 == 0 {
+        return Some(at);
+    }
+    let size = 3usize.checked_shl(u32::from(flags & 0x07).checked_add(1)?)?;
+    at.checked_add(size)
+}
+
+/// Skips the GIF data sub-blocks starting at `at`, up to their terminator.
+fn skip_blocks(bytes: &[u8], mut at: usize) -> Option<usize> {
+    loop {
+        let len = usize::from(*bytes.get(at)?);
+        at = at.checked_add(1)?;
+        if len == 0 {
+            return Some(at);
+        }
+        at = at.checked_add(len)?;
+    }
 }
 
 /// The whole file, or `None` when cancelled while reading.

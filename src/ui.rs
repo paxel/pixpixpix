@@ -24,6 +24,9 @@ const CURRENT_MARK: Color32 = Color32::from_rgb(0xff, 0xd5, 0x80);
 /// The highlighted thumb while the band has the focus, around the current mark.
 const BAND_HIGHLIGHT: Color32 = Color32::from_rgb(0x7c, 0xc4, 0xff);
 const BROKEN_TILE: Color32 = Color32::from_rgb(0x3a, 0x1e, 0x1c);
+/// The badge of an animated thumb and its film frames.
+const ANIMATED_BADGE: Color32 = Color32::from_rgba_premultiplied(0x12, 0x12, 0x14, 0xc0);
+const ANIMATED_MARK: Color32 = Color32::from_rgb(0xe8, 0xe8, 0xea);
 /// The highlighted folder of the focused dir column, and its text.
 const HIGHLIGHT: Color32 = Color32::from_rgb(0xff, 0xd5, 0x80);
 const HIGHLIGHT_TEXT: Color32 = Color32::from_rgb(0x12, 0x12, 0x14);
@@ -47,33 +50,41 @@ const APP_HINT: &str = if cfg!(target_os = "macos") {
     "A command such as gwenview or vlc, the file is added last. Empty: the system default."
 };
 
-/// GPU textures of decoded images, uploaded once per path and decode; a file
-/// decoded again, after a rotation was written, is uploaded again.
+/// GPU textures of decoded images, uploaded once per path and decode, and
+/// once per frame of an animation; a file decoded again, after a rotation was
+/// written, is uploaded again.
 #[derive(Default)]
 pub struct Textures {
-    loaded: HashMap<PathBuf, (Arc<[u8]>, TextureHandle)>,
+    loaded: HashMap<PathBuf, Vec<Uploaded>>,
 }
+
+/// A texture and the pixels it was made from.
+type Uploaded = (Arc<[u8]>, TextureHandle);
 
 impl Textures {
     fn get(&mut self, ctx: &egui::Context, path: &Path, image: &DecodedImage) -> TextureHandle {
-        if let Some((pixels, t)) = self.loaded.get(path)
-            && Arc::ptr_eq(pixels, &image.rgba)
+        let loaded = self.loaded.entry(path.to_path_buf()).or_default();
+        if let Some((_, t)) = loaded
+            .iter()
+            .find(|(pixels, _)| Arc::ptr_eq(pixels, &image.rgba))
         {
             return t.clone();
         }
         let size = [image.width as usize, image.height as usize];
         let color = ColorImage::from_rgba_unmultiplied(size, &image.rgba);
         let handle = ctx.load_texture(folder::file_name(path), color, TextureOptions::LINEAR);
-        self.loaded.insert(
-            path.to_path_buf(),
-            (Arc::clone(&image.rgba), handle.clone()),
-        );
+        loaded.push((Arc::clone(&image.rgba), handle.clone()));
         handle
     }
 
-    /// Drops every texture whose path `keep` rejects.
+    /// Drops every texture whose path `keep` rejects, and those of pixels
+    /// nobody but the textures holds any more: an earlier decode or the
+    /// frames of an animation left.
     pub fn retain(&mut self, keep: impl Fn(&Path) -> bool) {
-        self.loaded.retain(|p, _| keep(p));
+        self.loaded.retain(|p, loaded| {
+            loaded.retain(|(pixels, _)| Arc::strong_count(pixels) > 1);
+            keep(p) && !loaded.is_empty()
+        });
     }
 }
 
@@ -140,6 +151,9 @@ fn map_key(key: egui::Key) -> Option<Key> {
 /// as core events.
 pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Event> {
     textures.retain(|p| shown(view, p));
+    if let Some(wait) = view.next_frame_in {
+        ui.ctx().request_repaint_after(wait);
+    }
     let mut events = Vec::new();
     egui::Panel::bottom("key_line")
         .resizable(false)
@@ -210,9 +224,9 @@ fn shown(view: &View, path: &Path) -> bool {
     current || view.band.iter().any(|t| t.path == path)
 }
 
-/// The cached files as small thumbs, broken ones as a marked tile, the current
-/// one framed and the highlighted one framed wider; a click on a thumb asks the
-/// core to show it.
+/// The cached files as small thumbs, broken ones as a marked tile, animated
+/// ones with a badge, the current one framed and the highlighted one framed
+/// wider; a click on a thumb asks the core to show it.
 fn show_band(
     ui: &mut egui::Ui,
     band: &[Thumb],
@@ -230,7 +244,12 @@ fn show_band(
                     let size = fit(pixels, egui::vec2(THUMB_HEIGHT * 2.0, THUMB_HEIGHT));
                     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
                     egui::Image::new(&texture).paint_at(ui, rect);
-                    (rect, response, name)
+                    if thumb.animated {
+                        paint_animated_badge(ui.painter(), rect);
+                        (rect, response, format!("{name} (animated)"))
+                    } else {
+                        (rect, response, name)
+                    }
                 }
                 None => {
                     let size = egui::Vec2::splat(THUMB_HEIGHT);
@@ -279,6 +298,22 @@ fn show_band(
             }
         }
     });
+}
+
+/// The badge of an animated thumb in its bottom left corner: a row of film
+/// frames.
+fn paint_animated_badge(painter: &egui::Painter, rect: egui::Rect) {
+    let badge = egui::Rect::from_min_size(
+        egui::pos2(rect.min.x + 3.0, rect.max.y - 13.0),
+        egui::vec2(22.0, 10.0),
+    );
+    painter.rect_filled(badge, 2.0, ANIMATED_BADGE);
+    for offset in [2.0, 8.5, 15.0] {
+        let left = badge.min.x + offset;
+        let frame =
+            egui::Rect::from_min_size(egui::pos2(left, badge.min.y + 2.0), egui::vec2(5.0, 6.0));
+        painter.rect_filled(frame, 1.0, ANIMATED_MARK);
+    }
 }
 
 /// The current folder's name over its subfolders, the highlighted one painted

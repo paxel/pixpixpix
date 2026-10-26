@@ -4,8 +4,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
-use crate::decode::DecodedImage;
+use crate::decode::{DecodedImage, Frame};
 use crate::folder::{self, Found};
 use crate::rotate::Rotation;
 use crate::settings::Settings;
@@ -147,6 +148,16 @@ pub enum Event {
     },
     /// A [`Command::Copy`] finished.
     Copied(Result<(), String>),
+    /// The file of a successful [`Event::Decoded`], sent right after it, is
+    /// an animation; that event showed its first frame.
+    Animated(PathBuf),
+    /// A [`Command::DecodeFrames`] finished.
+    FramesDecoded {
+        path: PathBuf,
+        result: Result<Vec<Frame>, String>,
+    },
+    /// The time has come for the frame [`View::next_frame_in`] announced.
+    Tick(Instant),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -198,6 +209,12 @@ pub enum Command {
         image: DecodedImage,
         rotation: Rotation,
     },
+    /// Decode all frames of an animation, replacing the one decoded so far;
+    /// answered by [`Event::FramesDecoded`].
+    DecodeFrames(PathBuf),
+    /// The running [`Command::DecodeFrames`] is no longer needed; it reports
+    /// nothing once cancelled.
+    CancelFrames,
     SetFullscreen(bool),
     Quit,
 }
@@ -454,6 +471,8 @@ pub struct Thumb {
     /// Absent when the file failed to decode.
     pub image: Option<DecodedImage>,
     pub current: bool,
+    /// The file is an animation.
+    pub animated: bool,
 }
 
 /// Zoom factor of one `+`/`-` press.
@@ -610,6 +629,9 @@ pub struct View {
     pub trash_error: Option<String>,
     /// Why the last `c` could not put the image on the clipboard.
     pub copy_error: Option<String>,
+    /// While the main area plays an animation: when its next frame is due,
+    /// to be announced with [`Event::Tick`]. Zero before the first tick.
+    pub next_frame_in: Option<Duration>,
 }
 
 pub struct Core {
@@ -662,6 +684,39 @@ pub struct Core {
     /// Files sent to the trash and not reported back yet; listings leave them
     /// out, so a listing taken before the trash cannot bring them back.
     trashing: BTreeSet<PathBuf>,
+    /// Files whose last decode found an animation.
+    animated: BTreeSet<PathBuf>,
+    /// The animation of the current file, once the first frame is shown.
+    animation: Option<Animation>,
+}
+
+/// Shorter frame delays than this are taken as [`SLOW_DELAY`], as browsers do.
+const MIN_DELAY: Duration = Duration::from_millis(20);
+const SLOW_DELAY: Duration = Duration::from_millis(100);
+
+/// The animation of the current file.
+#[derive(Debug)]
+enum Animation {
+    /// Waiting for its frames; the first one is shown meanwhile.
+    Decoding(PathBuf),
+    /// Looping since the first tick after the frames arrived.
+    Playing {
+        path: PathBuf,
+        frames: Vec<Frame>,
+        start: Option<Instant>,
+        /// When the frame shown gives way, from the last tick.
+        next_in: Duration,
+    },
+    /// Its frames could not be decoded; the first one stays.
+    Still(PathBuf),
+}
+
+impl Animation {
+    fn path(&self) -> &Path {
+        match self {
+            Self::Decoding(path) | Self::Playing { path, .. } | Self::Still(path) => path,
+        }
+    }
 }
 
 /// What the nav cache knows of a folder.
@@ -721,6 +776,7 @@ impl Nav {
                     path: path.clone(),
                     image: result.as_ref().ok().cloned(),
                     current: true,
+                    animated: false,
                 }],
             ),
         }
@@ -771,6 +827,7 @@ impl Core {
                 rotation_error: None,
                 trash_error: None,
                 copy_error: None,
+                next_frame_in: None,
             },
             screen,
             band: Vec::new(),
@@ -792,6 +849,8 @@ impl Core {
             rotation: Rotation::None,
             writing: None,
             trashing: BTreeSet::new(),
+            animated: BTreeSet::new(),
+            animation: None,
         };
         (core, commands)
     }
@@ -813,6 +872,7 @@ impl Core {
             self.view.rotation_error = None;
         }
         commands.extend(self.sync_nav());
+        commands.extend(self.sync_animation());
         self.publish();
         commands
     }
@@ -872,6 +932,18 @@ impl Core {
                 }
                 Vec::new()
             }
+            Event::Animated(path) => {
+                self.animated.insert(path);
+                Vec::new()
+            }
+            Event::FramesDecoded { path, result } => {
+                self.frames_decoded(path, result);
+                Vec::new()
+            }
+            Event::Tick(now) => {
+                self.tick(now);
+                Vec::new()
+            }
         }
     }
 
@@ -918,9 +990,106 @@ impl Core {
         } else {
             self.rotation
         };
+        self.view.next_frame_in = match (&preview, &self.animation) {
+            (None, Some(Animation::Playing { next_in, .. })) => Some(*next_in),
+            _ => None,
+        };
         (self.view.screen, self.view.band) =
             preview.unwrap_or_else(|| (self.screen.clone(), self.band.clone()));
+        for thumb in &mut self.view.band {
+            thumb.animated = thumb.image.is_some() && self.animated.contains(&thumb.path);
+        }
         self.publish_band_highlight();
+    }
+
+    /// Fits the animation to the current file: an animated one shown as an
+    /// image gets its frames decoded once the first frame is on screen; the
+    /// frames of a file left are dropped, their decode cancelled.
+    fn sync_animation(&mut self) -> Vec<Command> {
+        let wanted = self.current.clone().filter(|current| {
+            self.first_frame_shown
+                && self.animated.contains(current)
+                && matches!(&self.screen, Screen::Image { path, .. } if path == current)
+        });
+        if self.animation.as_ref().map(Animation::path) == wanted.as_deref() {
+            return Vec::new();
+        }
+        let mut commands = Vec::new();
+        if let Some(Animation::Decoding(_)) = self.animation.take() {
+            commands.push(Command::CancelFrames);
+        }
+        if let Some(path) = wanted {
+            commands.push(Command::DecodeFrames(path.clone()));
+            self.animation = Some(Animation::Decoding(path));
+        }
+        commands
+    }
+
+    /// The frames of the current file arrived: they play from the next tick,
+    /// the first being the image already shown. Without a second frame the
+    /// first one stays.
+    fn frames_decoded(&mut self, path: PathBuf, result: Result<Vec<Frame>, String>) {
+        if !matches!(&self.animation, Some(Animation::Decoding(p)) if *p == path) {
+            return;
+        }
+        self.animation = Some(match result {
+            Ok(mut frames) if frames.len() > 1 => {
+                for frame in &mut frames {
+                    if frame.delay < MIN_DELAY {
+                        frame.delay = SLOW_DELAY;
+                    }
+                }
+                // The first frame is not held twice.
+                if let (Some(first), Some(Ok(shown))) = (frames.first_mut(), self.cache.get(&path))
+                {
+                    first.image = shown.clone();
+                }
+                Animation::Playing {
+                    path,
+                    frames,
+                    start: None,
+                    next_in: Duration::ZERO,
+                }
+            }
+            _ => Animation::Still(path),
+        });
+    }
+
+    /// Shows the frame due at `now`: the frames loop, the first tick starts
+    /// them.
+    fn tick(&mut self, now: Instant) {
+        let Some(Animation::Playing {
+            path,
+            frames,
+            start,
+            next_in,
+        }) = &mut self.animation
+        else {
+            return;
+        };
+        let start = *start.get_or_insert(now);
+        let total = frames
+            .iter()
+            .fold(Duration::ZERO, |sum, f| sum.saturating_add(f.delay));
+        let elapsed = now.saturating_duration_since(start).as_nanos();
+        let mut into = elapsed.checked_rem(total.as_nanos()).unwrap_or(0);
+        let mut shown = frames.first();
+        *next_in = Duration::ZERO;
+        for frame in frames.iter() {
+            let delay = frame.delay.as_nanos();
+            if into < delay {
+                shown = Some(frame);
+                let left = delay.saturating_sub(into);
+                *next_in = Duration::from_nanos(u64::try_from(left).unwrap_or(u64::MAX));
+                break;
+            }
+            into = into.saturating_sub(delay);
+        }
+        if let (Some(frame), Screen::Image { path: p, image }) = (shown, &mut self.screen)
+            && p == path
+        {
+            *image = frame.image.clone();
+        }
     }
 
     /// Keeps the band highlight on a thumb while the band has the focus: on
@@ -1689,6 +1858,8 @@ impl Core {
     }
 
     fn decoded(&mut self, path: PathBuf, result: Result<DecodedImage, String>) -> Vec<Command> {
+        // An animation says so right after this.
+        self.animated.remove(&path);
         let mut commands = self.search_decoded(&path, &result);
         if !self.decoding.remove(&path) {
             self.nav_decoded(path, result);
@@ -1775,6 +1946,7 @@ impl Core {
                     image,
                     current: self.current.as_ref() == Some(&path),
                     path,
+                    animated: false,
                 })
             })
             .collect();

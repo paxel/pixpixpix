@@ -38,6 +38,7 @@ pub fn run() -> ExitCode {
         decodes: HashMap::new(),
         watcher: None,
         search: None,
+        frames: None,
         settings_path: settings::default_path(),
         copier: None,
     };
@@ -114,6 +115,8 @@ struct Worker {
     watcher: Option<notify::RecommendedWatcher>,
     /// Cancellation token of the running search.
     search: Option<Arc<AtomicBool>>,
+    /// Cancellation token of the running frames decode.
+    frames: Option<Arc<AtomicBool>>,
     /// Where the settings file lives; absent without a config directory.
     settings_path: Option<PathBuf>,
     /// Hands copies to the clipboard thread, started on the first copy.
@@ -135,10 +138,36 @@ impl Worker {
                 let cancel = Arc::new(AtomicBool::new(false));
                 self.decodes.insert(path.clone(), Arc::clone(&cancel));
                 let path = path.clone();
-                self.run(move || {
-                    let result = decode::decode_file(&path, &cancel)?;
-                    Some(Event::Decoded { path, result })
+                self.run_all(move || {
+                    let result = decode::decode_first_frame(&path, &cancel)?;
+                    let animated = matches!(&result, Ok(first) if first.animated);
+                    let result = result.map(|first| first.image);
+                    let decoded = Event::Decoded {
+                        path: path.clone(),
+                        result,
+                    };
+                    Some(if animated {
+                        vec![decoded, Event::Animated(path)]
+                    } else {
+                        vec![decoded]
+                    })
                 });
+            }
+            Command::DecodeFrames(path) => {
+                let cancel = Arc::new(AtomicBool::new(false));
+                if let Some(old) = self.frames.replace(Arc::clone(&cancel)) {
+                    old.store(true, Ordering::Relaxed);
+                }
+                let path = path.clone();
+                self.run(move || {
+                    let result = decode::decode_frames(&path, &cancel)?;
+                    Some(Event::FramesDecoded { path, result })
+                });
+            }
+            Command::CancelFrames => {
+                if let Some(cancel) = self.frames.take() {
+                    cancel.store(true, Ordering::Relaxed);
+                }
             }
             Command::CancelDecode(path) => {
                 if let Some(cancel) = self.decodes.remove(path) {
@@ -293,14 +322,23 @@ impl Worker {
 
     /// Runs `job` on its own thread and sends its event back, if it has one.
     fn run(&self, job: impl FnOnce() -> Option<Event> + Send + 'static) {
+        self.run_all(move || job().map(|event| vec![event]));
+    }
+
+    /// Runs `job` on its own thread and sends its events back in order, if
+    /// it has any.
+    fn run_all(&self, job: impl FnOnce() -> Option<Vec<Event>> + Send + 'static) {
         let events = self.events.clone();
         let ctx = self.ctx.clone();
         std::thread::spawn(move || {
-            if let Some(event) = job() {
+            let Some(sent) = job() else {
+                return;
+            };
+            for event in sent {
                 // The app may already be gone; nothing to report to then.
                 let _ = events.send(event);
-                ctx.request_repaint();
             }
+            ctx.request_repaint();
         });
     }
 }
@@ -338,7 +376,9 @@ impl App {
                 | Command::OpenExternally { .. }
                 | Command::WriteRotation { .. }
                 | Command::Trash(_)
-                | Command::Copy { .. } => {
+                | Command::Copy { .. }
+                | Command::DecodeFrames(_)
+                | Command::CancelFrames => {
                     self.worker.spawn(&command);
                 }
             }
@@ -379,6 +419,10 @@ impl eframe::App for App {
         }
         while let Ok(event) = self.inbox.try_recv() {
             self.dispatch(&ctx, event);
+        }
+        // Not from `ui::show`: its events ask for another frame at once.
+        if self.core.view().next_frame_in.is_some() {
+            self.dispatch(&ctx, Event::Tick(Instant::now()));
         }
         for event in ui::input_events(&ctx) {
             self.dispatch(&ctx, event);

@@ -771,3 +771,60 @@ fn c_reaches_the_core_and_the_outcome_shows_in_the_key_line() {
     h.run();
     h.get_by_label("Cannot copy a.jpg: no display");
 }
+
+/// [`browsing`] on `/p/a.gif` of `a.gif` and `b.gif`, both decoded and
+/// animated.
+fn browsing_animations() -> Core {
+    let mut core = browsing("/p/a.gif", &["/p/a.gif", "/p/b.gif"]);
+    core.handle(Event::Animated(PathBuf::from("/p/a.gif")));
+    core.handle(Event::Decoded {
+        path: PathBuf::from("/p/b.gif"),
+        result: Ok(DecodedImage {
+            width: 2,
+            height: 1,
+            rgba: Arc::from(vec![255; 8]),
+        }),
+    });
+    core.handle(Event::Animated(PathBuf::from("/p/b.gif")));
+    core
+}
+
+#[test]
+fn animated_files_are_in_the_band_with_an_animated_marker() {
+    let mut h = harness(browsing_animations());
+    h.run();
+    h.get_by_role_and_label(Role::Button, "a.gif (animated)");
+    h.get_by_role_and_label(Role::Button, "b.gif (animated)")
+        .click();
+    h.run();
+    h.get_by_role_and_label(Role::Image, "b.gif");
+}
+
+#[test]
+fn a_playing_animation_is_drawn_frame_by_frame() {
+    let mut core = browsing_animations();
+    let frame = |value: u8| pixpixpix::decode::Frame {
+        image: DecodedImage {
+            width: 2,
+            height: 1,
+            rgba: Arc::from(vec![value; 8]),
+        },
+        delay: std::time::Duration::from_millis(100),
+    };
+    core.handle(Event::FramesDecoded {
+        path: PathBuf::from("/p/a.gif"),
+        result: Ok(vec![frame(255), frame(10)]),
+    });
+    let start = std::time::Instant::now();
+    core.handle(Event::Tick(start));
+    let mut h = harness(core);
+    // A playing animation keeps asking for frames, so `run` never settles.
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Image, "a.gif");
+    h.state_mut()
+        .core
+        .handle(Event::Tick(start + std::time::Duration::from_millis(150)));
+    h.run_steps(3);
+    h.get_by_role_and_label(Role::Image, "a.gif");
+    h.get_by_role_and_label(Role::Button, "a.gif (animated)");
+}

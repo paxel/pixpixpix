@@ -358,3 +358,144 @@ fn start_with_an_empty_folder_names_it_and_explains_why() {
     assert_eq!(none.dir, dir.path());
     assert!(none.message.starts_with("No images in"), "{}", none.message);
 }
+
+/// Frames of 4x2 pixels in one color each, lasting their delay in ms.
+const FRAMES: [([u8; 4], u32); 3] = [
+    ([255, 0, 0, 255], 100),
+    ([0, 0, 255, 255], 10),
+    ([0, 255, 0, 255], 250),
+];
+
+/// An animated GIF of [`FRAMES`].
+fn animated_gif() -> image::ImageResult<Vec<u8>> {
+    use image::codecs::gif::GifEncoder;
+    let mut bytes = Vec::new();
+    {
+        let mut encoder = GifEncoder::new(&mut bytes);
+        for (color, delay) in FRAMES {
+            let buffer = image::RgbaImage::from_pixel(4, 2, image::Rgba(color));
+            let delay = image::Delay::from_numer_denom_ms(delay, 1);
+            encoder.encode_frame(image::Frame::from_parts(buffer, 0, 0, delay))?;
+        }
+    }
+    Ok(bytes)
+}
+
+/// An animated WebP of [`FRAMES`], put together by hand: the `image` crate
+/// only writes still WebP, so each frame is a still's lossless bitstream.
+fn animated_webp() -> image::ImageResult<Vec<u8>> {
+    use image::codecs::webp::WebPEncoder;
+    fn chunk(name: &[u8], data: &[u8]) -> Vec<u8> {
+        let mut out = name.to_vec();
+        out.extend((data.len() as u32).to_le_bytes());
+        out.extend(data);
+        if data.len() % 2 == 1 {
+            out.push(0);
+        }
+        out
+    }
+    fn u24(value: u32) -> [u8; 3] {
+        let [a, b, c, _] = value.to_le_bytes();
+        [a, b, c]
+    }
+    let mut vp8x = vec![0x02 | 0x10, 0, 0, 0];
+    vp8x.extend(u24(3));
+    vp8x.extend(u24(1));
+    let mut body = b"WEBP".to_vec();
+    body.extend(chunk(b"VP8X", &vp8x));
+    body.extend(chunk(b"ANIM", &[0, 0, 0, 0, 0, 0]));
+    for (color, delay) in FRAMES {
+        let buffer = image::RgbaImage::from_pixel(4, 2, image::Rgba(color));
+        let mut still = Vec::new();
+        WebPEncoder::new_lossless(&mut still).encode(
+            &buffer,
+            4,
+            2,
+            image::ExtendedColorType::Rgba8,
+        )?;
+        // The still's only chunk, VP8L, follows the 12 byte RIFF header.
+        let mut frame = Vec::new();
+        frame.extend(u24(0));
+        frame.extend(u24(0));
+        frame.extend(u24(3));
+        frame.extend(u24(1));
+        frame.extend(u24(delay));
+        frame.push(0);
+        frame.extend(still.get(12..).unwrap_or_default());
+        body.extend(chunk(b"ANMF", &frame));
+    }
+    let mut bytes = b"RIFF".to_vec();
+    bytes.extend((body.len() as u32).to_le_bytes());
+    bytes.extend(body);
+    Ok(bytes)
+}
+
+/// The animated GIF and WebP of [`FRAMES`], written to `dir`.
+fn animations(dir: &Path) -> Vec<PathBuf> {
+    let gif = dir.join("moving.gif");
+    let webp = dir.join("moving.webp");
+    for (path, bytes) in [(&gif, animated_gif()), (&webp, animated_webp())] {
+        let written = bytes.map_err(std::io::Error::other);
+        assert!(written.and_then(|b| std::fs::write(path, b)).is_ok());
+    }
+    vec![gif, webp]
+}
+
+fn decode_first_frame(path: &Path) -> Option<Result<decode::FirstFrame, String>> {
+    decode::decode_first_frame(path, &AtomicBool::new(false))
+}
+
+#[test]
+fn animated_gif_and_webp_give_their_first_frame_and_say_they_are_animated() {
+    let dir = tempfile::tempdir().unwrap();
+    for path in animations(dir.path()) {
+        let first = decode_first_frame(&path).unwrap().unwrap();
+        assert!(first.animated, "{}", path.display());
+        assert_eq!((first.image.width, first.image.height), (4, 2));
+        assert!(is_red(pixel(&first.image, 3, 1)), "{}", path.display());
+        assert_eq!(decode_file(&path).unwrap(), first.image);
+    }
+}
+
+#[test]
+fn still_images_are_not_animated() {
+    for name in ["sample.gif", "sample.webp", "sample.png", "sample.jpg"] {
+        let first = decode_first_frame(&fixture(name)).unwrap().unwrap();
+        assert!(!first.animated, "{name}");
+    }
+}
+
+#[test]
+fn every_frame_of_an_animation_decodes_at_full_size_with_its_delay() {
+    let dir = tempfile::tempdir().unwrap();
+    for path in animations(dir.path()) {
+        let frames = decode::decode_frames(&path, &AtomicBool::new(false))
+            .unwrap()
+            .unwrap();
+        let name = path.display();
+        assert_eq!(frames.len(), 3, "{name}");
+        let delays: Vec<u128> = frames.iter().map(|f| f.delay.as_millis()).collect();
+        assert_eq!(delays, [100, 10, 250], "{name}");
+        for frame in &frames {
+            assert_eq!((frame.image.width, frame.image.height), (4, 2), "{name}");
+        }
+        let colors: Vec<[u8; 4]> = frames.iter().map(|f| pixel(&f.image, 2, 1)).collect();
+        assert!(is_red(colors[0]), "{name}");
+        assert!(is_blue(colors[1]), "{name}");
+        let [r, g, b, _] = colors[2];
+        assert!(r < 60 && g > 200 && b < 60, "{name}");
+    }
+}
+
+#[test]
+fn a_cancelled_frames_decode_reports_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = animations(dir.path()).remove(0);
+    assert_eq!(decode::decode_frames(&path, &AtomicBool::new(true)), None);
+}
+
+#[test]
+fn frames_of_a_still_image_are_an_error() {
+    let result = decode::decode_frames(&fixture("sample.png"), &AtomicBool::new(false)).unwrap();
+    assert!(result.is_err());
+}
