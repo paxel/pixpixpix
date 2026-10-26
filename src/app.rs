@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crate::clipboard::Clipboard;
-use crate::core::{Command, Core, Event, Screen, Shape};
+use crate::core::{Command, Core, Event, Export, Region, Screen, Shape};
 use crate::decode::DecodedImage;
 use crate::geometry::{self, Geometry};
 use crate::rotate::Rotation;
@@ -148,8 +148,13 @@ type ThumbnailJob = (PathBuf, u32, Arc<AtomicBool>);
 /// How many threads decode thumbnails.
 const THUMBNAIL_THREADS: usize = 4;
 
-/// One `c`: the file and its pixels as shown.
-type CopyJob = (PathBuf, DecodedImage, Rotation, Vec<Shape>);
+/// One copy to the clipboard.
+enum CopyJob {
+    /// One `c`: the file and its pixels as shown.
+    Shown(PathBuf, DecodedImage, Rotation, Vec<Shape>),
+    /// The pixels of an export, without a file.
+    Export(DecodedImage, Rotation, Vec<Shape>, Region, Export),
+}
 
 /// Why there is no settings file to read or write.
 const NO_CONFIG_DIR: &str = "No configuration directory found";
@@ -346,7 +351,41 @@ impl Worker {
                 rotation,
                 shapes,
             } => {
-                let job = (path.clone(), image.clone(), *rotation, shapes.clone());
+                let job = CopyJob::Shown(path.clone(), image.clone(), *rotation, shapes.clone());
+                if self.copier().send(job).is_err() {
+                    // The app may already be gone; nothing to report to then.
+                    let _ = self.events.send(Event::Copied(Err(
+                        "Cannot copy: the clipboard stopped".to_owned(),
+                    )));
+                }
+            }
+            Command::Export {
+                source,
+                image,
+                rotation,
+                shapes,
+                area,
+                export,
+                target,
+            } => {
+                let (source, image, rotation) = (source.clone(), image.clone(), *rotation);
+                let (shapes, area, export, target) =
+                    (shapes.clone(), *area, *export, target.clone());
+                self.run(move || {
+                    let result = annotate::save_export(
+                        &source, &image, rotation, &shapes, area, &export, &target,
+                    );
+                    Some(Event::EditsSaved { target, result })
+                });
+            }
+            Command::CopyExport {
+                image,
+                rotation,
+                shapes,
+                area,
+                export,
+            } => {
+                let job = CopyJob::Export(image.clone(), *rotation, shapes.clone(), *area, *export);
                 if self.copier().send(job).is_err() {
                     // The app may already be gone; nothing to report to then.
                     let _ = self.events.send(Event::Copied(Err(
@@ -461,9 +500,17 @@ impl Worker {
             let ctx = self.ctx.clone();
             std::thread::spawn(move || {
                 let mut clipboard = Clipboard::default();
-                for (path, image, rotation, shapes) in inbox {
-                    let result = annotate::render(&image, &shapes)
-                        .and_then(|image| clipboard.copy(&path, &image, rotation));
+                for job in inbox {
+                    let result = match job {
+                        CopyJob::Shown(path, image, rotation, shapes) => {
+                            annotate::render(&image, &shapes)
+                                .and_then(|image| clipboard.copy(&path, &image, rotation))
+                        }
+                        CopyJob::Export(image, rotation, shapes, area, export) => {
+                            annotate::exported(&image, rotation, &shapes, area, &export)
+                                .and_then(|image| clipboard.copy_pixels(&image))
+                        }
+                    };
                     // The app may already be gone; nothing to report to then.
                     let _ = events.send(Event::Copied(result));
                     ctx.request_repaint();
@@ -587,6 +634,8 @@ impl App {
                 | Command::Trash(_)
                 | Command::Copy { .. }
                 | Command::SaveEdits { .. }
+                | Command::Export { .. }
+                | Command::CopyExport { .. }
                 | Command::DecodeFrames(_)
                 | Command::CancelFrames
                 | Command::DecodeInner { .. }

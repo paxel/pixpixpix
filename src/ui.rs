@@ -8,8 +8,8 @@ use std::sync::Arc;
 use egui::{Color32, ColorImage, RichText, TextureHandle, TextureOptions};
 
 use crate::core::{
-    DirColumn, EditsView, Event, Focus, InnerImages, Key, KeyPress, MotionKind, Notice, Points,
-    Region, Screen, Thumb, Video, VideoStep, View, Zoom, unturned,
+    DirColumn, EditsView, Event, ExportView, Focus, InnerImages, Key, KeyPress, MotionKind, Notice,
+    Points, Region, Screen, Thumb, Video, VideoStep, View, Zoom, unturned,
 };
 use crate::decode::DecodedImage;
 use crate::folder;
@@ -193,7 +193,13 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
             .show_separator_line(false)
             .frame(egui::Frame::NONE.fill(BACKGROUND).inner_margin(6.0))
             .show(ui, |ui| {
-                tools::show_toolbar(ui, toolbar, view.edits.as_ref(), &mut events);
+                tools::show_toolbar(
+                    ui,
+                    toolbar,
+                    view.edits.as_ref(),
+                    view.export.as_ref(),
+                    &mut events,
+                );
             });
     }
     if let Some(column) = &view.dir_column {
@@ -232,6 +238,7 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
                         drawing: view.toolbar.is_some(),
                         edits: view.edits.as_ref(),
                         crop: view.crop,
+                        export: view.export.as_ref(),
                     };
                     show_image(ui, &shown, view.zoom, textures, &mut events);
                     if let Some(video) = &view.video {
@@ -579,6 +586,8 @@ struct Shown<'a> {
     edits: Option<&'a EditsView>,
     /// The part of it shown after a crop.
     crop: Option<Region>,
+    /// The export tool, its area framed over it.
+    export: Option<&'a ExportView>,
 }
 
 /// Draws the visible part of the image, turned, as the core places it, and
@@ -686,15 +695,21 @@ fn show_image(
     mesh.add_triangle(0, 1, 2);
     mesh.add_triangle(0, 2, 3);
     ui.painter().add(mesh);
+    let placed = tools::Placed {
+        image: shown.image,
+        region,
+        rotation: shown.rotation,
+        rect: full,
+    };
     if let Some(edits) = shown.edits {
-        let placed = tools::Placed {
-            image: shown.image,
-            region,
-            rotation: shown.rotation,
-            rect: full,
-        };
         tools::paint_edits(&ui.painter_at(visible), edits, &placed);
         tools::show_text_field(ui.ctx(), edits, &placed, events);
+    }
+    if let Some(export) = shown.export
+        && let Some(area) = export.area
+    {
+        let rect = placed.box_of(area);
+        tools::paint_crop(&ui.painter_at(visible), rect, !export.export.locked);
     }
     let name = folder::file_name(shown.path);
     let sense = if shown.clickable {

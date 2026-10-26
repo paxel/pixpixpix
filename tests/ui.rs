@@ -1520,3 +1520,109 @@ fn box_tools_and_the_pen_draw_with_a_drag() {
         "{shapes:?}"
     );
 }
+
+/// Sets the number field `label` as a screen reader would.
+fn set_number(h: &mut Harness<'static, State>, label: &str, value: f64) {
+    use egui::accesskit::{Action, ActionData, ActionRequest};
+    let node = h.get_by_role_and_label(Role::SpinButton, label);
+    let (target_node, target_tree) = node.accesskit_node().locate();
+    h.event(egui::Event::AccessKitActionRequest(ActionRequest {
+        action: Action::SetValue,
+        target_node,
+        target_tree,
+        data: Some(ActionData::NumericValue(value)),
+    }));
+    h.run();
+}
+
+/// The toolbar shown with the export tool chosen.
+fn export_tool() -> Harness<'static, State> {
+    let mut h = harness(big_browsing());
+    h.run();
+    h.key_press(egui::Key::P);
+    h.run();
+    choose_tool(&mut h, "Export");
+    h
+}
+
+#[test]
+fn the_export_tool_shows_its_choices_instead_of_the_palette() {
+    use pixpixpix::core::ExportFormat;
+    let mut h = export_tool();
+    assert!(h.query_by_role_and_label(Role::Button, "red").is_none());
+    for label in ["Width", "Height", "Max KB"] {
+        h.get_by_role_and_label(Role::SpinButton, label);
+    }
+    set_number(&mut h, "Width", 512.0);
+    set_number(&mut h, "Height", 256.0);
+    set_number(&mut h, "Max KB", 300.0);
+    let lock = |h: &Harness<'static, State>| {
+        h.get_by_role_and_label(Role::Button, "Lock ratio")
+            .accesskit_node()
+            .toggled()
+    };
+    assert_eq!(lock(&h), Some(Toggled::True));
+    h.get_by_role_and_label(Role::Button, "Lock ratio").click();
+    h.run();
+    assert_eq!(lock(&h), Some(Toggled::False));
+    h.get_by_role_and_label(Role::Button, "WebP").click();
+    h.run();
+    h.get_by_label_contains("lossless");
+    let export = h.state().core.view().export.unwrap().export;
+    assert_eq!(
+        (export.width, export.height, export.limit_kb),
+        (512, 256, Some(300))
+    );
+    assert!(!export.locked);
+    assert_eq!(export.format, ExportFormat::WebP);
+}
+
+#[test]
+fn a_drag_with_the_export_tool_draws_the_area() {
+    let mut h = export_tool();
+    let before = h.state().core.view().export.unwrap().area;
+    drag_over(&mut h, egui::pos2(300.0, 250.0), egui::pos2(500.0, 300.0));
+    let after = h.state().core.view().export.unwrap().area;
+    assert!(after.is_some() && after != before, "{after:?}");
+    assert_eq!(shape_count(&h), 0);
+}
+
+#[test]
+fn export_opens_the_save_dialog_with_the_size_in_the_name() {
+    let mut h = export_tool();
+    set_number(&mut h, "Width", 512.0);
+    set_number(&mut h, "Height", 512.0);
+    h.get_by_role_and_label(Role::Button, "PNG").click();
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Export\u{2026}")
+        .click();
+    h.run();
+    let name = h.get_by_role_and_label(Role::TextInput, "New file").value();
+    assert_eq!(name.as_deref(), Some("a_512x512.png"));
+    for label in ["Save as new", "Copy to clipboard", "Back to editing"] {
+        h.get_by_role_and_label(Role::Button, label);
+    }
+    assert!(
+        h.query_by_role_and_label(Role::Button, "Undo edits")
+            .is_none()
+    );
+    assert!(
+        h.get_by_role_and_label(Role::Button, "Overwrite")
+            .accesskit_node()
+            .is_disabled()
+    );
+    h.get_by_label_contains("an export never replaces the original");
+    h.state_mut().commands.clear();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    let targets: Vec<PathBuf> = h
+        .state()
+        .commands
+        .iter()
+        .filter_map(|c| match c {
+            Command::Export { target, .. } => Some(target.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(targets, [PathBuf::from("/p/a_512x512.png")]);
+}

@@ -18,10 +18,11 @@ mod overview;
 mod search;
 
 pub use edits::{
-    Block, Color, EditsView, HANDLE_REACH, ImagePoint, Mark, Region, SaveChoice, SaveDialog, Shape,
-    Size, Tool, Toolbar, ToolbarClick, cropped, degrees, turned, unturned,
+    Block, Color, EditsView, Export, ExportFormat, ExportView, HANDLE_REACH, ImagePoint, Mark,
+    Region, SaveChoice, SaveDialog, Shape, Size, Tool, Toolbar, ToolbarClick, cropped, degrees,
+    turned, unturned,
 };
-use edits::{Dialog, Edits};
+use edits::{Dialog, Edits, Exporting};
 
 use overview::Gallery;
 pub use overview::{Overview, Reveal, Section, Tile};
@@ -257,7 +258,7 @@ pub enum Event {
     TextEdited(String),
     /// Typing the text being placed is done.
     TextDone,
-    /// A [`Command::SaveEdits`] finished.
+    /// A [`Command::SaveEdits`] or [`Command::Export`] finished.
     EditsSaved {
         target: PathBuf,
         result: Result<(), String>,
@@ -333,6 +334,28 @@ pub enum Command {
         rotation: Rotation,
         shapes: Vec<Shape>,
         target: PathBuf,
+    },
+    /// Write the area `area` of `image` of the file `source`, with `shapes`
+    /// but no crop drawn into it and turned by `rotation`, scaled to the size
+    /// and in the format of `export`, without metadata, as the new file
+    /// `target`; answered by [`Event::EditsSaved`].
+    Export {
+        source: PathBuf,
+        image: DecodedImage,
+        rotation: Rotation,
+        shapes: Vec<Shape>,
+        area: Region,
+        export: Export,
+        target: PathBuf,
+    },
+    /// Put the pixels such an export would have on the clipboard, without
+    /// the file; answered by [`Event::Copied`].
+    CopyExport {
+        image: DecodedImage,
+        rotation: Rotation,
+        shapes: Vec<Shape>,
+        area: Region,
+        export: Export,
     },
     /// Keep the window open: the close button asked to close it while the
     /// edits were unsaved.
@@ -1051,6 +1074,8 @@ pub struct View {
     /// The part of the image shown after a crop; zoom and position are of
     /// this part.
     pub crop: Option<Region>,
+    /// While the export tool is chosen: how and what it exports.
+    pub export: Option<ExportView>,
 }
 
 pub struct Core {
@@ -1130,6 +1155,8 @@ pub struct Core {
     toolbar: Toolbar,
     /// The edits of the current file.
     edits: Option<Edits>,
+    /// The export tool's choices and the area drawn with it.
+    exporting: Exporting,
     /// The save dialog, while it is open.
     dialog: Option<Dialog>,
     /// The event the save dialog interrupted, handled once the edits are
@@ -1350,6 +1377,7 @@ impl Core {
                 edits: None,
                 save_dialog: None,
                 crop: None,
+                export: None,
             },
             screen,
             band: Vec::new(),
@@ -1384,6 +1412,7 @@ impl Core {
             toolbar_open: false,
             toolbar: Toolbar::DEFAULT,
             edits: None,
+            exporting: Exporting::new(),
             dialog: None,
             parked: None,
         };
@@ -1443,7 +1472,11 @@ impl Core {
                 Vec::new()
             }
             Event::Searched { dir, dots, found } => self.searched(dir, dots, found),
-            Event::SettingsLoaded(Ok(settings)) => self.apply_settings(settings),
+            Event::SettingsLoaded(Ok(settings)) => {
+                let commands = self.apply_settings(settings);
+                self.export_settings_loaded();
+                commands
+            }
             Event::SettingsLoaded(Err(message)) => {
                 self.view.settings_error = Some(message);
                 Vec::new()
@@ -1544,10 +1577,7 @@ impl Core {
                 self.draw_end();
                 Vec::new()
             }
-            Event::Toolbar(click) => {
-                self.toolbar_click(click);
-                Vec::new()
-            }
+            Event::Toolbar(click) => self.toolbar_click(click),
             // Only while the dialog is open, which answers it.
             Event::SaveChoice(_) => Vec::new(),
             Event::SaveName(name) => {

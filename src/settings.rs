@@ -16,6 +16,9 @@ pub const THUMBNAIL_SIZES: [u32; 6] = [SMALLEST, 128, 160, 200, 256, LARGEST];
 const SMALLEST: u32 = 96;
 const LARGEST: u32 = 320;
 
+/// The sides, in pixels, an export may be given.
+pub const EXPORT_SIDE: RangeInclusive<u32> = 1..=16384;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -29,6 +32,10 @@ pub struct Settings {
     pub video_app: String,
     /// The side of an overview thumbnail in points, from 96 to 320.
     pub thumbnail_size: u32,
+    /// The width of the last export, in pixels.
+    pub export_width: u32,
+    /// The height of the last export, in pixels.
+    pub export_height: u32,
 }
 
 impl Default for Settings {
@@ -38,6 +45,8 @@ impl Default for Settings {
             image_app: String::new(),
             video_app: String::new(),
             thumbnail_size: 160,
+            export_width: 1920,
+            export_height: 1080,
         }
     }
 }
@@ -50,6 +59,12 @@ impl Settings {
                 .cache_per_side
                 .clamp(*CACHE_PER_SIDE.start(), *CACHE_PER_SIDE.end()),
             thumbnail_size: self.thumbnail_size.clamp(SMALLEST, LARGEST),
+            export_width: self
+                .export_width
+                .clamp(*EXPORT_SIDE.start(), *EXPORT_SIDE.end()),
+            export_height: self
+                .export_height
+                .clamp(*EXPORT_SIDE.start(), *EXPORT_SIDE.end()),
             ..self
         }
     }

@@ -1,15 +1,16 @@
-//! The toolbar, the edits over the image and the save dialog with its
-//! panicked cat.
+//! The toolbar, the edits and the export area over the image and the save
+//! dialog with its panicked cat.
 
 use egui::{Color32, RichText, Stroke, vec2};
 
 use super::{DIM_TEXT, HIGHLIGHT, TEXT};
 use crate::core::{
-    Color, EditsView, Event, HANDLE_REACH, Mark, Region, SaveChoice, SaveDialog, Shape, Size, Tool,
-    Toolbar, ToolbarClick, degrees, turned,
+    Color, EditsView, Event, ExportFormat, ExportView, HANDLE_REACH, Mark, Region, SaveChoice,
+    SaveDialog, Shape, Size, Tool, Toolbar, ToolbarClick, degrees, turned,
 };
 use crate::decode::DecodedImage;
 use crate::rotate::Rotation;
+use crate::settings::EXPORT_SIDE;
 
 /// The undo and redo keys as the toolbar names them.
 const UNDO_HINT: &str = if cfg!(target_os = "macos") {
@@ -31,12 +32,13 @@ pub fn color32(color: Color) -> Color32 {
     Color32::from_rgb(r, g, b)
 }
 
-/// One row, wrapped in a narrow window: the tools, the palette, the sizes,
-/// undo, redo and settings.
+/// One row, wrapped in a narrow window: the tools, the palette and the
+/// sizes, or the export tool's choices, undo, redo and settings.
 pub fn show_toolbar(
     ui: &mut egui::Ui,
     toolbar: Toolbar,
     edits: Option<&EditsView>,
+    export: Option<&ExportView>,
     events: &mut Vec<Event>,
 ) {
     let text = |s: &str| RichText::new(s).color(TEXT);
@@ -48,16 +50,20 @@ pub fn show_toolbar(
             }
         }
         ui.add_space(12.0);
-        for color in Color::ALL {
-            if swatch(ui, color, toolbar.color == color).clicked() {
-                events.push(Event::Toolbar(ToolbarClick::Color(color)));
+        if let Some(export) = export {
+            show_export_choices(ui, export, events);
+        } else {
+            for color in Color::ALL {
+                if swatch(ui, color, toolbar.color == color).clicked() {
+                    events.push(Event::Toolbar(ToolbarClick::Color(color)));
+                }
             }
-        }
-        ui.add_space(12.0);
-        for size in Size::ALL {
-            let button = egui::Button::selectable(toolbar.size == size, text(size.name()));
-            if ui.add(button).clicked() {
-                events.push(Event::Toolbar(ToolbarClick::Size(size)));
+            ui.add_space(12.0);
+            for size in Size::ALL {
+                let button = egui::Button::selectable(toolbar.size == size, text(size.name()));
+                if ui.add(button).clicked() {
+                    events.push(Event::Toolbar(ToolbarClick::Size(size)));
+                }
             }
         }
         ui.add_space(12.0);
@@ -81,6 +87,73 @@ pub fn show_toolbar(
             events.push(Event::Toolbar(ToolbarClick::Settings));
         }
     });
+}
+
+/// The export tool's choices: the size in pixels, the ratio lock, the
+/// format, the size limit and the button that exports.
+fn show_export_choices(ui: &mut egui::Ui, view: &ExportView, events: &mut Vec<Event>) {
+    let text = |s: &str| RichText::new(s).color(TEXT);
+    let export = view.export;
+    let mut number =
+        |ui: &mut egui::Ui, label: &str, value: u32, range, click: fn(u32) -> ToolbarClick| {
+            let label = ui.label(text(label));
+            let mut changed = value;
+            ui.add(egui::DragValue::new(&mut changed).range(range))
+                .labelled_by(label.id);
+            if changed != value {
+                events.push(Event::Toolbar(click(changed)));
+            }
+        };
+    number(
+        ui,
+        "Width",
+        export.width,
+        EXPORT_SIDE,
+        ToolbarClick::ExportWidth,
+    );
+    number(
+        ui,
+        "Height",
+        export.height,
+        EXPORT_SIDE,
+        ToolbarClick::ExportHeight,
+    );
+    number(
+        ui,
+        "Max KB",
+        export.limit_kb.unwrap_or(0),
+        0..=u32::MAX,
+        |kb| ToolbarClick::ExportLimit(Some(kb)),
+    );
+    ui.add_space(12.0);
+    let lock = egui::Button::selectable(export.locked, text("Lock ratio"));
+    if ui
+        .add(lock)
+        .on_hover_text("Off: any area is stretched to the size")
+        .clicked()
+    {
+        events.push(Event::Toolbar(ToolbarClick::ExportLocked(!export.locked)));
+    }
+    ui.add_space(12.0);
+    for format in ExportFormat::ALL {
+        let button = egui::Button::selectable(export.format == format, text(format.name()));
+        if ui.add(button).clicked() {
+            events.push(Event::Toolbar(ToolbarClick::ExportFormat(format)));
+        }
+    }
+    if export.format == ExportFormat::WebP {
+        ui.label(RichText::new("lossless: a limit cannot lower its quality").color(DIM_TEXT));
+    }
+    ui.add_space(12.0);
+    if ui
+        .add_enabled(
+            view.area.is_some(),
+            egui::Button::new(text("Export\u{2026}")),
+        )
+        .clicked()
+    {
+        events.push(Event::Toolbar(ToolbarClick::Export));
+    }
 }
 
 /// A square of the colour, framed when chosen.
@@ -135,7 +208,7 @@ impl Placed<'_> {
     }
 
     /// The screen box of the image box `region`.
-    fn box_of(&self, region: Region) -> egui::Rect {
+    pub fn box_of(&self, region: Region) -> egui::Rect {
         egui::Rect::from_two_pos(
             self.to_screen(region.left, region.top),
             self.to_screen(region.right, region.bottom),
@@ -178,7 +251,7 @@ pub fn paint_edits(painter: &egui::Painter, edits: &EditsView, placed: &Placed<'
         paint_shape(painter, shape, placed, scale);
     }
     if let Some(crop) = edits.cropping {
-        paint_crop(painter, placed.box_of(crop));
+        paint_crop(painter, placed.box_of(crop), true);
     }
 }
 
@@ -234,8 +307,9 @@ fn paint_shape(painter: &egui::Painter, shape: &Shape, placed: &Placed<'_>, scal
     }
 }
 
-/// The crop box `rect`: the rest dimmed, a frame and its handles.
-fn paint_crop(painter: &egui::Painter, rect: egui::Rect) {
+/// The crop or export box `rect`: the rest dimmed, a frame and its handles,
+/// the middles of its `sides` too.
+pub fn paint_crop(painter: &egui::Painter, rect: egui::Rect, sides: bool) {
     let clip = painter.clip_rect();
     let dim = Color32::from_black_alpha(140);
     for outside in [
@@ -256,7 +330,8 @@ fn paint_crop(painter: &egui::Painter, rect: egui::Rect) {
     );
     for x in [rect.min.x, rect.center().x, rect.max.x] {
         for y in [rect.min.y, rect.center().y, rect.max.y] {
-            if (x, y) == (rect.center().x, rect.center().y) {
+            let (middle_x, middle_y) = (x == rect.center().x, y == rect.center().y);
+            if (middle_x && middle_y) || ((middle_x || middle_y) && !sides) {
                 continue;
             }
             let handle =
@@ -364,22 +439,22 @@ pub fn show_save_dialog(
                 let (rect, _) = ui.allocate_exact_size(vec2(112.0, 112.0), egui::Sense::hover());
                 panic_cat(ui.painter(), rect);
                 ui.add_space(20.0);
+                let (title, note) = if dialog.export {
+                    (
+                        format!("Export \u{201c}{file}\u{201d}?"),
+                        "The export is a new file, without metadata.",
+                    )
+                } else {
+                    (
+                        format!("Save your edits of \u{201c}{file}\u{201d}?"),
+                        "The edits are only on screen so far. Undo drops them for good.",
+                    )
+                };
                 ui.vertical(|ui| {
                     ui.add_space(10.0);
-                    ui.label(
-                        RichText::new(format!("Save your edits of \u{201c}{file}\u{201d}?"))
-                            .size(20.0)
-                            .strong()
-                            .color(INK),
-                    );
+                    ui.label(RichText::new(title).size(20.0).strong().color(INK));
                     ui.add_space(6.0);
-                    ui.label(
-                        RichText::new(
-                            "The edits are only on screen so far. Undo drops them for good.",
-                        )
-                        .size(14.0)
-                        .color(SUBTLE_INK),
-                    );
+                    ui.label(RichText::new(note).size(14.0).color(SUBTLE_INK));
                 });
             });
             ui.add_space(18.0);
@@ -458,7 +533,9 @@ pub fn show_save_dialog(
                     let plain =
                         |text| dialog_button(text, INK, PLAIN_FILL, Stroke::new(1.0, PLAIN_EDGE));
                     choose(ui, enabled, plain("Copy to clipboard"), SaveChoice::Copy);
-                    choose(ui, enabled, plain("Undo edits"), SaveChoice::Discard);
+                    if !dialog.export {
+                        choose(ui, enabled, plain("Undo edits"), SaveChoice::Discard);
+                    }
                     choose(ui, enabled, plain("Back to editing"), SaveChoice::Back);
                 });
             });

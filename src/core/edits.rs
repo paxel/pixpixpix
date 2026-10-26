@@ -1,6 +1,7 @@
 //! The tool edits of the shown image: shapes in image pixels, drawn over the
 //! image on screen and into its pixels when saved, with undo and redo. The
-//! save dialog that asks what becomes of them.
+//! save dialog that asks what becomes of them. The export tool, which writes
+//! an area of the edited image at a given size as a new file.
 
 use std::path::{Path, PathBuf};
 
@@ -8,6 +9,7 @@ use super::{Command, Core, Event, Key, Points, Screen, Zoom};
 use crate::decode::DecodedImage;
 use crate::folder;
 use crate::rotate::Rotation;
+use crate::settings::{EXPORT_SIDE, Settings};
 
 /// A tool of the toolbar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,10 +22,11 @@ pub enum Tool {
     Highlighter,
     Pixelate,
     Crop,
+    Export,
 }
 
 impl Tool {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Arrow,
         Self::Text,
         Self::Rectangle,
@@ -32,6 +35,7 @@ impl Tool {
         Self::Highlighter,
         Self::Pixelate,
         Self::Crop,
+        Self::Export,
     ];
 
     pub fn name(self) -> &'static str {
@@ -44,6 +48,7 @@ impl Tool {
             Self::Highlighter => "Highlighter",
             Self::Pixelate => "Pixelate",
             Self::Crop => "Crop",
+            Self::Export => "Export",
         }
     }
 }
@@ -507,6 +512,59 @@ impl Toolbar {
     };
 }
 
+/// The file format of an export.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportFormat {
+    Jpeg,
+    Png,
+    /// Written lossless only, so a size limit cannot lower its quality.
+    WebP,
+}
+
+impl ExportFormat {
+    pub const ALL: [Self; 3] = [Self::Jpeg, Self::Png, Self::WebP];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Jpeg => "JPEG",
+            Self::Png => "PNG",
+            Self::WebP => "WebP",
+        }
+    }
+
+    /// The extension of the file name an export is written to.
+    pub fn extension(self) -> &'static str {
+        match self {
+            Self::Jpeg => "jpg",
+            Self::Png => "png",
+            Self::WebP => "webp",
+        }
+    }
+}
+
+/// How the export tool exports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Export {
+    /// The size of the file written, in pixels.
+    pub width: u32,
+    pub height: u32,
+    /// The area drawn keeps the ratio of `width` to `height`; otherwise any
+    /// area is stretched to them.
+    pub locked: bool,
+    pub format: ExportFormat,
+    /// The largest file allowed, in KB of 1024 bytes.
+    pub limit_kb: Option<u32>,
+}
+
+/// The export tool as the UI draws it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ExportView {
+    pub export: Export,
+    /// The area exported, framed with its handles: corners only while the
+    /// ratio is locked. Absent while nothing can be exported.
+    pub area: Option<Region>,
+}
+
 /// A click in the toolbar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolbarClick {
@@ -516,6 +574,13 @@ pub enum ToolbarClick {
     Undo,
     Redo,
     Settings,
+    ExportWidth(u32),
+    ExportHeight(u32),
+    ExportLocked(bool),
+    ExportFormat(ExportFormat),
+    ExportLimit(Option<u32>),
+    /// Export the area: the save dialog asks where to.
+    Export,
 }
 
 /// The edits of the shown image as the UI draws them.
@@ -546,6 +611,8 @@ pub struct SaveDialog {
     pub error: Option<String>,
     /// A save or copy runs; the dialog waits for it.
     pub busy: bool,
+    /// The dialog is about an export, which cannot be undone, only left.
+    pub export: bool,
 }
 
 /// A choice in the save dialog.
@@ -588,6 +655,124 @@ pub(super) struct Dialog {
     overwrite_refused: Option<String>,
     error: Option<String>,
     busy: Option<Busy>,
+    /// Asking where an export goes rather than what becomes of the edits.
+    export: Option<ExportJob>,
+}
+
+/// An export the save dialog asks about.
+#[derive(Debug, Clone)]
+struct ExportJob {
+    path: PathBuf,
+    area: Region,
+    export: Export,
+}
+
+/// The export tool's choices and the area drawn with it.
+#[derive(Debug)]
+pub(super) struct Exporting {
+    export: Export,
+    /// The area drawn, of this file; the shown part of the image without one.
+    area: Option<(PathBuf, Region)>,
+    /// How the area being drawn follows the drag.
+    drag: Option<CropDrag>,
+    /// The area before the drag, back when it ends without a size.
+    before: Option<(PathBuf, Region)>,
+}
+
+impl Exporting {
+    pub(super) fn new() -> Self {
+        let settings = Settings::default();
+        Self {
+            export: Export {
+                width: settings.export_width,
+                height: settings.export_height,
+                locked: true,
+                format: ExportFormat::Jpeg,
+                limit_kb: None,
+            },
+            area: None,
+            drag: None,
+            before: None,
+        }
+    }
+
+    /// The area exported from `path` with `region` of it shown and the ratio
+    /// `ratio` of width to height in image pixels: the area drawn within
+    /// `region`, else all of `region`, and while locked the largest box of
+    /// that ratio in its middle.
+    fn shown(&self, path: &Path, region: Region, ratio: f32) -> Region {
+        let area = self
+            .area
+            .as_ref()
+            .filter(|(p, _)| p == path)
+            .map(|(_, area)| Region {
+                left: area.left.max(region.left),
+                top: area.top.max(region.top),
+                right: area.right.min(region.right),
+                bottom: area.bottom.min(region.bottom),
+            })
+            .filter(|a| a.width() > 0.0 && a.height() > 0.0)
+            .unwrap_or(region);
+        if self.export.locked {
+            fitted(area, ratio)
+        } else {
+            area
+        }
+    }
+}
+
+/// The largest box of the ratio `ratio` of width to height in the middle of
+/// `area`.
+fn fitted(area: Region, ratio: f32) -> Region {
+    if area.height() <= 0.0 || ratio <= 0.0 {
+        return area;
+    }
+    let (width, height) = if area.width() / area.height() > ratio {
+        (area.height() * ratio, area.height())
+    } else {
+        (area.width(), area.width() / ratio)
+    };
+    let (cx, cy) = (
+        (area.left + area.right) / 2.0,
+        (area.top + area.bottom) / 2.0,
+    );
+    Region {
+        left: cx - width / 2.0,
+        top: cy - height / 2.0,
+        right: cx + width / 2.0,
+        bottom: cy + height / 2.0,
+    }
+}
+
+/// The box of the ratio `ratio` from `anchor` towards `to`, as large as the
+/// drag reaches along either side, and shrunk to stay within `region`.
+fn locked_span(anchor: ImagePoint, to: ImagePoint, region: Region, ratio: f32) -> Region {
+    let (dx, dy) = (to.x - anchor.x, to.y - anchor.y);
+    let (sx, sy) = (
+        if dx < 0.0 { -1.0 } else { 1.0 },
+        if dy < 0.0 { -1.0 } else { 1.0 },
+    );
+    let room_x = if sx > 0.0 {
+        region.right - anchor.x
+    } else {
+        anchor.x - region.left
+    };
+    let room_y = if sy > 0.0 {
+        region.bottom - anchor.y
+    } else {
+        anchor.y - region.top
+    };
+    let mut width = dx.abs().max(dy.abs() * ratio);
+    let mut height = width / ratio;
+    if width > room_x {
+        width = room_x.max(0.0);
+        height = width / ratio;
+    }
+    if height > room_y {
+        height = room_y.max(0.0);
+        width = height * ratio;
+    }
+    Region::spanning(anchor, point(anchor.x + sx * width, anchor.y + sy * height))
 }
 
 #[derive(Debug, PartialEq)]
@@ -629,6 +814,15 @@ impl Core {
     /// Answers `event` here when it belongs to the save dialog or would leave
     /// unsaved edits behind; the latter waits while the dialog asks first.
     pub(super) fn guard(&mut self, event: &Event) -> Option<Vec<Command>> {
+        // Closing the window drops an export not yet started.
+        if *event == Event::CloseRequested
+            && self
+                .dialog
+                .as_ref()
+                .is_some_and(|d| d.export.is_some() && d.busy.is_none())
+        {
+            self.dialog = None;
+        }
         if self.dialog.is_some() {
             return match event {
                 Event::Key(key) if !key.command => match key.key {
@@ -706,6 +900,7 @@ impl Core {
             overwrite_refused: self.overwrite_refused(&path),
             error: None,
             busy: None,
+            export: None,
         });
     }
 
@@ -758,6 +953,9 @@ impl Core {
         let Some(dialog) = self.dialog.as_mut().filter(|d| d.busy.is_none()) else {
             return Vec::new();
         };
+        if let Some(job) = dialog.export.clone() {
+            return self.choose_export(choice, job);
+        }
         let (Some(edits), Screen::Image { path, image }) = (&self.edits, &self.screen) else {
             return self.finish();
         };
@@ -774,12 +972,10 @@ impl Core {
                 let target = if choice == SaveChoice::Overwrite {
                     path.clone()
                 } else {
-                    let name = dialog.name.trim();
-                    if name.is_empty() || name.contains(['/', '\\']) {
-                        dialog.error = Some("Enter a file name without folders".to_owned());
+                    let Some(target) = new_target(&path, dialog) else {
                         return Vec::new();
-                    }
-                    path.with_file_name(name)
+                    };
+                    target
                 };
                 dialog.error = None;
                 dialog.busy = Some(Busy::Saving(target.clone()));
@@ -808,6 +1004,62 @@ impl Core {
         }
     }
 
+    /// Acts on a choice of the save dialog about the export `job`: only a
+    /// new file or the clipboard, and the edits stay.
+    fn choose_export(&mut self, choice: SaveChoice, job: ExportJob) -> Vec<Command> {
+        let (Some(dialog), Screen::Image { path, image }) = (self.dialog.as_mut(), &self.screen)
+        else {
+            return Vec::new();
+        };
+        if *path != job.path {
+            self.dialog = None;
+            return Vec::new();
+        }
+        let shapes = self
+            .edits
+            .as_ref()
+            .filter(|e| e.path == job.path)
+            .map(|e| e.shapes.clone())
+            .unwrap_or_default();
+        let (image, rotation) = (image.clone(), self.rotation);
+        match choice {
+            SaveChoice::Back | SaveChoice::Discard => {
+                self.dialog = None;
+                self.parked = None;
+                Vec::new()
+            }
+            SaveChoice::Overwrite => Vec::new(),
+            SaveChoice::SaveAsNew => {
+                let Some(target) = new_target(&job.path, dialog) else {
+                    return Vec::new();
+                };
+                dialog.error = None;
+                dialog.busy = Some(Busy::Saving(target.clone()));
+                vec![Command::Export {
+                    source: job.path,
+                    image,
+                    rotation,
+                    shapes,
+                    area: job.area,
+                    export: job.export,
+                    target,
+                }]
+            }
+            SaveChoice::Copy => {
+                dialog.error = None;
+                dialog.busy = Some(Busy::Copying);
+                self.view.copy_error = None;
+                vec![Command::CopyExport {
+                    image,
+                    rotation,
+                    shapes,
+                    area: job.area,
+                    export: job.export,
+                }]
+            }
+        }
+    }
+
     /// The edits are dealt with: they go, and the action the dialog
     /// interrupted goes on.
     fn finish(&mut self) -> Vec<Command> {
@@ -819,8 +1071,19 @@ impl Core {
         }
     }
 
-    /// A [`Command::SaveEdits`] finished: the edits are saved, or the dialog
-    /// says why not. A file written over is decoded again.
+    /// An export is done: the edits stay as they are, and a close that came
+    /// meanwhile goes on, asking about them first.
+    fn exported(&mut self) -> Vec<Command> {
+        self.dialog = None;
+        match self.parked.take() {
+            Some(event) => self.guard(&event).unwrap_or_else(|| self.dispatch(event)),
+            None => Vec::new(),
+        }
+    }
+
+    /// A [`Command::SaveEdits`] or [`Command::Export`] finished: the edits are
+    /// saved, or the dialog says why not. A file written over is decoded
+    /// again.
     pub(super) fn edits_saved(
         &mut self,
         target: PathBuf,
@@ -836,6 +1099,7 @@ impl Core {
         dialog.busy = None;
         let overwritten = self.writing.as_ref() == Some(&target);
         match result {
+            Ok(()) if dialog.export.is_some() => self.exported(),
             Ok(()) => {
                 let mut commands = if overwritten {
                     self.rotation_written(target, Ok(()))
@@ -866,6 +1130,7 @@ impl Core {
         };
         dialog.busy = None;
         match result {
+            Ok(()) if dialog.export.is_some() => self.exported(),
             Ok(()) => self.finish(),
             Err(message) => {
                 dialog.error = Some(message.clone());
@@ -886,7 +1151,9 @@ impl Core {
         self.toolbar_open = !self.toolbar_open;
     }
 
-    pub(super) fn toolbar_click(&mut self, click: ToolbarClick) {
+    pub(super) fn toolbar_click(&mut self, click: ToolbarClick) -> Vec<Command> {
+        let side = |pixels: u32| pixels.clamp(*EXPORT_SIDE.start(), *EXPORT_SIDE.end());
+        let export = &mut self.exporting.export;
         match click {
             ToolbarClick::Tool(tool) => {
                 self.commit_text();
@@ -894,6 +1161,7 @@ impl Core {
                     edits.drawing = None;
                     edits.crop_drag = None;
                 }
+                self.exporting.drag = None;
                 self.toolbar.tool = tool;
             }
             ToolbarClick::Color(color) => self.toolbar.color = color,
@@ -901,7 +1169,79 @@ impl Core {
             ToolbarClick::Undo => self.undo(),
             ToolbarClick::Redo => self.redo(),
             ToolbarClick::Settings => self.open_settings(),
+            ToolbarClick::ExportWidth(width) => export.width = side(width),
+            ToolbarClick::ExportHeight(height) => export.height = side(height),
+            ToolbarClick::ExportLocked(locked) => export.locked = locked,
+            ToolbarClick::ExportFormat(format) => export.format = format,
+            ToolbarClick::ExportLimit(limit) => export.limit_kb = limit.filter(|kb| *kb > 0),
+            ToolbarClick::Export => return self.export(),
         }
+        Vec::new()
+    }
+
+    /// The export size of loaded settings is the one the tool starts with.
+    pub(super) fn export_settings_loaded(&mut self) {
+        let settings = &self.view.settings;
+        self.exporting.export.width = settings.export_width;
+        self.exporting.export.height = settings.export_height;
+    }
+
+    /// The ratio of width to height the export area keeps, in image pixels
+    /// of the image as decoded.
+    fn export_ratio(&self) -> f32 {
+        let Export { width, height, .. } = self.exporting.export;
+        let (width, height) = (width as f32, height as f32);
+        if self.rotation.sideways() {
+            height / width
+        } else {
+            width / height
+        }
+    }
+
+    /// The part of the image shown, which the export area stays within.
+    fn shown_region(&self, path: &Path, image: &DecodedImage) -> Region {
+        self.edits
+            .as_ref()
+            .filter(|e| e.path == path)
+            .and_then(|e| cropped(&e.shapes))
+            .unwrap_or(Region::whole(image.width, image.height))
+    }
+
+    /// The export area of the image drawn on, if any.
+    fn export_area(&self) -> Option<Region> {
+        let (path, image) = self.drawable()?;
+        let region = self.shown_region(path, image);
+        let area = self.exporting.shown(path, region, self.export_ratio());
+        area.pixels(image.width, image.height).map(|_| area)
+    }
+
+    /// Asks where the export goes, named `<name>_<W>x<H>.<ext>`; its size is
+    /// remembered in the settings.
+    fn export(&mut self) -> Vec<Command> {
+        let (Some(area), Some((path, _))) = (self.export_area(), self.drawable()) else {
+            return Vec::new();
+        };
+        let path = path.to_path_buf();
+        let export = self.exporting.export;
+        let stem = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let (width, height) = (export.width, export.height);
+        self.dialog = Some(Dialog {
+            name: format!("{stem}_{width}x{height}.{}", export.format.extension()),
+            overwrite_refused: Some("an export never replaces the original".to_owned()),
+            error: None,
+            busy: None,
+            export: Some(ExportJob { path, area, export }),
+        });
+        let settings = &mut self.view.settings;
+        if (settings.export_width, settings.export_height) == (width, height) {
+            return Vec::new();
+        }
+        settings.export_width = width;
+        settings.export_height = height;
+        vec![Command::SaveSettings(settings.clone())]
     }
 
     /// Takes back the last shape.
@@ -964,6 +1304,10 @@ impl Core {
             return;
         };
         let Toolbar { tool, color, size } = self.toolbar;
+        if tool == Tool::Export {
+            self.export_start(path, point, region, scale);
+            return;
+        }
         let turn = self.rotation;
         let edits = match &mut self.edits {
             Some(edits) if edits.path == path => edits,
@@ -1026,7 +1370,7 @@ impl Core {
             },
             Tool::Highlighter => Shape::Highlighter { from, to, color },
             Tool::Pixelate => Shape::Pixelate { from, to, size },
-            Tool::Crop => {
+            Tool::Crop | Tool::Export => {
                 edits.crop_drag = Some(CropDrag {
                     anchor: point,
                     moves_x: true,
@@ -1043,6 +1387,10 @@ impl Core {
             return;
         };
         let point = region.clamp(point);
+        if self.exporting.drag.is_some() {
+            self.export_move(point, region);
+            return;
+        }
         let Some(edits) = self.edits.as_mut() else {
             return;
         };
@@ -1082,6 +1430,16 @@ impl Core {
     /// The drag ended: a shape with a size joins the edits, a crop box in
     /// whole pixels. Text stays to be typed.
     pub(super) fn draw_end(&mut self) {
+        if self.exporting.drag.take().is_some() {
+            // A click draws no area: the one before stays.
+            let before = self.exporting.before.take();
+            if let Some((_, area)) = &self.exporting.area
+                && (area.width() < 1.0 || area.height() < 1.0)
+            {
+                self.exporting.area = before;
+            }
+            return;
+        }
         let whole = self
             .drawable()
             .map(|(_, image)| Region::whole(image.width, image.height));
@@ -1110,6 +1468,52 @@ impl Core {
         }
     }
 
+    /// A drag with the export tool grabs a corner of the export area, or a
+    /// side while the ratio is free, or starts a new area there.
+    fn export_start(&mut self, path: PathBuf, point: ImagePoint, region: Region, scale: f32) {
+        let ratio = self.export_ratio();
+        let exporting = &mut self.exporting;
+        let current = exporting.shown(&path, region, ratio);
+        let locked = exporting.export.locked;
+        let grabbed = grab(current, point, HANDLE_REACH / scale)
+            .filter(|drag| !locked || (drag.moves_x && drag.moves_y));
+        let (area, drag) = match grabbed {
+            Some(drag) => (current, drag),
+            None if region.clamp(point) == point => (
+                Region::spanning(point, point),
+                CropDrag {
+                    anchor: point,
+                    moves_x: true,
+                    moves_y: true,
+                },
+            ),
+            None => return,
+        };
+        exporting.before = exporting.area.replace((path, area));
+        exporting.drag = Some(drag);
+    }
+
+    /// The drag of the export area goes on to `point` within `region`.
+    fn export_move(&mut self, point: ImagePoint, region: Region) {
+        let ratio = self.export_ratio();
+        let exporting = &mut self.exporting;
+        let (Some(drag), Some((_, area))) = (exporting.drag, exporting.area.as_mut()) else {
+            return;
+        };
+        if exporting.export.locked {
+            *area = locked_span(drag.anchor, point, region, ratio);
+            return;
+        }
+        if drag.moves_x {
+            area.left = drag.anchor.x.min(point.x);
+            area.right = drag.anchor.x.max(point.x);
+        }
+        if drag.moves_y {
+            area.top = drag.anchor.y.min(point.y);
+            area.bottom = drag.anchor.y.max(point.y);
+        }
+    }
+
     /// The text being typed changed.
     pub(super) fn text_edited(&mut self, typed: String) {
         if let Some(Shape::Text { text, .. }) = self.edits.as_mut().and_then(|e| e.drawing.as_mut())
@@ -1130,6 +1534,21 @@ impl Core {
     /// Edits of a file no longer shown go; so does a dialog about them that
     /// waits for nothing.
     pub(super) fn sync_edits(&mut self) {
+        let current = self.current.as_ref();
+        if self
+            .exporting
+            .area
+            .as_ref()
+            .is_some_and(|(path, _)| current != Some(path))
+        {
+            self.exporting.area = None;
+            self.exporting.drag = None;
+        }
+        if self.dialog.as_ref().is_some_and(|d| {
+            d.busy.is_none() && d.export.as_ref().is_some_and(|j| current != Some(&j.path))
+        }) {
+            self.dialog = None;
+        }
         if self
             .edits
             .as_ref()
@@ -1172,6 +1591,12 @@ impl Core {
             overwrite_refused: d.overwrite_refused.clone(),
             error: d.error.clone(),
             busy: d.busy.is_some(),
+            export: d.export.is_some(),
+        });
+        let exporting = self.toolbar_open && self.toolbar.tool == Tool::Export && !previewing;
+        self.view.export = exporting.then(|| ExportView {
+            export: self.exporting.export,
+            area: self.export_area(),
         });
     }
 
@@ -1179,6 +1604,17 @@ impl Core {
     pub(super) fn has_unsaved(&self) -> bool {
         self.unsaved().is_some()
     }
+}
+
+/// The new file the dialog's name names next to `path`, or why there is
+/// none in the dialog.
+fn new_target(path: &Path, dialog: &mut Dialog) -> Option<PathBuf> {
+    let name = dialog.name.trim();
+    if name.is_empty() || name.contains(['/', '\\']) {
+        dialog.error = Some("Enter a file name without folders".to_owned());
+        return None;
+    }
+    Some(path.with_file_name(name))
 }
 
 impl Edits {

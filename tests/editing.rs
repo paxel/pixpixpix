@@ -588,7 +588,7 @@ fn every_tool_can_be_chosen() {
         choose(&mut core, tool);
         assert_eq!(core.view().toolbar.unwrap().tool, tool);
     }
-    assert_eq!(Tool::ALL.len(), 8);
+    assert_eq!(Tool::ALL.len(), 9);
 }
 
 #[test]

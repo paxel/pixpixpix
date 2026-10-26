@@ -2,14 +2,18 @@
 //! file itself through a temporary file, as `rotate` does, or as a new file
 //! that never replaces an existing one. The pixels are cropped and turned by
 //! the pending rotation after the shapes are drawn, so the file looks like
-//! the screen.
+//! the screen. Exports: an area of the edited image scaled to a given size,
+//! written without metadata, within a size limit if asked.
 
 use std::fs;
 use std::io::{Cursor, Write};
 use std::path::Path;
 
 use image::codecs::jpeg::JpegEncoder;
-use image::{DynamicImage, ImageFormat, RgbaImage};
+use image::codecs::png::{CompressionType, FilterType as PngFilter, PngEncoder};
+use image::codecs::webp::WebPEncoder;
+use image::imageops::{self, FilterType};
+use image::{DynamicImage, ExtendedColorType, ImageEncoder, ImageFormat, RgbaImage};
 use skrifa::instance::{LocationRef, Size as FontSize};
 use skrifa::outline::{DrawSettings, OutlinePen};
 use skrifa::{FontRef, MetadataProvider};
@@ -17,13 +21,15 @@ use tiny_skia::{
     ColorU8, FillRule, IntRect, LineCap, LineJoin, Paint, PathBuilder, Pixmap, Stroke, Transform,
 };
 
-use crate::core::{Block, ImagePoint, Mark, Shape, cropped, degrees};
+use crate::core::{Block, Export, ExportFormat, ImagePoint, Mark, Region, Shape, cropped, degrees};
 use crate::decode::DecodedImage;
 use crate::rotate::{self, Rotation};
 use crate::{clipboard, decode, folder, motion, multi};
 
 /// The JPEG quality edited images are written with.
 const JPEG_QUALITY: u8 = 92;
+/// The lowest JPEG quality a size limit may lower an export to.
+const MIN_JPEG_QUALITY: u8 = 10;
 
 /// `image` with `shapes` drawn into it, antialiased: first the pixelations,
 /// from the pixels as decoded, then the other shapes in order, then the
@@ -346,4 +352,154 @@ fn create(source: &Path, target: &Path, bytes: &[u8]) -> Result<(), String> {
     temp.persist_noclobber(target)
         .map(|_| ())
         .map_err(|e| e.error.to_string())
+}
+
+/// The pixels an export of `area` of `image` makes: `shapes` drawn into it
+/// as on screen, but no crop, the area cut out, turned by `rotation` and
+/// scaled to exactly the size of `export`.
+pub fn exported(
+    image: &DecodedImage,
+    rotation: Rotation,
+    shapes: &[Shape],
+    area: Region,
+    export: &Export,
+) -> Result<DecodedImage, String> {
+    let shapes: Vec<Shape> = shapes
+        .iter()
+        .filter(|s| !matches!(s, Shape::Crop(_)))
+        .cloned()
+        .collect();
+    let drawn = rgba_image(&render(image, &shapes)?)?;
+    let [left, top, width, height] = area
+        .pixels(drawn.width(), drawn.height())
+        .ok_or("the area to export is empty")?;
+    let cut = imageops::crop_imm(&drawn, left, top, width, height).to_image();
+    let cut = DecodedImage::from_dynamic(DynamicImage::ImageRgba8(cut));
+    let turned = rgba_image(&clipboard::turned(&cut, rotation)?)?;
+    let scaled = imageops::resize(&turned, export.width, export.height, FilterType::Lanczos3);
+    Ok(DecodedImage::from_dynamic(DynamicImage::ImageRgba8(scaled)))
+}
+
+fn rgba_image(image: &DecodedImage) -> Result<RgbaImage, String> {
+    RgbaImage::from_raw(image.width, image.height, image.rgba.to_vec())
+        .ok_or_else(|| "the pixels do not match the image size".to_owned())
+}
+
+/// `image` encoded as `export` asks, without metadata: within its size
+/// limit by lowering the JPEG quality or raising the PNG compression; WebP is
+/// written lossless only.
+pub fn encode_export(image: &DecodedImage, export: &Export) -> Result<Vec<u8>, String> {
+    let rgba = rgba_image(image)?;
+    let limit = export.limit_kb.unwrap_or(0);
+    let fits = |bytes: &[u8]| {
+        export.limit_kb.is_none_or(|kb| {
+            u64::try_from(bytes.len()).is_ok_and(|len| len <= u64::from(kb).saturating_mul(1024))
+        })
+    };
+    match export.format {
+        ExportFormat::Jpeg => {
+            let rgb = DynamicImage::ImageRgba8(rgba).to_rgb8();
+            let jpeg = |quality: u8| -> Result<Vec<u8>, String> {
+                let mut out = Vec::new();
+                JpegEncoder::new_with_quality(&mut out, quality)
+                    .encode_image(&rgb)
+                    .map_err(|e| e.to_string())?;
+                Ok(out)
+            };
+            let best = jpeg(JPEG_QUALITY)?;
+            if fits(&best) {
+                return Ok(best);
+            }
+            // The highest quality that fits, found by halving the range.
+            let (mut low, mut high) = (MIN_JPEG_QUALITY, JPEG_QUALITY.saturating_sub(1));
+            let mut found = None;
+            while low <= high {
+                let middle =
+                    low.saturating_add(high.saturating_sub(low).checked_div(2).unwrap_or(0));
+                let bytes = jpeg(middle)?;
+                if fits(&bytes) {
+                    found = Some(bytes);
+                    low = middle.saturating_add(1);
+                } else if middle == MIN_JPEG_QUALITY {
+                    break;
+                } else {
+                    high = middle.saturating_sub(1);
+                }
+            }
+            found.ok_or_else(|| {
+                format!("it does not fit in {limit} KB even at the lowest JPEG quality")
+            })
+        }
+        ExportFormat::Png => {
+            for compression in [CompressionType::Default, CompressionType::Best] {
+                let mut out = Vec::new();
+                PngEncoder::new_with_quality(&mut out, compression, PngFilter::Adaptive)
+                    .write_image(
+                        rgba.as_raw(),
+                        rgba.width(),
+                        rgba.height(),
+                        ExtendedColorType::Rgba8,
+                    )
+                    .map_err(|e| e.to_string())?;
+                if fits(&out) {
+                    return Ok(out);
+                }
+            }
+            Err(format!(
+                "it does not fit in {limit} KB even at the best PNG compression"
+            ))
+        }
+        ExportFormat::WebP => {
+            let mut out = Vec::new();
+            WebPEncoder::new_lossless(&mut out)
+                .write_image(
+                    rgba.as_raw(),
+                    rgba.width(),
+                    rgba.height(),
+                    ExtendedColorType::Rgba8,
+                )
+                .map_err(|e| e.to_string())?;
+            if fits(&out) {
+                Ok(out)
+            } else {
+                Err(format!(
+                    "WebP is written lossless and does not fit in {limit} KB"
+                ))
+            }
+        }
+    }
+}
+
+/// Writes the export of `area` of `image` of the file `source` as the new
+/// file `target`, whose name must end in the extension of its format. The
+/// error is meant to be shown to the user as is.
+pub fn save_export(
+    source: &Path,
+    image: &DecodedImage,
+    rotation: Rotation,
+    shapes: &[Shape],
+    area: Region,
+    export: &Export,
+    target: &Path,
+) -> Result<(), String> {
+    let write = || -> Result<(), String> {
+        let format = match export.format {
+            ExportFormat::Jpeg => ImageFormat::Jpeg,
+            ExportFormat::Png => ImageFormat::Png,
+            ExportFormat::WebP => ImageFormat::WebP,
+        };
+        if ImageFormat::from_path(target).ok() != Some(format) {
+            return Err(format!(
+                "the name must end in .{} for {}",
+                export.format.extension(),
+                export.format.name()
+            ));
+        }
+        if target.exists() {
+            return Err("the file already exists".to_owned());
+        }
+        let bytes = encode_export(&exported(image, rotation, shapes, area, export)?, export)?;
+        create(source, target, &bytes)
+    };
+    write().map_err(|e| format!("Cannot save {}: {e}", folder::file_name(target)))
 }

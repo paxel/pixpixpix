@@ -97,6 +97,19 @@ impl Clipboard {
             .map_err(|e| format!("Cannot copy {}: {e}", folder::file_name(path)))
     }
 
+    /// Puts only `image` on the clipboard, without a file: the pixels of an
+    /// export. The error is meant to be shown to the user as is.
+    pub fn copy_pixels(&mut self, image: &DecodedImage) -> Result<(), String> {
+        png(image)
+            .map(|png| Content {
+                png,
+                uri_list: String::new(),
+                gnome_files: String::new(),
+            })
+            .and_then(|content| self.set(content))
+            .map_err(|e| format!("Cannot copy the export: {e}"))
+    }
+
     #[cfg(all(unix, not(target_os = "macos")))]
     fn set(&mut self, content: Content) -> Result<(), String> {
         // A connection that broke is made again.
@@ -217,17 +230,19 @@ mod x11 {
         pub fn set(&self, content: Content) -> Result<(), String> {
             let shared = &self.shared;
             let atoms = &shared.atoms;
+            // Formats without content, a file for pixels only, are not offered.
             *shared
                 .targets
                 .lock()
-                .unwrap_or_else(PoisonError::into_inner) = vec![
-                (atoms.PNG, Arc::from(content.png)),
-                (atoms.URI_LIST, Arc::from(content.uri_list.into_bytes())),
-                (
-                    atoms.GNOME_FILES,
-                    Arc::from(content.gnome_files.into_bytes()),
-                ),
-            ];
+                .unwrap_or_else(PoisonError::into_inner) = [
+                (atoms.PNG, content.png),
+                (atoms.URI_LIST, content.uri_list.into_bytes()),
+                (atoms.GNOME_FILES, content.gnome_files.into_bytes()),
+            ]
+            .into_iter()
+            .filter(|(_, bytes)| !bytes.is_empty())
+            .map(|(atom, bytes)| (atom, Arc::from(bytes)))
+            .collect();
             let conn = &shared.conn;
             conn.set_selection_owner(shared.window, atoms.CLIPBOARD, Time::CURRENT_TIME)
                 .map_err(|e| e.to_string())?;
