@@ -406,7 +406,11 @@ impl Worker {
                 let report = move |report| {
                     let path = played.clone();
                     let event = match report {
-                        Report::Frame(image) => Event::VideoFrame { path, image },
+                        Report::Frame(image, position) => Event::VideoFrame {
+                            path,
+                            image,
+                            position,
+                        },
                         Report::Ended => Event::VideoEnded(path),
                         Report::Seeked => Event::VideoSeeked(path),
                         Report::Failed(message) => Event::VideoFailed { path, message },

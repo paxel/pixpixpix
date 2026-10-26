@@ -519,9 +519,11 @@ fn the_close_button_keeps_the_window_while_edits_are_unsaved() {
 }
 
 #[test]
-fn a_video_is_not_drawn_on() {
+fn a_playing_video_is_not_drawn_on() {
     let mut core = browsing("v.mp4", &["v.mp4"]);
     press(&mut core, Key::P);
+    press(&mut core, Key::Space);
+    assert!(core.view().video.as_ref().unwrap().playing);
     drag(&mut core, at(10.0, 10.0), at(60.0, 30.0));
     assert!(shapes(&core).is_empty());
 }

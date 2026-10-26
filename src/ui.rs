@@ -234,7 +234,8 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
                         path,
                         image,
                         rotation: view.rotation,
-                        clickable: view.video.is_some(),
+                        // A click with the toolbar shown draws instead.
+                        clickable: view.video.is_some() && view.toolbar.is_none(),
                         drawing: view.toolbar.is_some(),
                         edits: view.edits.as_ref(),
                         crop: view.crop,
@@ -242,7 +243,7 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
                     };
                     show_image(ui, &shown, view.zoom, textures, &mut events);
                     if let Some(video) = &view.video {
-                        show_video(ui, video, &mut events);
+                        show_video(ui, video, view.toolbar.is_none(), &mut events);
                     }
                 }
                 Screen::Error { path, message } => show_error(ui, path.as_deref(), message),
@@ -734,9 +735,10 @@ const VIDEO_STEPS: [(&str, VideoStep); 6] = [
     ("+30s", VideoStep::Seconds(30)),
 ];
 
-/// Over a video's frame: a big play triangle and step buttons while it is not
-/// playing, which a click plays, and why it cannot be played.
-fn show_video(ui: &mut egui::Ui, video: &Video, events: &mut Vec<Event>) {
+/// Over a video's frame: a big play triangle, unless the tools draw there,
+/// and step buttons while it is not playing, which a click plays, and why it
+/// cannot be played.
+fn show_video(ui: &mut egui::Ui, video: &Video, triangle: bool, events: &mut Vec<Event>) {
     let area = ui.max_rect();
     if !video.playing {
         // A row in the middle, above the place of the error.
@@ -757,7 +759,7 @@ fn show_video(ui: &mut egui::Ui, video: &Video, events: &mut Vec<Event>) {
             });
         });
     }
-    if !video.playing {
+    if !video.playing && triangle {
         let radius = (area.width().min(area.height()) / 8.0).clamp(24.0, 64.0);
         let rect = egui::Rect::from_center_size(area.center(), egui::Vec2::splat(radius * 2.0));
         paint_play(ui.painter(), area.center(), radius);

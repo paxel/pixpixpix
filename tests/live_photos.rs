@@ -3,6 +3,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use pixpixpix::core::{Command, Core, Event, Key, KeyPress, MotionKind, Screen, Video};
 use pixpixpix::decode::DecodedImage;
@@ -235,6 +236,7 @@ fn space_plays_the_mov_of_a_live_photo_over_its_still() {
     core.handle(Event::VideoFrame {
         path: p("IMG_1.MOV"),
         image: gray(7),
+        position: Duration::ZERO,
     });
     assert_eq!(shown(&core).as_deref(), Some("IMG_1.HEIC"));
     assert_eq!(shown_gray(&core), Some(7));
@@ -310,6 +312,7 @@ fn a_motion_photo_is_marked_and_space_plays_it() {
     core.handle(Event::VideoFrame {
         path: p("b.jpg"),
         image: gray(9),
+        position: Duration::ZERO,
     });
     assert_eq!(shown_gray(&core), Some(9));
     assert_eq!(press(&mut core, Key::Left), [Command::StopVideo]);

@@ -3,6 +3,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use pixpixpix::core::{Command, Core, Event, Key, KeyPress, Screen, VideoStep};
 use pixpixpix::decode::DecodedImage;
@@ -222,6 +223,7 @@ fn a_step_on_a_video_never_started_starts_it_paused_first() {
     core.handle(Event::VideoFrame {
         path: p("a.mp4"),
         image: gray(5),
+        position: Duration::ZERO,
     });
     assert!(matches!(
         &core.view().screen,

@@ -189,10 +189,12 @@ pub enum Event {
     },
     /// The shown image was clicked.
     Clicked,
-    /// The video [`Command::PlayVideo`] plays drew a frame.
+    /// The video [`Command::PlayVideo`] plays drew a frame, at `position`
+    /// from its start.
     VideoFrame {
         path: PathBuf,
         image: DecodedImage,
+        position: Duration,
     },
     /// The video [`Command::PlayVideo`] plays reached its end.
     VideoEnded(PathBuf),
@@ -1182,6 +1184,8 @@ struct CurrentVideo {
     seeking: bool,
     /// The step still to take once the running seek is done.
     pending: Option<VideoStep>,
+    /// Where the frame shown is, from the start.
+    position: Duration,
 }
 
 impl CurrentVideo {
@@ -1530,8 +1534,12 @@ impl Core {
             }
             Event::Clicked if self.view.video.is_some() => self.toggle_play(),
             Event::Clicked => Vec::new(),
-            Event::VideoFrame { path, image } => {
-                self.video_frame(path, image);
+            Event::VideoFrame {
+                path,
+                image,
+                position,
+            } => {
+                self.video_frame(path, image, position);
                 Vec::new()
             }
             Event::VideoEnded(path) => self.video_stopped(&path, None),
@@ -1716,8 +1724,10 @@ impl Core {
             } else if self.view.motion.is_some() {
                 keys.insert(1, MOTION_KEYS);
             }
+            // Edits of a video frame are still saved with `Enter`.
             if self.plays_video() {
-                keys.retain(|k| !matches!(k.keys, "L/R" | "Enter"));
+                let unsaved = self.has_unsaved();
+                keys.retain(|k| k.keys != "L/R" && (unsaved || k.keys != "Enter"));
             }
             if self.has_unsaved() {
                 for key in keys.iter_mut().filter(|k| k.keys == "Enter") {
@@ -1878,6 +1888,7 @@ impl Core {
             error: None,
             seeking: false,
             pending: None,
+            position: Duration::ZERO,
         });
         match std::mem::replace(&mut self.video, new) {
             Some(CurrentVideo { started: true, .. }) => vec![Command::StopVideo],
@@ -1972,14 +1983,15 @@ impl Core {
     }
 
     /// A frame of the video playing replaces the one shown.
-    fn video_frame(&mut self, path: PathBuf, image: DecodedImage) {
+    fn video_frame(&mut self, path: PathBuf, image: DecodedImage, position: Duration) {
         let Some(video) = self
             .video
-            .as_ref()
+            .as_mut()
             .filter(|v| v.started && v.source == path)
         else {
             return;
         };
+        video.position = position;
         if let Screen::Image {
             path: p,
             image: shown,
@@ -2006,6 +2018,7 @@ impl Core {
         video.error = error;
         video.seeking = false;
         video.pending = None;
+        video.position = Duration::ZERO;
         if let Some(Ok(image)) = self.cache.get(path) {
             self.screen = Screen::Image {
                 path: path.to_path_buf(),
@@ -2671,6 +2684,10 @@ impl Core {
             Key::M => self.toggle_mute(),
             Key::P => {
                 self.toggle_toolbar();
+                // The tools draw on a still frame.
+                if self.toolbar_open && self.video.as_ref().is_some_and(|v| v.playing) {
+                    return self.toggle_play();
+                }
                 Vec::new()
             }
             _ => Vec::new(),

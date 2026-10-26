@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use pixpixpix::core::{Command, Core, Event, Key, KeyPress, Screen, Video};
 use pixpixpix::decode::DecodedImage;
@@ -66,6 +67,7 @@ fn frame(core: &mut Core, name: &str, value: u8) -> Vec<Command> {
     core.handle(Event::VideoFrame {
         path: p(name),
         image: gray(value),
+        position: Duration::ZERO,
     })
 }
 

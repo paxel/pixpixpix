@@ -19,6 +19,7 @@ use std::path::Path;
 use std::ptr;
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
+use std::time::Duration;
 
 use libloading::Library;
 
@@ -84,6 +85,8 @@ const END_FILE_REASON_ERROR: c_int = 4;
 const FORMAT_STRING: c_int = 1;
 /// `MPV_FORMAT_INT64`.
 const FORMAT_INT64: c_int = 4;
+/// `MPV_FORMAT_DOUBLE`.
+const FORMAT_DOUBLE: c_int = 5;
 /// `MPV_RENDER_PARAM_INVALID`, which ends a parameter list.
 const PARAM_END: c_int = 0;
 /// `MPV_RENDER_PARAM_API_TYPE`.
@@ -108,6 +111,8 @@ const WIDTH_ID: u64 = 1;
 const HEIGHT_ID: u64 = 2;
 /// The `reply_userdata` of commands sent with [`Player::command`].
 const COMMAND_ID: u64 = 3;
+/// The `reply_userdata` of the observed playback position.
+const POSITION_ID: u64 = 4;
 
 type Handle = *mut c_void;
 type RenderContext = *mut c_void;
@@ -225,6 +230,8 @@ pub enum PlayerEvent {
     Width(Option<u32>),
     /// The display height of the video changed; absent while unknown.
     Height(Option<u32>),
+    /// The playback position changed; absent while unknown.
+    Position(Option<Duration>),
     /// The file ended, with mpv's message when it could not be played.
     Ended(Option<String>),
     /// Playback restarted after a seek, or after the file was loaded.
@@ -289,6 +296,12 @@ impl Mpv {
             for (id, name) in [(WIDTH_ID, c"dwidth"), (HEIGHT_ID, c"dheight")] {
                 self.check((self.observe)(handle, id, name.as_ptr(), FORMAT_INT64))?;
             }
+            self.check((self.observe)(
+                handle,
+                POSITION_ID,
+                c"time-pos".as_ptr(),
+                FORMAT_DOUBLE,
+            ))?;
             let mut params = [
                 RenderParam {
                     kind: PARAM_API_TYPE,
@@ -396,6 +409,15 @@ impl Player {
                 EVENT_PLAYBACK_RESTART => Some(PlayerEvent::Restarted),
                 EVENT_COMMAND_REPLY if event.reply_userdata == COMMAND_ID && event.error < 0 => {
                     Some(PlayerEvent::CommandFailed(self.mpv.message(event.error)))
+                }
+                EVENT_PROPERTY_CHANGE
+                    if !event.data.is_null() && event.reply_userdata == POSITION_ID =>
+                {
+                    let property = &*event.data.cast::<EventProperty>();
+                    let position = (property.format == FORMAT_DOUBLE && !property.data.is_null())
+                        .then(|| *property.data.cast::<f64>())
+                        .and_then(|seconds| Duration::try_from_secs_f64(seconds).ok());
+                    Some(PlayerEvent::Position(position))
                 }
                 EVENT_PROPERTY_CHANGE if !event.data.is_null() => {
                     let property = &*event.data.cast::<EventProperty>();

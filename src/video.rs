@@ -48,6 +48,7 @@ impl Size {
             PlayerEvent::Width(width) => self.width = *width,
             PlayerEvent::Height(height) => self.height = *height,
             PlayerEvent::Ended(_)
+            | PlayerEvent::Position(_)
             | PlayerEvent::Restarted
             | PlayerEvent::CommandFailed(_)
             | PlayerEvent::Other => {}
@@ -117,7 +118,8 @@ pub fn first_frame(path: &Path, cancel: &AtomicBool) -> Option<Result<DecodedIma
 /// What a playback reports.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Report {
-    Frame(DecodedImage),
+    /// A frame drawn, with the playback position it shows.
+    Frame(DecodedImage, Duration),
     /// The video played to its end.
     Ended,
     /// The seek asked for drew its frame, or failed.
@@ -232,6 +234,8 @@ fn play(
     let player = mpv()?.player(&options, wakeup)?;
     player.load_file(clip.as_ref().map_or(path, |c| c.path()))?;
     let mut size = Size::default();
+    // The playback position as last reported.
+    let mut position = Duration::ZERO;
     let mut ready = false;
     // A frame was drawn, so the file is loaded and can be seeked.
     let mut drawn = false;
@@ -273,6 +277,7 @@ fn play(
                     seeking = None;
                     report(Report::Seeked);
                 }
+                PlayerEvent::Position(Some(at)) => position = at,
                 event => size.update(&event),
             }
         }
@@ -280,7 +285,7 @@ fn play(
         if ready && let Some((width, height)) = size.target() {
             ready = false;
             drawn = true;
-            report(Report::Frame(player.render(width, height)?));
+            report(Report::Frame(player.render(width, height)?, position));
             if seeking == Some(Awaiting::Frame) {
                 seeking = None;
                 report(Report::Seeked);

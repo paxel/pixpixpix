@@ -417,7 +417,8 @@ fn dialog_button(text: &str, fg: Color32, fill: Color32, edge: Stroke) -> egui::
 }
 
 /// The save dialog over the dimmed window: what becomes of the edits of
-/// `file`. Overwrite stands apart on the left as the destructive choice. A
+/// `file`. Overwrite stands apart on the left as the destructive choice,
+/// absent for a video frame. A
 /// key typed into the name field reaches the core from here, since the field
 /// keeps it from [`super::input_events`].
 pub fn show_save_dialog(
@@ -489,11 +490,12 @@ pub fn show_save_dialog(
             });
             if let Some(reason) = &dialog.overwrite_refused {
                 ui.add_space(6.0);
-                ui.label(
-                    RichText::new(format!("Overwrite is not possible: {reason}."))
-                        .size(13.0)
-                        .color(SUBTLE_INK),
-                );
+                let text = if dialog.frame {
+                    format!("The frame is saved as a new image: {reason}.")
+                } else {
+                    format!("Overwrite is not possible: {reason}.")
+                };
+                ui.label(RichText::new(text).size(13.0).color(SUBTLE_INK));
             }
             if let Some(error) = &dialog.error {
                 ui.add_space(6.0);
@@ -507,17 +509,20 @@ pub fn show_save_dialog(
                 }
             };
             ui.horizontal(|ui| {
-                choose(
-                    ui,
-                    enabled && dialog.overwrite_refused.is_none(),
-                    dialog_button(
-                        "Overwrite",
-                        OVERWRITE_TEXT,
-                        OVERWRITE_FILL,
-                        Stroke::new(1.0, OVERWRITE_EDGE),
-                    ),
-                    SaveChoice::Overwrite,
-                );
+                // A video frame never offers to overwrite the video.
+                if !dialog.frame {
+                    choose(
+                        ui,
+                        enabled && dialog.overwrite_refused.is_none(),
+                        dialog_button(
+                            "Overwrite",
+                            OVERWRITE_TEXT,
+                            OVERWRITE_FILL,
+                            Stroke::new(1.0, OVERWRITE_EDGE),
+                        ),
+                        SaveChoice::Overwrite,
+                    );
+                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     choose(
                         ui,

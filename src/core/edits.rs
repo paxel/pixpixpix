@@ -4,6 +4,7 @@
 //! an area of the edited image at a given size as a new file.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use super::{Command, Core, Event, Key, Points, Screen, Zoom};
 use crate::decode::DecodedImage;
@@ -613,6 +614,8 @@ pub struct SaveDialog {
     pub busy: bool,
     /// The dialog is about an export, which cannot be undone, only left.
     pub export: bool,
+    /// The edits are of a video frame: "Overwrite" is not offered at all.
+    pub frame: bool,
 }
 
 /// A choice in the save dialog.
@@ -657,6 +660,8 @@ pub(super) struct Dialog {
     busy: Option<Busy>,
     /// Asking where an export goes rather than what becomes of the edits.
     export: Option<ExportJob>,
+    /// About a video frame.
+    frame: bool,
 }
 
 /// An export the save dialog asks about.
@@ -790,8 +795,10 @@ impl Core {
             .filter(|e| !e.shapes.is_empty() && self.current.as_ref() == Some(&e.path))
     }
 
-    /// The image the tools draw on, if they can: a still image shown as the
-    /// current file in the image view, its rotation not being written.
+    /// The image the tools draw on, if they can: a still image or a paused
+    /// video frame no seek is about to replace, shown as the current file in
+    /// the image view, its rotation not being written. The video of a Live
+    /// Photo or Motion Photo is not drawn on, only its still.
     fn drawable(&self) -> Option<(&Path, &crate::decode::DecodedImage)> {
         if !self.toolbar_open
             || self.dialog.is_some()
@@ -804,9 +811,11 @@ impl Core {
         let Screen::Image { path, image } = &self.screen else {
             return None;
         };
-        let still = !folder::is_video(path)
-            && !self.animated.contains(path)
-            && self.video.as_ref().is_none_or(|v| !v.started)
+        let paused = |v: &super::CurrentVideo| {
+            !v.started || (!v.motion && !v.playing && !v.seeking && v.pending.is_none())
+        };
+        let still = !self.animated.contains(path)
+            && self.video.as_ref().is_none_or(paused)
             && self.writing.as_ref() != Some(path);
         (still && self.current.as_ref() == Some(path)).then_some((path.as_path(), image))
     }
@@ -861,6 +870,8 @@ impl Core {
         let video = self.video.is_some();
         let ask = match event {
             Event::Show(_) | Event::CloseRequested => true,
+            // Playing or seeking would replace the frame drawn on.
+            Event::Clicked | Event::StepVideo(_) => video,
             Event::Key(key) if self.view.settings_open => key.command && key.key == Key::Q,
             Event::Key(key) if key.command => {
                 key.key == Key::Q || (video && matches!(key.key, Key::Left | Key::Right))
@@ -901,20 +912,32 @@ impl Core {
             error: None,
             busy: None,
             export: None,
+            frame: folder::is_video(&path),
         });
     }
 
     /// `<name>_edit.<ext>` next to `path`, or `_edit2`, `_edit3`… when that is
-    /// taken. A format that cannot be written becomes PNG.
+    /// taken. A format that cannot be written becomes PNG. A video frame is
+    /// `<name>_<HH-MM-SS.mmm>.png` at its position, or `_2`, `_3`… after it.
     fn new_name(&self, path: &Path) -> String {
         let stem = path
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let extension = match path.extension() {
-            Some(_) if folder::is_heif(path) => "png".to_owned(),
-            Some(e) => e.to_string_lossy().into_owned(),
-            None => "png".to_owned(),
+        let (base, extension, separator) = if folder::is_video(path) {
+            let position = self.video.as_ref().map_or(Duration::ZERO, |v| v.position);
+            (
+                format!("{stem}_{}", timestamp(position)),
+                "png".to_owned(),
+                "_",
+            )
+        } else {
+            let extension = match path.extension() {
+                Some(_) if folder::is_heif(path) => "png".to_owned(),
+                Some(e) => e.to_string_lossy().into_owned(),
+                None => "png".to_owned(),
+            };
+            (format!("{stem}_edit"), extension, "")
         };
         let taken = |name: &str| {
             let candidate = path.with_file_name(name);
@@ -925,9 +948,9 @@ impl Core {
             let suffix = if number == 1 {
                 String::new()
             } else {
-                number.to_string()
+                format!("{separator}{number}")
             };
-            let name = format!("{stem}_edit{suffix}.{extension}");
+            let name = format!("{base}{suffix}.{extension}");
             if !taken(&name) || number == u32::MAX {
                 return name;
             }
@@ -937,7 +960,9 @@ impl Core {
 
     /// Why the edits cannot be written into the file itself, as far as known.
     fn overwrite_refused(&self, path: &Path) -> Option<String> {
-        if folder::is_heif(path) {
+        if folder::is_video(path) {
+            Some("a video is never replaced by an image".to_owned())
+        } else if folder::is_heif(path) {
             Some("HEIC/HEIF and AVIF files cannot be written".to_owned())
         } else if self.images.get(path).is_some_and(|n| *n > 1) {
             Some("the other images in the file would be lost".to_owned())
@@ -1233,6 +1258,7 @@ impl Core {
             overwrite_refused: Some("an export never replaces the original".to_owned()),
             error: None,
             busy: None,
+            frame: folder::is_video(&path),
             export: Some(ExportJob { path, area, export }),
         });
         let settings = &mut self.view.settings;
@@ -1592,6 +1618,7 @@ impl Core {
             error: d.error.clone(),
             busy: d.busy.is_some(),
             export: d.export.is_some(),
+            frame: d.frame,
         });
         let exporting = self.toolbar_open && self.toolbar.tool == Tool::Export && !previewing;
         self.view.export = exporting.then(|| ExportView {
@@ -1604,6 +1631,17 @@ impl Core {
     pub(super) fn has_unsaved(&self) -> bool {
         self.unsaved().is_some()
     }
+}
+
+/// `position` as `HH-MM-SS.mmm`, which file names can hold everywhere.
+fn timestamp(position: Duration) -> String {
+    let seconds = position.as_secs();
+    let (hours, minutes) = (seconds / 3600, (seconds / 60) % 60);
+    format!(
+        "{hours:02}-{minutes:02}-{:02}.{:03}",
+        seconds % 60,
+        position.subsec_millis()
+    )
 }
 
 /// The new file the dialog's name names next to `path`, or why there is

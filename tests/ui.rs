@@ -1374,6 +1374,55 @@ fn the_save_dialog_offers_all_four_choices() {
 }
 
 #[test]
+fn the_save_dialog_of_a_video_frame_has_no_overwrite() {
+    let (mut core, _) = Core::start(Ok(PathBuf::from("/p/clip.mp4")));
+    core.handle(Event::Decoded {
+        path: PathBuf::from("/p/clip.mp4"),
+        result: Ok(DecodedImage {
+            width: 2000,
+            height: 1000,
+            rgba: Arc::from(vec![0; 2000 * 1000 * 4]),
+        }),
+    });
+    core.handle(Event::FirstFrameShown);
+    core.handle(Event::FolderListed {
+        dir: PathBuf::from("/p"),
+        result: Ok(vec![PathBuf::from("/p/clip.mp4")]),
+    });
+    let mut h = harness(core);
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Play");
+    h.key_press(egui::Key::P);
+    h.run();
+    // The tools draw where the play triangle was.
+    assert!(h.query_by_role_and_label(Role::Button, "Play").is_none());
+    drag_over(&mut h, egui::pos2(300.0, 250.0), egui::pos2(500.0, 300.0));
+    assert_eq!(shape_count(&h), 1);
+    h.key_press(egui::Key::Enter);
+    h.run();
+    for label in [
+        "Save as new",
+        "Copy to clipboard",
+        "Undo edits",
+        "Back to editing",
+    ] {
+        h.get_by_role_and_label(Role::Button, label);
+    }
+    assert!(
+        h.query_by_role_and_label(Role::Button, "Overwrite")
+            .is_none()
+    );
+    let name = h.get_by_role_and_label(Role::TextInput, "New file").value();
+    assert_eq!(name.as_deref(), Some("clip_00-00-00.000.png"));
+    assert!(
+        !h.state()
+            .commands
+            .iter()
+            .any(|c| matches!(c, Command::PlayVideo { .. }))
+    );
+}
+
+#[test]
 fn enter_in_the_save_dialog_saves_as_new_once() {
     let mut h = save_dialog();
     h.key_press(egui::Key::Enter);
