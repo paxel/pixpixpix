@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 
 use pixpixpix::decode::{self, DecodedImage};
-use pixpixpix::{folder, startup};
+use pixpixpix::{folder, heif, startup};
 
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -110,6 +110,57 @@ fn file_larger_than_one_read_chunk_decodes() {
 }
 
 #[test]
+fn heic_heif_and_avif_decode_upright_or_name_the_missing_libheif() {
+    match heif::load(heif::LIBRARY_NAMES) {
+        Ok(_) => {
+            for name in ["sample.heic", "sample.avif"] {
+                let image = decode_file(&fixture(name)).unwrap_or_else(|e| panic!("{name}: {e}"));
+                assert_eq!((image.width, image.height), (4, 2), "{name}");
+                assert!(is_red(pixel(&image, 0, 0)), "{name}");
+                assert!(is_blue(pixel(&image, 3, 1)), "{name}");
+            }
+            // Turned 90° clockwise by its `irot` box and, like iPhone photos,
+            // EXIF orientation 6 describing the same turn: applied once, the
+            // red left half ends up on top.
+            let image = decode_file(&fixture("orientation6.heic")).unwrap();
+            assert_eq!((image.width, image.height), (2, 4));
+            assert!(is_red(pixel(&image, 0, 0)));
+            assert!(is_blue(pixel(&image, 1, 3)));
+        }
+        Err(_) => {
+            let error = decode_file(&fixture("sample.heic")).unwrap_err();
+            assert!(
+                error.starts_with("HEIC/HEIF and AVIF need libheif, which was not found"),
+                "{error}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_missing_libheif_is_an_error_naming_it() {
+    let error = heif::load(&["libpixpixpix-no-such-library.so"])
+        .err()
+        .unwrap();
+    assert!(
+        error.starts_with("HEIC/HEIF and AVIF need libheif, which was not found: "),
+        "{error}"
+    );
+}
+
+#[test]
+fn heif_is_told_by_content_with_the_extension_as_fallback() {
+    let heic = std::fs::read(fixture("sample.heic")).unwrap();
+    let avif = std::fs::read(fixture("sample.avif")).unwrap();
+    let jpeg = std::fs::read(fixture("sample.jpg")).unwrap();
+    assert!(decode::is_heif(Path::new("photo.jpg"), &heic));
+    assert!(decode::is_heif(Path::new("photo"), &avif));
+    assert!(decode::is_heif(Path::new("broken.HEIC"), b"not an image"));
+    assert!(!decode::is_heif(Path::new("misnamed.heic"), &jpeg));
+    assert!(!decode::is_heif(Path::new("photo.jpg"), &jpeg));
+}
+
+#[test]
 fn folder_lists_media_in_natural_order_without_dot_files() {
     let dir = tempfile::tempdir().unwrap();
     for name in [
@@ -118,6 +169,10 @@ fn folder_lists_media_in_natural_order_without_dot_files() {
         "IMG1.png",
         ".hidden.jpg",
         "notes.txt",
+        "phone.HEIC",
+        "camera.hif",
+        "still.heif",
+        "web.avif",
     ] {
         std::fs::write(dir.path().join(name), b"x").unwrap();
     }
@@ -129,11 +184,18 @@ fn folder_lists_media_in_natural_order_without_dot_files() {
             .map(|p| folder::file_name(p))
             .collect()
     };
-    assert_eq!(names(false), ["IMG1.png", "img2.JPG", "img10.jpg"]);
-    assert_eq!(
-        names(true),
-        [".hidden.jpg", "IMG1.png", "img2.JPG", "img10.jpg"]
-    );
+    let visible = [
+        "camera.hif",
+        "IMG1.png",
+        "img2.JPG",
+        "img10.jpg",
+        "phone.HEIC",
+        "still.heif",
+        "web.avif",
+    ];
+    assert_eq!(names(false), visible);
+    assert_eq!(names(true)[0], ".hidden.jpg");
+    assert_eq!(names(true)[1..], visible);
 }
 
 #[test]

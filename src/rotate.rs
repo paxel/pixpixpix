@@ -15,8 +15,8 @@ use image::codecs::webp::WebPDecoder;
 use image::metadata::Orientation;
 use image::{AnimationDecoder, DynamicImage, ImageDecoder, ImageFormat, ImageReader};
 
-use crate::folder;
 use crate::turbojpeg::{self, Transform, TurboJpeg};
+use crate::{decode, folder};
 
 /// A turn of the shown image in quarter steps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -80,6 +80,9 @@ pub fn write(path: &Path, rotation: Rotation) -> Result<(), String> {
 /// The bytes of the turned file, in the file's own format.
 fn rotated(path: &Path, rotation: Rotation) -> Result<Vec<u8>, String> {
     let bytes = fs::read(path).map_err(|e| e.to_string())?;
+    if decode::is_heif(path, &bytes) {
+        return Err("rotating HEIC/HEIF and AVIF is not supported".to_owned());
+    }
     let format = image::guess_format(&bytes)
         .or_else(|_| ImageFormat::from_path(path))
         .map_err(|e| e.to_string())?;

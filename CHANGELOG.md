@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- `pixpixpix <file>` (or the short `pix3`) shows the image as fast as possible; a folder or no argument shows the folder's first image. JPEG, PNG, GIF, WebP, BMP and TIFF, upright according to EXIF orientation.
+- `pixpixpix <file>` (or the short `pix3`) shows the image as fast as possible; a folder or no argument shows the folder's first image. JPEG, PNG, GIF, WebP, BMP and TIFF, upright according to EXIF orientation; HEIC/HEIF and AVIF too through libheif, loaded on the first such file (a missing libheif or decoder shows as a broken file with the reason). `Enter` refuses to write a turn into HEIC/HEIF and AVIF.
 - Left/Right arrows step to the previous/next image of the folder in natural name order, stopping at the ends with a "first image"/"last image" hint; the bottom key line lists the available keys.
 - Up to 5 neighbours per side of the current image are preloaded after it is shown, so stepping to them is instant; a thin band above the key line shows them as thumbnails, marks the current one and jumps to a clicked one. Loading that is no longer needed is cancelled mid-read.
 - A file that fails to decode shows the decoder's error and the hint that `o` opens it in another app; its band thumb carries an error marker and navigation still stops on it. A folder that cannot be read is reported in the key line.

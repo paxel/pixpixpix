@@ -4,10 +4,13 @@
 use std::fs::File;
 use std::io::{Cursor, Read};
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader};
+
+use crate::folder;
+use crate::heif::{self, Heif};
 
 /// Decoded RGBA pixels, shared cheaply between the core and the UI.
 #[derive(Clone, PartialEq, Eq)]
@@ -73,9 +76,25 @@ fn read(path: &Path, cancelled: &impl Fn() -> bool) -> std::io::Result<Option<Ve
     }
 }
 
+/// libheif, loaded on the first HEIC/HEIF or AVIF file.
+static HEIF: OnceLock<Result<Heif, String>> = OnceLock::new();
+
+/// True when the file at `path` with content `bytes` is HEIF or AVIF: the
+/// content decides, the extension is the fallback.
+pub fn is_heif(path: &Path, bytes: &[u8]) -> bool {
+    heif::is_heif(bytes) || (folder::is_heif(path) && image::guess_format(bytes).is_err())
+}
+
 /// Decodes the bytes of the file at `path`; the file content decides the
 /// format, its extension is the fallback.
 fn decode_bytes(path: &Path, bytes: Vec<u8>) -> Result<DecodedImage, String> {
+    if is_heif(path, &bytes) {
+        return HEIF
+            .get_or_init(|| heif::load(heif::LIBRARY_NAMES))
+            .as_ref()
+            .map_err(Clone::clone)?
+            .decode(&bytes);
+    }
     let mut reader = ImageReader::new(Cursor::new(bytes));
     if let Ok(format) = ImageFormat::from_path(path) {
         reader.set_format(format);

@@ -20,6 +20,7 @@ pub mod decode;
 pub mod external;
 pub mod folder;
 pub mod geometry;
+pub mod heif;
 pub mod rotate;
 pub mod settings;
 pub mod startup;

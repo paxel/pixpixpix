@@ -14,7 +14,15 @@ const IMAGE_EXTENSIONS: &[&str] = &[
 
 /// True when the file name has an extension of a supported image format.
 pub fn is_image(path: &Path) -> bool {
-    has_extension(path, IMAGE_EXTENSIONS)
+    has_extension(path, IMAGE_EXTENSIONS) || is_heif(path)
+}
+
+/// Extensions of HEIF and AVIF, the formats libheif decodes, lower case.
+const HEIF_EXTENSIONS: &[&str] = &["heic", "heif", "hif", "avif"];
+
+/// True when the file name has an extension of HEIF or AVIF.
+pub fn is_heif(path: &Path) -> bool {
+    has_extension(path, HEIF_EXTENSIONS)
 }
 
 /// Extensions of the video formats, lower case.

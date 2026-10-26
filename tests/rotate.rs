@@ -294,3 +294,19 @@ fn jpeg_is_turned_losslessly_or_refused_without_libturbojpeg() {
     }
     assert_eq!(names(dir.path()), ["photo.jpg"]);
 }
+
+#[test]
+fn heic_and_avif_are_refused_and_left_untouched() {
+    for name in ["sample.heic", "sample.avif"] {
+        let (_dir, path) = copy(name).unwrap();
+        let error = rotate::write(&path, Rotation::Right).unwrap_err();
+        assert_eq!(
+            error,
+            format!("Cannot rotate {name}: rotating HEIC/HEIF and AVIF is not supported")
+        );
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            std::fs::read(fixture(name)).unwrap()
+        );
+    }
+}
