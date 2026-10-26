@@ -857,3 +857,101 @@ fn multi_image_files_show_which_image_and_are_marked_in_the_band() {
     assert!(h.query_by_label("2 / 3").is_none());
     assert!(h.query_by_label("1 / 3").is_none());
 }
+
+/// [`browsing`] on `/p/a.mp4` of `a.mp4` and `b.jpg`, both decoded.
+fn browsing_videos() -> Core {
+    let mut core = browsing("/p/a.mp4", &["/p/a.mp4", "/p/b.jpg"]);
+    decoded(&mut core, "/p/b.jpg");
+    core
+}
+
+#[test]
+fn a_video_shows_a_play_triangle_and_is_marked_in_the_band() {
+    let mut h = harness(browsing_videos());
+    h.run();
+    h.get_by_role_and_label(Role::Image, "a.mp4");
+    h.get_by_role_and_label(Role::Button, "Play");
+    h.get_by_role_and_label(Role::Button, "a.mp4 (video)");
+    h.get_by_role_and_label(Role::Button, "b.jpg");
+    h.get_by_label("Space");
+    h.get_by_label("play");
+    h.get_by_label("M");
+    h.get_by_label("mute");
+}
+
+#[test]
+fn clicking_play_or_space_plays_and_pauses_the_video() {
+    let mut h = harness(browsing_videos());
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Play").click();
+    h.run();
+    assert_eq!(
+        h.state().commands.last(),
+        Some(&Command::PlayVideo {
+            path: PathBuf::from("/p/a.mp4"),
+            muted: false,
+        })
+    );
+    assert!(h.query_by_label("Play").is_none());
+    h.get_by_label("pause");
+    h.key_press(egui::Key::Space);
+    h.run();
+    assert_eq!(h.state().commands.last(), Some(&Command::PauseVideo));
+    h.get_by_role_and_label(Role::Button, "Play");
+    h.key_press(egui::Key::M);
+    h.run();
+    h.get_by_label("unmute");
+}
+
+#[test]
+fn clicking_a_playing_video_pauses_it() {
+    let mut core = browsing_videos();
+    core.handle(Event::Clicked);
+    let mut h = harness(core);
+    h.run();
+    h.get_by_role_and_label(Role::Image, "a.mp4").click();
+    h.run();
+    assert_eq!(h.state().commands.last(), Some(&Command::PauseVideo));
+}
+
+#[test]
+fn a_video_that_cannot_play_shows_mpvs_error_and_the_open_hint() {
+    let mut core = browsing_videos();
+    core.handle(Event::Clicked);
+    core.handle(Event::VideoFailed {
+        path: PathBuf::from("/p/a.mp4"),
+        message: "unrecognized file format".into(),
+    });
+    let mut h = harness(core);
+    h.run();
+    h.get_by_role_and_label(Role::Image, "a.mp4");
+    h.get_by_label("unrecognized file format");
+    h.get_by_label("Press O to open it in another app");
+    h.get_by_role_and_label(Role::Button, "Play");
+}
+
+#[test]
+fn dragging_a_zoomed_video_pans_it_without_playing() {
+    let (mut core, _) = Core::start(Ok(PathBuf::from("/p/big.mp4")));
+    core.handle(Event::Decoded {
+        path: PathBuf::from("/p/big.mp4"),
+        result: Ok(DecodedImage {
+            width: 2000,
+            height: 1000,
+            rgba: Arc::from(vec![0; 2000 * 1000 * 4]),
+        }),
+    });
+    let mut h = harness(core);
+    h.run();
+    h.key_press(egui::Key::Num1);
+    h.run();
+    h.drag_at(egui::pos2(400.0, 200.0));
+    h.run();
+    h.hover_at(egui::pos2(300.0, 200.0));
+    h.run();
+    h.drop_at(egui::pos2(300.0, 200.0));
+    h.run();
+    let zoom = h.state().core.view().zoom;
+    assert!((zoom.center_x - 0.55).abs() < 1e-4, "{}", zoom.center_x);
+    assert!(!h.state().core.view().video.as_ref().unwrap().playing);
+}

@@ -189,6 +189,7 @@ impl Core {
                             current: path == first,
                             animated: false,
                             images: 1,
+                            video: false,
                         })
                     })
                     .collect();

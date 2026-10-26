@@ -37,7 +37,7 @@ pub fn is_video(path: &Path) -> bool {
 
 /// True when the file is something navigation shows.
 pub fn is_media(path: &Path) -> bool {
-    is_image(path)
+    is_image(path) || is_video(path)
 }
 
 fn has_extension(path: &Path, list: &[&str]) -> bool {

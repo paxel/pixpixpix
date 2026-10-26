@@ -8,7 +8,8 @@ use std::sync::Arc;
 use egui::{Color32, ColorImage, RichText, TextureHandle, TextureOptions};
 
 use crate::core::{
-    DirColumn, Event, Focus, InnerImages, Key, KeyPress, Notice, Points, Screen, Thumb, View, Zoom,
+    DirColumn, Event, Focus, InnerImages, Key, KeyPress, Notice, Points, Screen, Thumb, Video,
+    View, Zoom,
 };
 use crate::decode::DecodedImage;
 use crate::folder;
@@ -143,6 +144,8 @@ fn map_key(key: egui::Key) -> Option<Key> {
         egui::Key::L => Key::L,
         egui::Key::X => Key::X,
         egui::Key::C => Key::C,
+        egui::Key::Space => Key::Space,
+        egui::Key::M => Key::M,
         _ => return None,
     })
 }
@@ -198,8 +201,12 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
                         path,
                         image,
                         rotation: view.rotation,
+                        clickable: view.video.is_some(),
                     };
                     show_image(ui, &shown, view.zoom, textures, &mut events);
+                    if let Some(video) = &view.video {
+                        show_video(ui, video, &mut events);
+                    }
                 }
                 Screen::Error { path, message } => show_error(ui, path.as_deref(), message),
                 Screen::NoImages { folders, .. } => show_no_images(ui, *folders),
@@ -247,7 +254,10 @@ fn show_band(
                     let size = fit(pixels, egui::vec2(THUMB_HEIGHT * 2.0, THUMB_HEIGHT));
                     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
                     egui::Image::new(&texture).paint_at(ui, rect);
-                    if thumb.animated {
+                    if thumb.video {
+                        paint_play(ui.painter(), rect.center(), THUMB_HEIGHT / 5.0);
+                        (rect, response, format!("{name} (video)"))
+                    } else if thumb.animated {
                         paint_animated_badge(ui.painter(), rect);
                         (rect, response, format!("{name} (animated)"))
                     } else if thumb.images > 1 {
@@ -320,6 +330,22 @@ fn paint_animated_badge(painter: &egui::Painter, rect: egui::Rect) {
             egui::Rect::from_min_size(egui::pos2(left, badge.min.y + 2.0), egui::vec2(5.0, 6.0));
         painter.rect_filled(frame, 1.0, ANIMATED_MARK);
     }
+}
+
+/// A play triangle in a dark disc of `radius` around `center`.
+fn paint_play(painter: &egui::Painter, center: egui::Pos2, radius: f32) {
+    painter.circle_filled(center, radius, ANIMATED_BADGE);
+    let side = radius * 0.5;
+    let points = vec![
+        egui::pos2(center.x - side * 0.6, center.y - side),
+        egui::pos2(center.x + side, center.y),
+        egui::pos2(center.x - side * 0.6, center.y + side),
+    ];
+    painter.add(egui::Shape::convex_polygon(
+        points,
+        ANIMATED_MARK,
+        egui::Stroke::NONE,
+    ));
 }
 
 /// The badge of a multi-image thumb in its bottom left corner: how many
@@ -475,10 +501,12 @@ struct Shown<'a> {
     path: &'a Path,
     image: &'a DecodedImage,
     rotation: Rotation,
+    /// A click on it is reported, as for a video.
+    clickable: bool,
 }
 
 /// Draws the visible part of the image, turned, as the core places it; the
-/// wheel over it zooms and dragging pans.
+/// wheel over it zooms, dragging pans and a click is reported if wanted.
 fn show_image(
     ui: &mut egui::Ui,
     shown: &Shown<'_>,
@@ -545,8 +573,50 @@ fn show_image(
     mesh.add_triangle(0, 2, 3);
     ui.painter().add(mesh);
     let name = folder::file_name(shown.path);
-    ui.allocate_rect(visible, egui::Sense::hover())
-        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Image, true, &name));
+    let sense = if shown.clickable {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    };
+    let response = ui.allocate_rect(visible, sense);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Image, true, &name));
+    if response.clicked() {
+        events.push(Event::Clicked);
+    }
+}
+
+/// Over a video's frame: a big play triangle while it is not playing, which
+/// a click plays, and why it cannot be played.
+fn show_video(ui: &mut egui::Ui, video: &Video, events: &mut Vec<Event>) {
+    let area = ui.max_rect();
+    if !video.playing {
+        let radius = (area.width().min(area.height()) / 8.0).clamp(24.0, 64.0);
+        let rect = egui::Rect::from_center_size(area.center(), egui::Vec2::splat(radius * 2.0));
+        paint_play(ui.painter(), area.center(), radius);
+        let response = ui.interact(rect, ui.id().with("play"), egui::Sense::click());
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Play"));
+        if response.clicked() {
+            events.push(Event::Clicked);
+        }
+    }
+    if let Some(error) = &video.error {
+        let rect = egui::Rect::from_min_max(egui::pos2(area.min.x, area.max.y - 56.0), area.max);
+        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+            ui.vertical_centered(|ui| {
+                ui.label(
+                    RichText::new(error)
+                        .color(ERROR_TEXT)
+                        .background_color(ANIMATED_BADGE)
+                        .size(15.0),
+                );
+                ui.label(
+                    RichText::new(OPEN_HINT)
+                        .color(DIM_TEXT)
+                        .background_color(ANIMATED_BADGE),
+                );
+            });
+        });
+    }
 }
 
 /// Which image of a multi-image file is shown, in the top right corner.

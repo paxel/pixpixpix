@@ -13,7 +13,7 @@ use image::codecs::webp::WebPDecoder;
 use image::{AnimationDecoder, DynamicImage, ImageDecoder, ImageFormat, ImageReader};
 
 use crate::heif::{self, Heif};
-use crate::{folder, multi};
+use crate::{folder, multi, video};
 
 /// Decoded RGBA pixels, shared cheaply between the core and the UI.
 #[derive(Clone, PartialEq, Eq)]
@@ -75,8 +75,18 @@ pub fn decode_file(path: &Path, cancel: &AtomicBool) -> Option<Result<DecodedIma
 }
 
 /// Like [`decode_file`], telling an animation and a multi-image file apart;
-/// finding out reads only the file's headers.
+/// finding out reads only the file's headers. A video gives its first frame
+/// through libmpv, loaded on the first one.
 pub fn decode_first_frame(path: &Path, cancel: &AtomicBool) -> Option<Result<FirstFrame, String>> {
+    // A video is never read whole: mpv reads what its first frame needs.
+    if folder::is_video(path) {
+        let result = video::first_frame(path, cancel)?;
+        return Some(result.map(|image| FirstFrame {
+            image,
+            animated: false,
+            images: 1,
+        }));
+    }
     let cancelled = || cancel.load(Ordering::Relaxed);
     let bytes = match read(path, &cancelled) {
         Ok(Some(bytes)) => bytes,

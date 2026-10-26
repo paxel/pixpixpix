@@ -49,6 +49,8 @@ pub enum Key {
     L,
     X,
     C,
+    Space,
+    M,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -170,6 +172,21 @@ pub enum Event {
         index: usize,
         result: Result<DecodedImage, String>,
     },
+    /// The shown image was clicked.
+    Clicked,
+    /// The video [`Command::PlayVideo`] plays drew a frame.
+    VideoFrame {
+        path: PathBuf,
+        image: DecodedImage,
+    },
+    /// The video [`Command::PlayVideo`] plays reached its end.
+    VideoEnded(PathBuf),
+    /// The video [`Command::PlayVideo`] was asked to play cannot be played;
+    /// the message is mpv's.
+    VideoFailed {
+        path: PathBuf,
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -237,6 +254,21 @@ pub enum Command {
     /// The running [`Command::DecodeInner`] is no longer needed; it reports
     /// nothing once cancelled.
     CancelInner,
+    /// Play the video from the start, with sound unless `muted`, replacing
+    /// any video playing; answered by [`Event::VideoFrame`] for each frame,
+    /// then [`Event::VideoEnded`] or [`Event::VideoFailed`].
+    PlayVideo {
+        path: PathBuf,
+        muted: bool,
+    },
+    /// Pause the playing video, keeping its frame.
+    PauseVideo,
+    /// Play the paused video on.
+    ResumeVideo,
+    /// Mute the playing video, or turn its sound back on.
+    MuteVideo(bool),
+    /// The video player is no longer needed; it reports nothing more.
+    StopVideo,
     SetFullscreen(bool),
     Quit,
 }
@@ -362,6 +394,21 @@ const INNER_KEYS: KeyHint = KeyHint {
     keys: "Up/Down",
     action: "images in the file",
 };
+
+/// Image view keys of a video, listed after the first; they say what a press
+/// does now.
+fn video_keys(video: &Video) -> [KeyHint; 2] {
+    [
+        KeyHint {
+            keys: "Space",
+            action: if video.playing { "pause" } else { "play" },
+        },
+        KeyHint {
+            keys: "M",
+            action: if video.muted { "unmute" } else { "mute" },
+        },
+    ]
+}
 
 const DIR_COLUMN_KEYS: &[KeyHint] = &[
     KeyHint {
@@ -503,6 +550,17 @@ pub struct Thumb {
     pub animated: bool,
     /// How many images the file holds; more than one for a multi-image file.
     pub images: usize,
+    /// The file is a video, shown by its first frame.
+    pub video: bool,
+}
+
+/// The video shown in the main area.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Video {
+    pub playing: bool,
+    pub muted: bool,
+    /// Why it cannot be played, as mpv says.
+    pub error: Option<String>,
 }
 
 /// Which of the images of a multi-image file is shown.
@@ -672,6 +730,8 @@ pub struct View {
     pub next_frame_in: Option<Duration>,
     /// While the main area shows a multi-image file: which of its images.
     pub inner: Option<InnerImages>,
+    /// While the main area shows a video.
+    pub video: Option<Video>,
 }
 
 pub struct Core {
@@ -732,6 +792,21 @@ pub struct Core {
     images: BTreeMap<PathBuf, usize>,
     /// The image shown of the current file while it holds more than one.
     inner: Option<Inner>,
+    /// The current file while it is a video shown by a frame.
+    video: Option<CurrentVideo>,
+    /// Whether videos play without sound; kept from video to video.
+    muted: bool,
+}
+
+/// The video of the main area.
+#[derive(Debug)]
+struct CurrentVideo {
+    path: PathBuf,
+    /// A player was asked for and has not ended or failed.
+    started: bool,
+    playing: bool,
+    /// Why it could not be played.
+    error: Option<String>,
 }
 
 /// The image shown of a multi-image file.
@@ -832,6 +907,7 @@ impl Nav {
                     current: true,
                     animated: false,
                     images: 1,
+                    video: false,
                 }],
             ),
         }
@@ -884,6 +960,7 @@ impl Core {
                 copy_error: None,
                 next_frame_in: None,
                 inner: None,
+                video: None,
             },
             screen,
             band: Vec::new(),
@@ -909,6 +986,8 @@ impl Core {
             animation: None,
             images: BTreeMap::new(),
             inner: None,
+            video: None,
+            muted: false,
         };
         (core, commands)
     }
@@ -932,6 +1011,7 @@ impl Core {
         commands.extend(self.sync_nav());
         commands.extend(self.sync_animation());
         commands.extend(self.sync_inner());
+        commands.extend(self.sync_video());
         self.publish();
         commands
     }
@@ -1015,6 +1095,14 @@ impl Core {
                 self.inner_decoded(&path, index, result);
                 Vec::new()
             }
+            Event::Clicked if self.view.video.is_some() => self.toggle_play(),
+            Event::Clicked => Vec::new(),
+            Event::VideoFrame { path, image } => {
+                self.video_frame(path, image);
+                Vec::new()
+            }
+            Event::VideoEnded(path) => self.video_stopped(&path, None),
+            Event::VideoFailed { path, message } => self.video_stopped(&path, Some(message)),
         }
     }
 
@@ -1072,6 +1160,14 @@ impl Core {
             (None, Some(Animation::Playing { next_in, .. })) => Some(*next_in),
             _ => None,
         };
+        self.view.video = match (&preview, &self.video) {
+            (None, Some(video)) => Some(Video {
+                playing: video.playing,
+                muted: self.muted,
+                error: video.error.clone(),
+            }),
+            _ => None,
+        };
         (self.view.screen, self.view.band) =
             preview.unwrap_or_else(|| (self.screen.clone(), self.band.clone()));
         for thumb in &mut self.view.band {
@@ -1080,11 +1176,15 @@ impl Core {
                 (Some(_), Some(count)) => *count,
                 _ => 1,
             };
+            thumb.video = thumb.image.is_some() && folder::is_video(&thumb.path);
         }
         if self.view.focus == Focus::Image && !self.view.settings_open {
             let mut keys = focus_keys(Focus::Image, self.view.dir_column.is_some());
             if self.view.inner.is_some() {
                 keys.insert(1, INNER_KEYS);
+            }
+            if let Some(video) = &self.view.video {
+                keys.splice(1..1, video_keys(video));
             }
             self.view.key_line.keys = keys;
         }
@@ -1159,6 +1259,98 @@ impl Core {
         };
         inner.decoding = false;
         self.screen = screen(path, result);
+    }
+
+    /// Fits the video to the current file: a video shown by its first frame
+    /// may be played; the player of a file left is stopped.
+    fn sync_video(&mut self) -> Vec<Command> {
+        let wanted = self.current.as_ref().filter(|current| {
+            folder::is_video(current)
+                && matches!(&self.screen, Screen::Image { path, .. } if path == *current)
+        });
+        if self.video.as_ref().map(|v| &v.path) == wanted {
+            return Vec::new();
+        }
+        let new = wanted.map(|path| CurrentVideo {
+            path: path.clone(),
+            started: false,
+            playing: false,
+            error: None,
+        });
+        match std::mem::replace(&mut self.video, new) {
+            Some(CurrentVideo { started: true, .. }) => vec![Command::StopVideo],
+            _ => Vec::new(),
+        }
+    }
+
+    /// Plays or pauses the video shown; the first play starts a player.
+    fn toggle_play(&mut self) -> Vec<Command> {
+        let Some(video) = self.video.as_mut() else {
+            return Vec::new();
+        };
+        video.error = None;
+        video.playing = !video.playing;
+        match (video.playing, video.started) {
+            (false, _) => vec![Command::PauseVideo],
+            (true, true) => vec![Command::ResumeVideo],
+            (true, false) => {
+                video.started = true;
+                vec![Command::PlayVideo {
+                    path: video.path.clone(),
+                    muted: self.muted,
+                }]
+            }
+        }
+    }
+
+    /// Turns the sound of videos off or on while a video is shown.
+    fn toggle_mute(&mut self) -> Vec<Command> {
+        let Some(video) = &self.video else {
+            return Vec::new();
+        };
+        self.muted = !self.muted;
+        if video.started {
+            vec![Command::MuteVideo(self.muted)]
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// A frame of the video playing replaces the one shown.
+    fn video_frame(&mut self, path: PathBuf, image: DecodedImage) {
+        let playing = self
+            .video
+            .as_ref()
+            .is_some_and(|v| v.started && v.path == path);
+        if let (
+            true,
+            Screen::Image {
+                path: p,
+                image: shown,
+            },
+        ) = (playing, &mut self.screen)
+            && *p == path
+        {
+            *shown = image;
+        }
+    }
+
+    /// The video played to its end, or failed with `error`: it shows its
+    /// first frame again, ready to play anew.
+    fn video_stopped(&mut self, path: &Path, error: Option<String>) -> Vec<Command> {
+        let Some(video) = self.video.as_mut().filter(|v| v.started && v.path == path) else {
+            return Vec::new();
+        };
+        video.started = false;
+        video.playing = false;
+        video.error = error;
+        if let Some(Ok(image)) = self.cache.get(path) {
+            self.screen = Screen::Image {
+                path: path.to_path_buf(),
+                image: image.clone(),
+            };
+        }
+        vec![Command::StopVideo]
     }
 
     /// Fits the animation to the current file: an animated one shown as an
@@ -1765,6 +1957,8 @@ impl Core {
             Key::Enter => self.write_rotation(),
             Key::X => self.trash(),
             Key::C => self.copy(),
+            Key::Space => self.toggle_play(),
+            Key::M => self.toggle_mute(),
             _ => Vec::new(),
         }
     }
@@ -1834,12 +2028,12 @@ impl Core {
     }
 
     /// The current file while it shows as an image and no rotation of it is
-    /// being written.
+    /// being written. A video cannot be turned.
     fn rotatable(&self) -> Option<&PathBuf> {
         let Screen::Image { path, .. } = &self.screen else {
             return None;
         };
-        (self.writing.as_ref() != Some(path)).then_some(path)
+        (self.writing.as_ref() != Some(path) && !folder::is_video(path)).then_some(path)
     }
 
     /// Turns the image on screen only, keeping the image point in the middle
@@ -2111,6 +2305,7 @@ impl Core {
                     path,
                     animated: false,
                     images: 1,
+                    video: false,
                 })
             })
             .collect();

@@ -173,6 +173,9 @@ fn folder_lists_media_in_natural_order_without_dot_files() {
         "camera.hif",
         "still.heif",
         "web.avif",
+        "clip.mp4",
+        "00012.MTS",
+        "old.mpg",
     ] {
         std::fs::write(dir.path().join(name), b"x").unwrap();
     }
@@ -185,10 +188,13 @@ fn folder_lists_media_in_natural_order_without_dot_files() {
             .collect()
     };
     let visible = [
+        "00012.MTS",
         "camera.hif",
+        "clip.mp4",
         "IMG1.png",
         "img2.JPG",
         "img10.jpg",
+        "old.mpg",
         "phone.HEIC",
         "still.heif",
         "web.avif",

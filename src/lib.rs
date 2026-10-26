@@ -21,6 +21,7 @@ pub mod external;
 pub mod folder;
 pub mod geometry;
 pub mod heif;
+pub mod mpv;
 pub mod multi;
 pub mod rotate;
 pub mod settings;
@@ -28,6 +29,7 @@ pub mod startup;
 pub mod trash;
 pub mod turbojpeg;
 pub mod ui;
+pub mod video;
 pub mod watch;
 
 pub use app::run;

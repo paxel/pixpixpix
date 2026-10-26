@@ -15,6 +15,7 @@ use crate::core::{Command, Core, Event, Screen};
 use crate::decode::DecodedImage;
 use crate::geometry::{self, Geometry};
 use crate::rotate::Rotation;
+use crate::video::{Playback, Report};
 use crate::{decode, external, folder, rotate, settings, startup, trash, ui, watch};
 
 pub const APP_ID: &str = "io.github.paxel.pixpixpix";
@@ -42,6 +43,7 @@ pub fn run() -> ExitCode {
         inner: None,
         settings_path: settings::default_path(),
         copier: None,
+        playback: None,
     };
     for command in &commands {
         worker.spawn(command);
@@ -124,6 +126,8 @@ struct Worker {
     settings_path: Option<PathBuf>,
     /// Hands copies to the clipboard thread, started on the first copy.
     copier: Option<Sender<CopyJob>>,
+    /// The video playing or paused; dropping it stops it.
+    playback: Option<Playback>,
 }
 
 /// One `c`: the file and its pixels as shown.
@@ -317,6 +321,40 @@ impl Worker {
                     )));
                 }
             }
+            Command::PlayVideo { path, muted } => {
+                let events = self.events.clone();
+                let ctx = self.ctx.clone();
+                let played = path.clone();
+                // The old player stops before the new one starts.
+                self.playback = None;
+                self.playback = Some(Playback::start(path.clone(), *muted, move |report| {
+                    let path = played.clone();
+                    let event = match report {
+                        Report::Frame(image) => Event::VideoFrame { path, image },
+                        Report::Ended => Event::VideoEnded(path),
+                        Report::Failed(message) => Event::VideoFailed { path, message },
+                    };
+                    // The app may already be gone; nothing to report to then.
+                    let _ = events.send(event);
+                    ctx.request_repaint();
+                }));
+            }
+            Command::PauseVideo => {
+                if let Some(playback) = &self.playback {
+                    playback.pause();
+                }
+            }
+            Command::ResumeVideo => {
+                if let Some(playback) = &self.playback {
+                    playback.resume();
+                }
+            }
+            Command::MuteVideo(muted) => {
+                if let Some(playback) = &self.playback {
+                    playback.mute(*muted);
+                }
+            }
+            Command::StopVideo => self.playback = None,
             Command::SetFullscreen(_) | Command::Quit => {}
         }
     }
@@ -409,7 +447,12 @@ impl App {
                 | Command::DecodeFrames(_)
                 | Command::CancelFrames
                 | Command::DecodeInner { .. }
-                | Command::CancelInner => {
+                | Command::CancelInner
+                | Command::PlayVideo { .. }
+                | Command::PauseVideo
+                | Command::ResumeVideo
+                | Command::MuteVideo(_)
+                | Command::StopVideo => {
                     self.worker.spawn(&command);
                 }
             }

@@ -506,7 +506,8 @@ fn band_shows_the_cached_images_in_folder_order_with_the_current_one_marked() {
             image: Some(image()),
             current: false,
             animated: false,
-            images: 1
+            images: 1,
+            video: false
         })
     );
 }
@@ -530,7 +531,8 @@ fn broken_files_are_in_the_band_without_an_image() {
             image: None,
             current: false,
             animated: false,
-            images: 1
+            images: 1,
+            video: false
         })
     );
 }
