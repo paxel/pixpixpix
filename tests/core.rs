@@ -468,21 +468,76 @@ fn band_shows_the_cached_images_in_folder_order_with_the_current_one_marked() {
         core.view().band.first(),
         Some(&Thumb {
             path: p("a.jpg"),
-            image: image(),
+            image: Some(image()),
             current: false
         })
     );
 }
 
 #[test]
-fn broken_files_are_not_in_the_band() {
+fn broken_files_are_in_the_band_without_an_image() {
     let mut core = browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]);
     decoded(&mut core, "a.jpg");
     core.handle(Event::Decoded {
         path: p("b.jpg"),
         result: Err("broken".into()),
     });
-    assert_eq!(band(&core), [("a.jpg".to_owned(), true)]);
+    assert_eq!(
+        band(&core),
+        [("a.jpg".to_owned(), true), ("b.jpg".to_owned(), false)]
+    );
+    assert_eq!(
+        core.view().band.get(1),
+        Some(&Thumb {
+            path: p("b.jpg"),
+            image: None,
+            current: false
+        })
+    );
+}
+
+#[test]
+fn clicking_a_broken_band_thumb_shows_its_error() {
+    let mut core = browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]);
+    decoded(&mut core, "a.jpg");
+    core.handle(Event::Decoded {
+        path: p("b.jpg"),
+        result: Err("broken".into()),
+    });
+    assert!(core.handle(Event::Show(p("b.jpg"))).is_empty());
+    assert_eq!(
+        core.view().screen,
+        Screen::Error {
+            path: Some(p("b.jpg")),
+            message: "broken".into()
+        }
+    );
+    assert_eq!(
+        band(&core),
+        [("a.jpg".to_owned(), false), ("b.jpg".to_owned(), true)]
+    );
+}
+
+#[test]
+fn an_unreadable_folder_is_reported_and_the_image_stays() {
+    let mut core = started("/p/a.jpg");
+    decoded(&mut core, "a.jpg");
+    core.handle(Event::FirstFrameShown);
+    let commands = core.handle(Event::FolderListed {
+        dir: PathBuf::from("/p"),
+        result: Err("permission denied".into()),
+    });
+    assert!(commands.is_empty());
+    assert_eq!(
+        core.view().folder_error.as_deref(),
+        Some("permission denied")
+    );
+    assert!(matches!(core.view().screen, Screen::Image { .. }));
+    core.handle(Event::FolderListed {
+        dir: PathBuf::from("/p"),
+        result: Ok(vec![p("a.jpg")]),
+    });
+    assert_eq!(core.view().folder_error, None);
 }
 
 #[test]

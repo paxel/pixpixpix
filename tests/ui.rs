@@ -78,6 +78,17 @@ fn decode_error_shows_file_name_and_message() {
     h.run();
     h.get_by_label("bad.jpg");
     h.get_by_label("unexpected end of file");
+    h.get_by_label(OPEN_HINT);
+}
+
+const OPEN_HINT: &str = "Press O to open it in another app";
+
+#[test]
+fn nothing_to_open_has_no_open_hint() {
+    let (core, _) = Core::start(Err("No images in /x".into()));
+    let mut h = harness(core);
+    h.run();
+    assert!(h.query_by_label(OPEN_HINT).is_none());
 }
 
 #[test]
@@ -258,4 +269,43 @@ fn dragging_a_zoomed_image_pans_it() {
     // Dragged left by 100 points: 100 more of the 2000 pixels on the right.
     let zoom = h.state().core.view().zoom;
     assert!((zoom.center_x - 0.55).abs() < 1e-4, "{}", zoom.center_x);
+}
+
+fn broken(core: &mut Core, path: &str) {
+    core.handle(Event::Decoded {
+        path: PathBuf::from(path),
+        result: Err("unexpected end of file".into()),
+    });
+}
+
+#[test]
+fn a_broken_file_is_in_the_band_with_an_error_marker() {
+    let mut core = browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]);
+    broken(&mut core, "/p/b.jpg");
+    let mut h = harness(core);
+    h.run();
+    assert!(h.query_by_role_and_label(Role::Button, "b.jpg").is_none());
+    h.get_by_role_and_label(Role::Button, "b.jpg (error)")
+        .click();
+    h.run();
+    h.get_by_label("unexpected end of file");
+    h.get_by_label(OPEN_HINT);
+    let marked = h
+        .get_by_role_and_label(Role::Button, "b.jpg (error)")
+        .accesskit_node()
+        .toggled();
+    assert_eq!(marked, Some(Toggled::True));
+}
+
+#[test]
+fn an_unreadable_folder_is_shown_in_the_key_line() {
+    let mut core = shown("/p/cat.jpg");
+    core.handle(Event::FirstFrameShown);
+    core.handle(Event::FolderListed {
+        dir: PathBuf::from("/p"),
+        result: Err("permission denied".into()),
+    });
+    let mut h = harness(core);
+    h.run();
+    h.get_by_label("Cannot read the folder: permission denied");
 }

@@ -180,11 +180,12 @@ const IMAGE_VIEW_KEYS: &[KeyHint] = &[
     },
 ];
 
-/// One image of the band.
+/// One file of the band.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Thumb {
     pub path: PathBuf,
-    pub image: DecodedImage,
+    /// Absent when the file failed to decode.
+    pub image: Option<DecodedImage>,
     pub current: bool,
 }
 
@@ -295,7 +296,7 @@ fn offset(size: f32, view: f32, center: f32) -> f32 {
 #[derive(Debug, Clone, PartialEq)]
 pub struct View {
     pub screen: Screen,
-    /// The cached images in folder order.
+    /// The cached files in folder order, broken ones included.
     pub band: Vec<Thumb>,
     pub fullscreen: bool,
     pub key_line: KeyLine,
@@ -303,6 +304,8 @@ pub struct View {
     /// The size of the area the image is shown in; zero until the UI reports
     /// it.
     pub viewport: Points,
+    /// Why the folder could not be read the last time it was listed.
+    pub folder_error: Option<String>,
 }
 
 pub struct Core {
@@ -354,6 +357,7 @@ impl Core {
                 },
                 zoom: Zoom::FIT,
                 viewport: Points::default(),
+                folder_error: None,
             },
             first_frame_shown: false,
             current,
@@ -417,17 +421,22 @@ impl Core {
         }
     }
 
-    /// A folder that cannot be read leaves browsing off; the current image
-    /// stays. A current file that vanished from the folder gives way to the
+    /// A folder that cannot be read is reported and leaves the files as they
+    /// were; the current image stays. A current file that vanished from the folder gives way to the
     /// file after it, or the last one; with no files left the folder's
     /// emptiness is shown until a file appears.
     fn folder_listed(&mut self, dir: &Path, result: Result<Vec<PathBuf>, String>) -> Vec<Command> {
         if self.dir.as_deref() != Some(dir) {
             return Vec::new();
         }
-        let Ok(files) = result else {
-            return Vec::new();
+        let files = match result {
+            Ok(files) => files,
+            Err(message) => {
+                self.view.folder_error = Some(message);
+                return Vec::new();
+            }
         };
+        self.view.folder_error = None;
         let vanished = self
             .current
             .as_ref()
@@ -559,9 +568,9 @@ impl Core {
         self.go_to(path)
     }
 
-    /// Jumps to a cached image picked in the band.
+    /// Jumps to a cached file picked in the band, broken or not.
     fn show(&mut self, path: PathBuf) -> Vec<Command> {
-        if !matches!(self.cache.get(&path), Some(Ok(_))) {
+        if !self.cache.contains_key(&path) {
             return Vec::new();
         }
         self.view.key_line.notice = None;
@@ -653,13 +662,13 @@ impl Core {
         }
         self.view.band = window
             .into_iter()
-            .filter_map(|path| match self.cache.get(&path) {
-                Some(Ok(image)) => Some(Thumb {
-                    image: image.clone(),
+            .filter_map(|path| {
+                let image = self.cache.get(&path)?.as_ref().ok().cloned();
+                Some(Thumb {
+                    image,
                     current: self.current.as_ref() == Some(&path),
                     path,
-                }),
-                _ => None,
+                })
             })
             .collect();
         commands

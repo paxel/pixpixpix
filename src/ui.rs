@@ -16,8 +16,11 @@ const ERROR_TEXT: Color32 = Color32::from_rgb(0xff, 0xb4, 0xa8);
 const DIM_TEXT: Color32 = Color32::from_rgb(0x9a, 0x9a, 0xa0);
 const NOTICE_TEXT: Color32 = Color32::from_rgb(0xff, 0xd5, 0x80);
 const CURRENT_MARK: Color32 = Color32::from_rgb(0xff, 0xd5, 0x80);
+const BROKEN_TILE: Color32 = Color32::from_rgb(0x3a, 0x1e, 0x1c);
 /// Height of the band's thumbnails.
 const THUMB_HEIGHT: f32 = 64.0;
+/// Below the error of a file that failed to decode.
+const OPEN_HINT: &str = "Press O to open it in another app";
 
 /// GPU textures of decoded images, uploaded once per path.
 #[derive(Default)]
@@ -97,7 +100,9 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
         .resizable(false)
         .show_separator_line(false)
         .frame(egui::Frame::NONE.fill(BACKGROUND).inner_margin(6.0))
-        .show(ui, |ui| show_key_line(ui, &view.key_line));
+        .show(ui, |ui| {
+            show_key_line(ui, &view.key_line, view.folder_error.as_deref());
+        });
     if !view.band.is_empty() {
         egui::Panel::bottom("band")
             .resizable(false)
@@ -133,16 +138,36 @@ fn shown(view: &View, path: &Path) -> bool {
     current || view.band.iter().any(|t| t.path == path)
 }
 
-/// The cached images as small thumbs, the current one framed; a click on a
-/// thumb asks the core to show it.
+/// The cached files as small thumbs, broken ones as a marked tile, the current
+/// one framed; a click on a thumb asks the core to show it.
 fn show_band(ui: &mut egui::Ui, band: &[Thumb], textures: &mut Textures, events: &mut Vec<Event>) {
     ui.horizontal(|ui| {
         for thumb in band {
-            let texture = textures.get(ui.ctx(), &thumb.path, &thumb.image);
-            let image = egui::vec2(thumb.image.width as f32, thumb.image.height as f32);
-            let size = fit(image, egui::vec2(THUMB_HEIGHT * 2.0, THUMB_HEIGHT));
-            let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
-            egui::Image::new(&texture).paint_at(ui, rect);
+            let name = folder::file_name(&thumb.path);
+            let (rect, response, label) = match &thumb.image {
+                Some(image) => {
+                    let texture = textures.get(ui.ctx(), &thumb.path, image);
+                    let pixels = egui::vec2(image.width as f32, image.height as f32);
+                    let size = fit(pixels, egui::vec2(THUMB_HEIGHT * 2.0, THUMB_HEIGHT));
+                    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+                    egui::Image::new(&texture).paint_at(ui, rect);
+                    (rect, response, name)
+                }
+                None => {
+                    let size = egui::Vec2::splat(THUMB_HEIGHT);
+                    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+                    let painter = ui.painter();
+                    painter.rect_filled(rect, 2.0, BROKEN_TILE);
+                    painter.text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "!",
+                        egui::FontId::proportional(32.0),
+                        ERROR_TEXT,
+                    );
+                    (rect, response, format!("{name} (error)"))
+                }
+            };
             if thumb.current {
                 ui.painter().rect_stroke(
                     rect.expand(2.0),
@@ -156,7 +181,7 @@ fn show_band(ui: &mut egui::Ui, band: &[Thumb], textures: &mut Textures, events:
                     egui::WidgetType::Button,
                     true,
                     thumb.current,
-                    folder::file_name(&thumb.path),
+                    label.clone(),
                 )
             });
             if response.clicked() {
@@ -166,7 +191,7 @@ fn show_band(ui: &mut egui::Ui, band: &[Thumb], textures: &mut Textures, events:
     });
 }
 
-fn show_key_line(ui: &mut egui::Ui, key_line: &KeyLine) {
+fn show_key_line(ui: &mut egui::Ui, key_line: &KeyLine, folder_error: Option<&str>) {
     ui.horizontal(|ui| {
         for hint in &key_line.keys {
             ui.label(RichText::new(hint.keys).color(TEXT).strong());
@@ -179,6 +204,10 @@ fn show_key_line(ui: &mut egui::Ui, key_line: &KeyLine) {
                 Notice::LastImage => "last image",
             };
             ui.label(RichText::new(text).color(NOTICE_TEXT));
+        }
+        if let Some(error) = folder_error {
+            let text = format!("Cannot read the folder: {error}");
+            ui.label(RichText::new(text).color(ERROR_TEXT));
         }
     });
 }
@@ -271,6 +300,9 @@ fn show_error(ui: &mut egui::Ui, path: Option<&Path>, message: &str) {
                 );
             }
             ui.label(RichText::new(message).color(ERROR_TEXT).size(15.0));
+            if path.is_some() {
+                ui.label(RichText::new(OPEN_HINT).color(DIM_TEXT));
+            }
         });
     });
 }

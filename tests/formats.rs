@@ -77,6 +77,15 @@ fn truncated_file_reports_the_decoder_error() {
 }
 
 #[test]
+fn unsupported_content_reports_the_decoder_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("notes.png");
+    std::fs::write(&path, b"just some text, not an image").unwrap();
+    let error = decode_file(&path).unwrap_err();
+    assert!(!error.is_empty());
+}
+
+#[test]
 fn cancelled_decode_reports_nothing() {
     let cancel = AtomicBool::new(true);
     assert_eq!(decode::decode_file(&fixture("sample.jpg"), &cancel), None);
