@@ -8,8 +8,8 @@ use std::sync::Arc;
 use egui::{Color32, ColorImage, RichText, TextureHandle, TextureOptions};
 
 use crate::core::{
-    DirColumn, Event, Focus, InnerImages, Key, KeyPress, MotionKind, Notice, Points, Screen, Thumb,
-    Video, VideoStep, View, Zoom,
+    DirColumn, EditsView, Event, Focus, InnerImages, Key, KeyPress, MotionKind, Notice, Points,
+    Screen, Thumb, Video, VideoStep, View, Zoom,
 };
 use crate::decode::DecodedImage;
 use crate::folder;
@@ -17,6 +17,7 @@ use crate::rotate::Rotation;
 use crate::settings::{self, Settings};
 
 mod overview;
+mod tools;
 
 const BACKGROUND: Color32 = Color32::from_rgb(0x12, 0x12, 0x14);
 const TEXT: Color32 = Color32::from_rgb(0xe8, 0xe8, 0xea);
@@ -91,13 +92,17 @@ impl Textures {
     }
 }
 
-/// The key presses of this frame, as core events. Keys typed into a text field
-/// stay with the field.
+/// The key presses of this frame and a press of the window's close button,
+/// as core events. Keys typed into a text field stay with the field.
 pub fn input_events(ctx: &egui::Context) -> Vec<Event> {
-    if ctx.text_edit_focused() {
-        return Vec::new();
+    let mut events = Vec::new();
+    if ctx.input(|i| i.viewport().close_requested()) {
+        events.push(Event::CloseRequested);
     }
-    ctx.input(|i| {
+    if ctx.text_edit_focused() {
+        return events;
+    }
+    events.extend(ctx.input(|i| {
         i.events
             .iter()
             .filter_map(|e| match e {
@@ -116,8 +121,9 @@ pub fn input_events(ctx: &egui::Context) -> Vec<Event> {
                 }),
                 _ => None,
             })
-            .collect()
-    })
+            .collect::<Vec<_>>()
+    }));
+    events
 }
 
 fn map_key(key: egui::Key) -> Option<Key> {
@@ -149,6 +155,8 @@ fn map_key(key: egui::Key) -> Option<Key> {
         egui::Key::Space => Key::Space,
         egui::Key::M => Key::M,
         egui::Key::G => Key::G,
+        egui::Key::P => Key::P,
+        egui::Key::Z => Key::Z,
         _ => return None,
     })
 }
@@ -175,6 +183,17 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
             .frame(egui::Frame::NONE.fill(BACKGROUND).inner_margin(6.0))
             .show(ui, |ui| {
                 show_band(ui, &view.band, view.band_highlight, textures, &mut events)
+            });
+    }
+    if let Some(toolbar) = view.toolbar
+        && view.overview.is_none()
+    {
+        egui::Panel::top("toolbar")
+            .resizable(false)
+            .show_separator_line(false)
+            .frame(egui::Frame::NONE.fill(BACKGROUND).inner_margin(6.0))
+            .show(ui, |ui| {
+                tools::show_toolbar(ui, toolbar, view.edits.as_ref(), &mut events);
             });
     }
     if let Some(column) = &view.dir_column {
@@ -210,6 +229,8 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
                         image,
                         rotation: view.rotation,
                         clickable: view.video.is_some(),
+                        drawing: view.toolbar.is_some(),
+                        edits: view.edits.as_ref(),
                     };
                     show_image(ui, &shown, view.zoom, textures, &mut events);
                     if let Some(video) = &view.video {
@@ -228,6 +249,9 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
                 show_motion(ui, kind);
             }
         });
+    if let (Some(dialog), Screen::Image { path, .. }) = (&view.save_dialog, &view.screen) {
+        tools::show_save_dialog(ui.ctx(), &folder::file_name(path), dialog, &mut events);
+    }
     if view.settings_open {
         show_settings(
             ui.ctx(),
@@ -548,10 +572,15 @@ struct Shown<'a> {
     rotation: Rotation,
     /// A click on it is reported, as for a video.
     clickable: bool,
+    /// A drag draws, for the toolbar is shown, instead of panning.
+    drawing: bool,
+    /// The edits drawn over it.
+    edits: Option<&'a EditsView>,
 }
 
-/// Draws the visible part of the image, turned, as the core places it; the
-/// wheel over it zooms, dragging pans and a click is reported if wanted.
+/// Draws the visible part of the image, turned, as the core places it, and
+/// its edits over it; the wheel over it zooms, dragging pans or draws and a
+/// click is reported if wanted.
 fn show_image(
     ui: &mut egui::Ui,
     shown: &Shown<'_>,
@@ -561,12 +590,35 @@ fn show_image(
 ) {
     let area = ui.max_rect();
     let response = ui.interact(area, ui.id().with("image"), egui::Sense::drag());
-    let drag = response.drag_delta();
-    if drag != egui::Vec2::ZERO {
-        events.push(Event::Pan(Points {
-            x: drag.x,
-            y: drag.y,
-        }));
+    let from_area = |pos: egui::Pos2| Points {
+        x: pos.x - area.min.x,
+        y: pos.y - area.min.y,
+    };
+    if shown.drawing {
+        // The drag starts where the button went down, a little before egui
+        // calls it a drag.
+        let origin = ui.input(|i| i.pointer.press_origin());
+        if response.drag_started()
+            && let Some(origin) = origin
+        {
+            events.push(Event::DrawStart(from_area(origin)));
+        }
+        if response.dragged()
+            && let Some(pos) = response.interact_pointer_pos()
+        {
+            events.push(Event::DrawMove(from_area(pos)));
+        }
+        if response.drag_stopped() {
+            events.push(Event::DrawEnd);
+        }
+    } else {
+        let drag = response.drag_delta();
+        if drag != egui::Vec2::ZERO {
+            events.push(Event::Pan(Points {
+                x: drag.x,
+                y: drag.y,
+            }));
+        }
     }
     if let Some(pointer) = ui.ctx().pointer_hover_pos()
         && ui.rect_contains_pointer(area)
@@ -617,6 +669,10 @@ fn show_image(
     mesh.add_triangle(0, 1, 2);
     mesh.add_triangle(0, 2, 3);
     ui.painter().add(mesh);
+    if let Some(edits) = shown.edits {
+        let size = (shown.image.width, shown.image.height);
+        tools::paint_edits(&ui.painter_at(area), edits, size, shown.rotation, full);
+    }
     let name = folder::file_name(shown.path);
     let sense = if shown.clickable {
         egui::Sense::click()

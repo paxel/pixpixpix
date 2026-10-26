@@ -92,6 +92,7 @@ fn s_opens_and_closes_the_settings_screen() {
             "C",
             "O",
             "X",
+            "P",
             "G",
             "N",
             "B",

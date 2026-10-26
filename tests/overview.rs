@@ -629,6 +629,7 @@ fn c_copies_a_cached_file_at_once_and_decodes_another_first() {
             path: p("b.jpg"),
             image: image(),
             rotation: Rotation::None,
+            shapes: Vec::new(),
         }]
     );
 
@@ -645,6 +646,7 @@ fn c_copies_a_cached_file_at_once_and_decodes_another_first() {
             path: c.clone(),
             image: image(),
             rotation: Rotation::None,
+            shapes: Vec::new(),
         }]
     );
 

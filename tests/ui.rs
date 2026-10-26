@@ -1246,3 +1246,185 @@ fn video_and_live_photo_tiles_carry_their_marks_and_the_key_line_the_gallery_key
     h.get_by_label("thumbnail size");
     h.get_by_label("close overview");
 }
+
+/// Showing `/p/a.jpg`, 2000 × 1000 pixels, in a folder with `b.jpg`.
+fn big_browsing() -> Core {
+    let (mut core, _) = Core::start(Ok(PathBuf::from("/p/a.jpg")));
+    core.handle(Event::Decoded {
+        path: PathBuf::from("/p/a.jpg"),
+        result: Ok(DecodedImage {
+            width: 2000,
+            height: 1000,
+            rgba: Arc::from(vec![0; 2000 * 1000 * 4]),
+        }),
+    });
+    core.handle(Event::FirstFrameShown);
+    core.handle(Event::FolderListed {
+        dir: PathBuf::from("/p"),
+        result: Ok(vec![PathBuf::from("/p/a.jpg"), PathBuf::from("/p/b.jpg")]),
+    });
+    core
+}
+
+/// Drags over the image from `from` to `to`.
+fn drag_over(h: &mut Harness<'static, State>, from: egui::Pos2, to: egui::Pos2) {
+    h.hover_at(from);
+    h.run();
+    h.drag_at(from);
+    h.run();
+    h.hover_at(to);
+    h.run();
+    h.drop_at(to);
+    h.run();
+}
+
+fn shape_count(h: &Harness<'static, State>) -> usize {
+    let edits = h.state().core.view().edits.as_ref();
+    edits.map_or(0, |e| e.shapes.len())
+}
+
+#[test]
+fn p_shows_the_toolbar_and_its_controls_reach_the_core() {
+    use pixpixpix::core::{Color, Size};
+    let mut h = harness(big_browsing());
+    h.run();
+    assert!(h.query_by_label("Arrow").is_none());
+    h.key_press(egui::Key::P);
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Arrow");
+    for label in [
+        "red", "yellow", "green", "white", "black", "S", "M", "Undo", "Redo",
+    ] {
+        h.get_by_role_and_label(Role::Button, label);
+    }
+    h.get_by_role_and_label(Role::Button, "cyan").click();
+    h.run();
+    h.get_by_role_and_label(Role::Button, "L").click();
+    h.run();
+    let toolbar = h.state().core.view().toolbar.unwrap();
+    assert_eq!((toolbar.color, toolbar.size), (Color::Cyan, Size::Large));
+    h.get_by_role_and_label(Role::Button, "Settings").click();
+    h.run();
+    assert!(h.state().core.view().settings_open);
+}
+
+#[test]
+fn a_drag_with_the_toolbar_draws_an_arrow_instead_of_panning() {
+    let mut h = harness(big_browsing());
+    h.run();
+    h.key_press(egui::Key::P);
+    h.run();
+    let zoom = h.state().core.view().zoom;
+    drag_over(&mut h, egui::pos2(300.0, 250.0), egui::pos2(500.0, 300.0));
+    assert_eq!(shape_count(&h), 1);
+    assert_eq!(h.state().core.view().zoom, zoom);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+    h.run();
+    assert_eq!(shape_count(&h), 0);
+    h.key_press_modifiers(
+        egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+        egui::Key::Z,
+    );
+    h.run();
+    assert_eq!(shape_count(&h), 1);
+}
+
+/// The toolbar shown, an arrow drawn and the save dialog opened with Enter.
+fn save_dialog() -> Harness<'static, State> {
+    let mut h = harness(big_browsing());
+    h.run();
+    h.key_press(egui::Key::P);
+    h.run();
+    drag_over(&mut h, egui::pos2(300.0, 250.0), egui::pos2(500.0, 300.0));
+    h.key_press(egui::Key::Enter);
+    h.run();
+    h.state_mut().commands.clear();
+    h
+}
+
+fn saves(h: &Harness<'static, State>) -> Vec<PathBuf> {
+    h.state()
+        .commands
+        .iter()
+        .filter_map(|c| match c {
+            Command::SaveEdits { target, .. } => Some(target.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn the_save_dialog_offers_all_four_choices() {
+    let mut h = save_dialog();
+    for label in [
+        "Overwrite",
+        "Save as new",
+        "Copy to clipboard",
+        "Undo edits",
+        "Back to editing",
+    ] {
+        h.get_by_role_and_label(Role::Button, label);
+    }
+    h.get_by_role_and_label(Role::TextInput, "New file");
+    h.get_by_label_contains("Enter: save as new");
+    h.get_by_role_and_label(Role::Button, "Undo edits").click();
+    h.run();
+    assert_eq!(h.state().core.view().save_dialog, None);
+    assert_eq!(shape_count(&h), 0);
+}
+
+#[test]
+fn enter_in_the_save_dialog_saves_as_new_once() {
+    let mut h = save_dialog();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    assert_eq!(saves(&h), [PathBuf::from("/p/a_edit.jpg")]);
+}
+
+#[test]
+fn a_typed_name_is_saved_once_with_enter() {
+    let mut h = save_dialog();
+    h.get_by_role_and_label(Role::TextInput, "New file").focus();
+    h.run();
+    h.get_by_role_and_label(Role::TextInput, "New file")
+        .type_text("x");
+    h.run();
+    let name = h
+        .state()
+        .core
+        .view()
+        .save_dialog
+        .as_ref()
+        .unwrap()
+        .name
+        .clone();
+    assert!(name.contains('x') && name != "a_edit.jpg", "{name}");
+    h.key_press(egui::Key::Enter);
+    h.run();
+    assert_eq!(saves(&h), [PathBuf::from("/p").join(name)]);
+}
+
+#[test]
+fn esc_in_the_save_dialog_goes_back_to_editing() {
+    let mut h = save_dialog();
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert_eq!(h.state().core.view().save_dialog, None);
+    assert_eq!(shape_count(&h), 1);
+    assert!(saves(&h).is_empty());
+}
+
+#[test]
+fn leaving_the_image_with_edits_shows_the_save_dialog() {
+    let mut h = harness(big_browsing());
+    h.run();
+    h.key_press(egui::Key::P);
+    h.run();
+    drag_over(&mut h, egui::pos2(300.0, 250.0), egui::pos2(500.0, 300.0));
+    h.key_press(egui::Key::ArrowRight);
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Save as new");
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Q);
+    h.run();
+    assert!(!h.state().commands.contains(&Command::Quit));
+}

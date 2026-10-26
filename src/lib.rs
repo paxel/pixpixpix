@@ -13,6 +13,7 @@
     )
 )]
 
+pub mod annotate;
 pub mod app;
 pub mod clipboard;
 pub mod core;

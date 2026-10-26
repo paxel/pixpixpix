@@ -610,6 +610,7 @@ impl Core {
                 path: path.clone(),
                 image: image.clone(),
                 rotation: Rotation::None,
+                shapes: Vec::new(),
             });
             return commands;
         }
@@ -636,6 +637,7 @@ impl Core {
                 path: path.to_path_buf(),
                 image: image.clone(),
                 rotation: Rotation::None,
+                shapes: Vec::new(),
             }],
             Err(message) => {
                 self.view.copy_error = Some(message.clone());

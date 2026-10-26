@@ -43,6 +43,7 @@ png = "0.18"
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.9"
 tempfile = "3"
+tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
 trash = "5.2"
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]

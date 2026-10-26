@@ -47,6 +47,7 @@ fn copy(name: &str, rotation: Rotation) -> Command {
         path: p(name),
         image: image(),
         rotation,
+        shapes: Vec::new(),
     }
 }
 

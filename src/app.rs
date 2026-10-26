@@ -11,13 +11,14 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crate::clipboard::Clipboard;
-use crate::core::{Command, Core, Event, Screen};
+use crate::core::{Command, Core, Event, Screen, Shape};
 use crate::decode::DecodedImage;
 use crate::geometry::{self, Geometry};
 use crate::rotate::Rotation;
 use crate::video::{Playback, Report};
 use crate::{
-    decode, external, folder, motion, rotate, settings, startup, thumbnails, trash, ui, watch,
+    annotate, decode, external, folder, motion, rotate, settings, startup, thumbnails, trash, ui,
+    watch,
 };
 
 pub const APP_ID: &str = "io.github.paxel.pixpixpix";
@@ -148,7 +149,7 @@ type ThumbnailJob = (PathBuf, u32, Arc<AtomicBool>);
 const THUMBNAIL_THREADS: usize = 4;
 
 /// One `c`: the file and its pixels as shown.
-type CopyJob = (PathBuf, DecodedImage, Rotation);
+type CopyJob = (PathBuf, DecodedImage, Rotation, Vec<Shape>);
 
 /// Why there is no settings file to read or write.
 const NO_CONFIG_DIR: &str = "No configuration directory found";
@@ -318,6 +319,20 @@ impl Worker {
                     Some(Event::RotationWritten { path, result })
                 });
             }
+            Command::SaveEdits {
+                source,
+                image,
+                rotation,
+                shapes,
+                target,
+            } => {
+                let (source, image, rotation) = (source.clone(), image.clone(), *rotation);
+                let (shapes, target) = (shapes.clone(), target.clone());
+                self.run(move || {
+                    let result = annotate::save(&source, &image, rotation, &shapes, &target);
+                    Some(Event::EditsSaved { target, result })
+                });
+            }
             Command::Trash(path) => {
                 let path = path.clone();
                 self.run(move || {
@@ -329,8 +344,9 @@ impl Worker {
                 path,
                 image,
                 rotation,
+                shapes,
             } => {
-                let job = (path.clone(), image.clone(), *rotation);
+                let job = (path.clone(), image.clone(), *rotation, shapes.clone());
                 if self.copier().send(job).is_err() {
                     // The app may already be gone; nothing to report to then.
                     let _ = self.events.send(Event::Copied(Err(
@@ -431,7 +447,7 @@ impl Worker {
                     cancel.store(true, Ordering::Relaxed);
                 }
             }
-            Command::SetFullscreen(_) | Command::Quit => {}
+            Command::SetFullscreen(_) | Command::Quit | Command::KeepOpen => {}
         }
     }
 
@@ -445,8 +461,9 @@ impl Worker {
             let ctx = self.ctx.clone();
             std::thread::spawn(move || {
                 let mut clipboard = Clipboard::default();
-                for (path, image, rotation) in inbox {
-                    let result = clipboard.copy(&path, &image, rotation);
+                for (path, image, rotation, shapes) in inbox {
+                    let result = annotate::render(&image, &shapes)
+                        .and_then(|image| clipboard.copy(&path, &image, rotation));
                     // The app may already be gone; nothing to report to then.
                     let _ = events.send(Event::Copied(result));
                     ctx.request_repaint();
@@ -552,6 +569,7 @@ impl App {
         for command in self.core.handle(event) {
             match command {
                 Command::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                Command::KeepOpen => ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose),
                 Command::SetFullscreen(on) => {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(on));
                 }
@@ -568,6 +586,7 @@ impl App {
                 | Command::WriteRotation { .. }
                 | Command::Trash(_)
                 | Command::Copy { .. }
+                | Command::SaveEdits { .. }
                 | Command::DecodeFrames(_)
                 | Command::CancelFrames
                 | Command::DecodeInner { .. }

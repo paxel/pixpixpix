@@ -13,8 +13,15 @@ use crate::rotate::Rotation;
 use crate::settings::Settings;
 use crate::startup::NoFile;
 
+mod edits;
 mod overview;
 mod search;
+
+pub use edits::{
+    Color, EditsView, ImagePoint, Outline, SaveChoice, SaveDialog, Shape, Size, Tool, Toolbar,
+    ToolbarClick, turned, unturned,
+};
+use edits::{Dialog, Edits};
 
 use overview::Gallery;
 pub use overview::{Overview, Reveal, Section, Tile};
@@ -56,6 +63,8 @@ pub enum Key {
     Space,
     M,
     G,
+    P,
+    Z,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -228,6 +237,27 @@ pub enum Event {
     ThumbnailWheel {
         larger: bool,
     },
+    /// The window's close button was pressed; the window stays open only if
+    /// the core answers [`Command::KeepOpen`].
+    CloseRequested,
+    /// A drag on the image started at this point from the viewport's top
+    /// left corner.
+    DrawStart(Points),
+    /// The drag on the image moved on to this point.
+    DrawMove(Points),
+    /// The drag on the image ended.
+    DrawEnd,
+    /// A control of the toolbar was clicked.
+    Toolbar(ToolbarClick),
+    /// A choice of the save dialog was clicked.
+    SaveChoice(SaveChoice),
+    /// The name "Save as new" writes was edited.
+    SaveName(String),
+    /// A [`Command::SaveEdits`] finished.
+    EditsSaved {
+        target: PathBuf,
+        result: Result<(), String>,
+    },
 }
 
 /// A step through a video.
@@ -239,7 +269,7 @@ pub enum VideoStep {
     Frames(i32),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     Decode(PathBuf),
     /// The result of an earlier [`Command::Decode`] is no longer needed; it
@@ -281,13 +311,28 @@ pub enum Command {
     },
     /// Move the file to the system trash, answered by [`Event::Trashed`].
     Trash(PathBuf),
-    /// Put the file and its pixels, turned by `rotation`, on the clipboard,
-    /// answered by [`Event::Copied`].
+    /// Put the file and its pixels, with `shapes` drawn into them and turned
+    /// by `rotation`, on the clipboard, answered by [`Event::Copied`].
     Copy {
         path: PathBuf,
         image: DecodedImage,
         rotation: Rotation,
+        shapes: Vec<Shape>,
     },
+    /// Write `image` of the file `source` with `shapes` drawn into it and
+    /// turned by `rotation` to `target`, in the format its extension names:
+    /// over `source` itself, or as a new file that must not exist yet;
+    /// answered by [`Event::EditsSaved`].
+    SaveEdits {
+        source: PathBuf,
+        image: DecodedImage,
+        rotation: Rotation,
+        shapes: Vec<Shape>,
+        target: PathBuf,
+    },
+    /// Keep the window open: the close button asked to close it while the
+    /// edits were unsaved.
+    KeepOpen,
     /// Decode all frames of an animation, replacing the one decoded so far;
     /// answered by [`Event::FramesDecoded`].
     DecodeFrames(PathBuf),
@@ -456,6 +501,10 @@ const IMAGE_VIEW_KEYS: &[KeyHint] = &[
         action: "trash",
     },
     KeyHint {
+        keys: "P",
+        action: "tools",
+    },
+    KeyHint {
         keys: "G",
         action: "overview",
     },
@@ -470,6 +519,49 @@ const IMAGE_VIEW_KEYS: &[KeyHint] = &[
     KeyHint {
         keys: "Tab",
         action: "band",
+    },
+];
+
+/// Image view keys while the toolbar is shown, listed after its key.
+const TOOLBAR_KEYS: [KeyHint; 2] = if cfg!(target_os = "macos") {
+    [
+        KeyHint {
+            keys: "Cmd+Z",
+            action: "undo",
+        },
+        KeyHint {
+            keys: "Cmd+Shift+Z",
+            action: "redo",
+        },
+    ]
+} else {
+    [
+        KeyHint {
+            keys: "Ctrl+Z",
+            action: "undo",
+        },
+        KeyHint {
+            keys: "Ctrl+Shift+Z",
+            action: "redo",
+        },
+    ]
+};
+
+/// What `Enter` does in the image view while edits are unsaved.
+const SAVE_KEY: KeyHint = KeyHint {
+    keys: "Enter",
+    action: "save",
+};
+
+/// The keys while the save dialog is open.
+const SAVE_DIALOG_KEYS: &[KeyHint] = &[
+    KeyHint {
+        keys: "Enter",
+        action: "save as new",
+    },
+    KeyHint {
+        keys: "Esc",
+        action: "back to editing",
     },
 ];
 
@@ -934,6 +1026,13 @@ pub struct View {
     pub motion: Option<MotionKind>,
     /// While the overview is open; it replaces the main area and the band.
     pub overview: Option<Overview>,
+    /// While the toolbar is shown: its choices.
+    pub toolbar: Option<Toolbar>,
+    /// The edits of the image shown, drawn over it.
+    pub edits: Option<EditsView>,
+    /// While the save dialog asks what becomes of the edits; it gets every
+    /// key then.
+    pub save_dialog: Option<SaveDialog>,
 }
 
 pub struct Core {
@@ -1007,6 +1106,17 @@ pub struct Core {
     motion_photos: BTreeSet<PathBuf>,
     /// The scan and thumbnails of the overview.
     gallery: Gallery,
+    /// Whether the toolbar is shown.
+    toolbar_open: bool,
+    /// The toolbar's choices, kept while it is hidden.
+    toolbar: Toolbar,
+    /// The edits of the current file.
+    edits: Option<Edits>,
+    /// The save dialog, while it is open.
+    dialog: Option<Dialog>,
+    /// The event the save dialog interrupted, handled once the edits are
+    /// dealt with.
+    parked: Option<Event>,
 }
 
 /// The video of the main area.
@@ -1218,6 +1328,9 @@ impl Core {
                 video: None,
                 motion: None,
                 overview: None,
+                toolbar: None,
+                edits: None,
+                save_dialog: None,
             },
             screen,
             band: Vec::new(),
@@ -1249,6 +1362,11 @@ impl Core {
             probed: BTreeSet::new(),
             motion_photos: BTreeSet::new(),
             gallery: Gallery::default(),
+            toolbar_open: false,
+            toolbar: Toolbar::DEFAULT,
+            edits: None,
+            dialog: None,
+            parked: None,
         };
         (core, commands)
     }
@@ -1263,12 +1381,16 @@ impl Core {
 
     pub fn handle(&mut self, event: Event) -> Vec<Command> {
         let before = self.current.clone();
-        let mut commands = self.dispatch(event);
+        let mut commands = match self.guard(&event) {
+            Some(commands) => commands,
+            None => self.dispatch(event),
+        };
         // Leaving a file drops its pending rotation; nothing is written.
         if self.current != before {
             self.rotation = Rotation::None;
             self.view.rotation_error = None;
         }
+        self.sync_edits();
         commands.extend(self.sync_nav());
         commands.extend(self.sync_animation());
         commands.extend(self.sync_inner());
@@ -1319,11 +1441,16 @@ impl Core {
             Event::RotationWritten { path, result } => self.rotation_written(path, result),
             Event::Trashed { path, result } => self.trashed(&path, result),
             Event::Copied(result) => {
+                let commands = self.edits_copied(&result);
                 match result {
                     Ok(()) => self.view.key_line.notice = Some(Notice::Copied),
                     Err(message) => self.view.copy_error = Some(message),
                 }
-                Vec::new()
+                // The dialog shows a failure itself.
+                if self.dialog.is_some() {
+                    self.view.copy_error = None;
+                }
+                commands
             }
             Event::Animated(path) => {
                 self.animated.insert(path);
@@ -1384,6 +1511,31 @@ impl Core {
             }
             Event::OpenTile(index) => self.open_tile(index),
             Event::ThumbnailWheel { larger } => self.wheel_thumbnails(larger),
+            // Without unsaved edits the window just closes.
+            Event::CloseRequested => vec![Command::Quit],
+            Event::DrawStart(at) => {
+                self.draw_start(at);
+                Vec::new()
+            }
+            Event::DrawMove(at) => {
+                self.draw_move(at);
+                Vec::new()
+            }
+            Event::DrawEnd => {
+                self.draw_end();
+                Vec::new()
+            }
+            Event::Toolbar(click) => {
+                self.toolbar_click(click);
+                Vec::new()
+            }
+            // Only while the dialog is open, which answers it.
+            Event::SaveChoice(_) => Vec::new(),
+            Event::SaveName(name) => {
+                self.rename(name);
+                Vec::new()
+            }
+            Event::EditsSaved { target, result } => self.edits_saved(target, result),
         }
     }
 
@@ -1441,6 +1593,7 @@ impl Core {
             self.previewed()
                 .and_then(|dir| Some(self.nav.get(dir)?.preview(dir)))
         });
+        let previewing = preview.is_some();
         // A preview is never the current file, so it is shown unturned.
         self.view.rotation = if preview.is_some() {
             Rotation::None
@@ -1509,8 +1662,22 @@ impl Core {
             if self.plays_video() {
                 keys.retain(|k| !matches!(k.keys, "L/R" | "Enter"));
             }
+            if self.has_unsaved() {
+                for key in keys.iter_mut().filter(|k| k.keys == "Enter") {
+                    *key = SAVE_KEY;
+                }
+            }
+            if self.toolbar_open
+                && let Some(at) = keys.iter().position(|k| k.keys == "P")
+            {
+                keys.splice(at.saturating_add(1)..at.saturating_add(1), TOOLBAR_KEYS);
+            }
             self.view.key_line.keys = keys;
         }
+        if self.dialog.is_some() {
+            self.view.key_line.keys = SAVE_DIALOG_KEYS.to_vec();
+        }
+        self.publish_edits(previewing);
         self.publish_band_highlight();
     }
 
@@ -2091,8 +2258,7 @@ impl Core {
         match (key.key, key.command) {
             (Key::Q, true) => vec![Command::Quit],
             (Key::S, false) => {
-                self.view.settings_open = true;
-                self.view.key_line.keys = SETTINGS_KEYS.to_vec();
+                self.open_settings();
                 Vec::new()
             }
             (Key::F, false) => {
@@ -2116,6 +2282,14 @@ impl Core {
                 }
                 Vec::new()
             }
+            (Key::Z, true) if self.view.focus == Focus::Image => {
+                if key.shift {
+                    self.redo();
+                } else {
+                    self.undo();
+                }
+                Vec::new()
+            }
             (Key::Left | Key::Right, _)
                 if self.view.focus == Focus::Image && (key.command || key.shift || key.alt) =>
             {
@@ -2134,6 +2308,12 @@ impl Core {
                 Focus::Band => self.band_key(key.key),
             },
         }
+    }
+
+    /// Opens the settings screen, which takes every key but quit.
+    fn open_settings(&mut self) {
+        self.view.settings_open = true;
+        self.view.key_line.keys = SETTINGS_KEYS.to_vec();
     }
 
     fn set_focus(&mut self, focus: Focus) {
@@ -2432,6 +2612,10 @@ impl Core {
             Key::C => self.copy(),
             Key::Space => self.toggle_play(),
             Key::M => self.toggle_mute(),
+            Key::P => {
+                self.toggle_toolbar();
+                Vec::new()
+            }
             _ => Vec::new(),
         }
     }
@@ -2470,15 +2654,23 @@ impl Core {
     }
 
     /// Puts the current image on the clipboard as shown, its pending rotation
-    /// included. A file that does not show as an image has nothing to copy.
+    /// and edits included. A file that does not show as an image has nothing
+    /// to copy.
     fn copy(&mut self) -> Vec<Command> {
         let Screen::Image { path, image } = &self.screen else {
             return Vec::new();
         };
+        let shapes = self
+            .view
+            .edits
+            .as_ref()
+            .map(|e| e.shapes.clone())
+            .unwrap_or_default();
         let command = Command::Copy {
             path: path.clone(),
             image: image.clone(),
             rotation: self.rotation,
+            shapes,
         };
         self.view.key_line.notice = None;
         self.view.copy_error = None;

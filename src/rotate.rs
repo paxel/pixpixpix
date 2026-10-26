@@ -246,7 +246,7 @@ fn reencode(bytes: &[u8], format: ImageFormat, rotation: Rotation) -> Result<Vec
 
 /// Whether the file has more than one frame; re-encoding would keep only the
 /// first.
-fn animated(bytes: &[u8], format: ImageFormat) -> image::ImageResult<bool> {
+pub(crate) fn animated(bytes: &[u8], format: ImageFormat) -> image::ImageResult<bool> {
     Ok(match format {
         ImageFormat::Gif => {
             GifDecoder::new(Cursor::new(bytes))?
@@ -263,7 +263,7 @@ fn animated(bytes: &[u8], format: ImageFormat) -> image::ImageResult<bool> {
 
 /// Replaces the file at `path` with `bytes` through a temporary file next to
 /// it, a dot file no listing shows, with the original's permissions.
-fn replace(path: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(crate) fn replace(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let temp = path.with_file_name(format!(".{}.pix3-tmp", folder::file_name(path)));
     let result = write_temp(&temp, path, bytes).and_then(|()| fs::rename(&temp, path));
     if result.is_err() {

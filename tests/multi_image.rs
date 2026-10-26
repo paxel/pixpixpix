@@ -224,6 +224,7 @@ fn c_copies_the_image_shown() {
             path: p("a.tiff"),
             image: gray(1),
             rotation: Rotation::None,
+            shapes: Vec::new(),
         }]
     );
 }
