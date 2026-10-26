@@ -322,3 +322,17 @@ fn the_key_line_lists_the_seek_keys_but_not_rotation_for_a_video() {
     );
     assert!(!keys.iter().any(|(k, _)| *k == "L/R" || *k == "Enter"));
 }
+
+#[test]
+fn resuming_drops_a_waiting_frame_step() {
+    let mut core = playing();
+    arrow(&mut core, true, shift);
+    arrow(&mut core, true, alt);
+    assert_eq!(
+        core.handle(Event::Key(KeyPress::plain(Key::Space))),
+        [Command::ResumeVideo]
+    );
+    assert_eq!(playing_now(&core), Some(true));
+    assert_eq!(seeked(&mut core, "a.mp4"), []);
+    assert_eq!(playing_now(&core), Some(true));
+}

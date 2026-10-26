@@ -1369,6 +1369,10 @@ impl Core {
         };
         video.error = None;
         video.playing = !video.playing;
+        // A frame step would pause again right after resuming.
+        if video.playing && matches!(video.pending, Some(VideoStep::Frames(_))) {
+            video.pending = None;
+        }
         match (video.playing, video.started) {
             (false, _) => vec![Command::PauseVideo],
             (true, true) => vec![Command::ResumeVideo],
