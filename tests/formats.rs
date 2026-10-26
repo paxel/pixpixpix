@@ -1,14 +1,20 @@
 //! Seam 3: decoding and folder reading on real fixture files.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 
-use pixpixpix::decode::{DecodedImage, decode_file};
+use pixpixpix::decode::{self, DecodedImage};
 use pixpixpix::{folder, startup};
 
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
         .join(name)
+}
+
+/// Decodes `path` with a token that is never set.
+fn decode_file(path: &Path) -> Result<DecodedImage, String> {
+    decode::decode_file(path, &AtomicBool::new(false)).unwrap_or_else(|| Err("cancelled".into()))
 }
 
 fn pixel(image: &DecodedImage, x: u32, y: u32) -> [u8; 4] {
@@ -68,6 +74,30 @@ fn exif_orientation_is_applied() {
 fn truncated_file_reports_the_decoder_error() {
     let error = decode_file(&fixture("broken.jpg")).unwrap_err();
     assert!(!error.is_empty());
+}
+
+#[test]
+fn cancelled_decode_reports_nothing() {
+    let cancel = AtomicBool::new(true);
+    assert_eq!(decode::decode_file(&fixture("sample.jpg"), &cancel), None);
+}
+
+#[test]
+fn file_larger_than_one_read_chunk_decodes() {
+    // A 400x400 PNG of noise is well over the 256 KiB read chunk.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("big.png");
+    let noise = image::RgbaImage::from_fn(400, 400, |x, y| {
+        let v = x
+            .wrapping_mul(2_654_435_761)
+            .wrapping_add(y.wrapping_mul(40_503));
+        image::Rgba(v.to_le_bytes())
+    });
+    noise.save(&path).unwrap();
+    assert!(std::fs::metadata(&path).unwrap().len() > 256 * 1024);
+    let image = decode_file(&path).unwrap();
+    assert_eq!((image.width, image.height), (400, 400));
+    assert_eq!(pixel(&image, 7, 9), noise.get_pixel(7, 9).0);
 }
 
 #[test]

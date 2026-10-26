@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use egui::{Color32, ColorImage, RichText, TextureHandle, TextureOptions};
 
-use crate::core::{Event, Key, KeyLine, KeyPress, Notice, Screen, View};
+use crate::core::{Event, Key, KeyLine, KeyPress, Notice, Screen, Thumb, View};
 use crate::decode::DecodedImage;
 use crate::folder;
 
@@ -15,6 +15,9 @@ const TEXT: Color32 = Color32::from_rgb(0xe8, 0xe8, 0xea);
 const ERROR_TEXT: Color32 = Color32::from_rgb(0xff, 0xb4, 0xa8);
 const DIM_TEXT: Color32 = Color32::from_rgb(0x9a, 0x9a, 0xa0);
 const NOTICE_TEXT: Color32 = Color32::from_rgb(0xff, 0xd5, 0x80);
+const CURRENT_MARK: Color32 = Color32::from_rgb(0xff, 0xd5, 0x80);
+/// Height of the band's thumbnails.
+const THUMB_HEIGHT: f32 = 64.0;
 
 /// GPU textures of decoded images, uploaded once per path.
 #[derive(Default)]
@@ -80,13 +83,22 @@ fn map_key(key: egui::Key) -> Option<Key> {
     })
 }
 
-/// Draws the whole window.
-pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) {
+/// Draws the whole window and returns the clicks as core events.
+pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Event> {
+    textures.retain(|p| shown(view, p));
+    let mut events = Vec::new();
     egui::Panel::bottom("key_line")
         .resizable(false)
         .show_separator_line(false)
         .frame(egui::Frame::NONE.fill(BACKGROUND).inner_margin(6.0))
         .show(ui, |ui| show_key_line(ui, &view.key_line));
+    if !view.band.is_empty() {
+        egui::Panel::bottom("band")
+            .resizable(false)
+            .show_separator_line(false)
+            .frame(egui::Frame::NONE.fill(BACKGROUND).inner_margin(6.0))
+            .show(ui, |ui| show_band(ui, &view.band, textures, &mut events));
+    }
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE.fill(BACKGROUND))
         .show(ui, |ui| match &view.screen {
@@ -94,6 +106,46 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) {
             Screen::Image { path, image } => show_image(ui, path, image, textures),
             Screen::Error { path, message } => show_error(ui, path.as_deref(), message),
         });
+    events
+}
+
+/// Whether `path` is drawn by `view`, so its texture is still needed.
+fn shown(view: &View, path: &Path) -> bool {
+    let current = matches!(&view.screen, Screen::Image { path: p, .. } if p == path);
+    current || view.band.iter().any(|t| t.path == path)
+}
+
+/// The cached images as small thumbs, the current one framed; a click on a
+/// thumb asks the core to show it.
+fn show_band(ui: &mut egui::Ui, band: &[Thumb], textures: &mut Textures, events: &mut Vec<Event>) {
+    ui.horizontal(|ui| {
+        for thumb in band {
+            let texture = textures.get(ui.ctx(), &thumb.path, &thumb.image);
+            let image = egui::vec2(thumb.image.width as f32, thumb.image.height as f32);
+            let size = fit(image, egui::vec2(THUMB_HEIGHT * 2.0, THUMB_HEIGHT));
+            let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+            egui::Image::new(&texture).paint_at(ui, rect);
+            if thumb.current {
+                ui.painter().rect_stroke(
+                    rect.expand(2.0),
+                    2.0,
+                    egui::Stroke::new(2.0, CURRENT_MARK),
+                    egui::StrokeKind::Outside,
+                );
+            }
+            response.widget_info(|| {
+                egui::WidgetInfo::selected(
+                    egui::WidgetType::Button,
+                    true,
+                    thumb.current,
+                    folder::file_name(&thumb.path),
+                )
+            });
+            if response.clicked() {
+                events.push(Event::Show(thumb.path.clone()));
+            }
+        }
+    });
 }
 
 fn show_key_line(ui: &mut egui::Ui, key_line: &KeyLine) {

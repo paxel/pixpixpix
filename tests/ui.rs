@@ -1,11 +1,12 @@
 //! Seam 2: the egui layer over the core, headless.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use egui::accesskit::{Role, Toggled};
 use egui_kittest::Harness;
-use egui_kittest::kittest::Queryable;
-use pixpixpix::core::{Command, Core, Event};
+use egui_kittest::kittest::{NodeT, Queryable};
+use pixpixpix::core::{Command, Core, Event, Screen};
 use pixpixpix::decode::DecodedImage;
 use pixpixpix::ui;
 
@@ -29,7 +30,10 @@ fn harness(core: Core) -> Harness<'static, State> {
                     let commands = state.core.handle(event);
                     state.commands.extend(commands);
                 }
-                ui::show(ui, state.core.view(), &mut state.textures);
+                for event in ui::show(ui, state.core.view(), &mut state.textures) {
+                    let commands = state.core.handle(event);
+                    state.commands.extend(commands);
+                }
             },
             state,
         )
@@ -52,7 +56,7 @@ fn shown(path: &str) -> Core {
 fn image_is_drawn_with_its_file_name() {
     let mut h = harness(shown("/p/cat.jpg"));
     h.run();
-    h.get_by_label("cat.jpg");
+    h.get_by_role_and_label(Role::Image, "cat.jpg");
 }
 
 #[test]
@@ -120,14 +124,16 @@ fn key_line_lists_the_image_view_keys() {
 }
 
 #[test]
-fn right_arrow_asks_for_the_next_file() {
+fn right_arrow_moves_to_the_next_file() {
     let mut h = harness(browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]));
     h.run();
     h.key_press(egui::Key::ArrowRight);
     h.run();
     assert_eq!(
-        h.state().commands,
-        [Command::Decode(PathBuf::from("/p/b.jpg"))]
+        h.state().core.view().screen,
+        Screen::Loading {
+            path: PathBuf::from("/p/b.jpg")
+        }
     );
 }
 
@@ -141,4 +147,46 @@ fn ends_show_first_and_last_image_in_the_key_line() {
     h.key_press(egui::Key::ArrowRight);
     h.run();
     h.get_by_label("last image");
+}
+
+fn decoded(core: &mut Core, path: &str) {
+    core.handle(Event::Decoded {
+        path: PathBuf::from(path),
+        result: Ok(DecodedImage {
+            width: 1,
+            height: 2,
+            rgba: Arc::from(vec![0; 8]),
+        }),
+    });
+}
+
+#[test]
+fn band_shows_the_cached_images_with_the_current_one_marked() {
+    let mut core = browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg", "/p/c.jpg"]);
+    decoded(&mut core, "/p/b.jpg");
+    let mut h = harness(core);
+    h.run();
+    let toggled = |name: &str| {
+        h.get_by_role_and_label(Role::Button, name)
+            .accesskit_node()
+            .toggled()
+    };
+    assert_eq!(toggled("a.jpg"), Some(Toggled::True));
+    assert_eq!(toggled("b.jpg"), Some(Toggled::False));
+    assert!(h.query_by_role_and_label(Role::Button, "c.jpg").is_none());
+}
+
+#[test]
+fn clicking_a_band_thumb_shows_that_image() {
+    let mut core = browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]);
+    decoded(&mut core, "/p/b.jpg");
+    let mut h = harness(core);
+    h.run();
+    h.get_by_role_and_label(Role::Button, "b.jpg").click();
+    h.run();
+    assert!(matches!(
+        &h.state().core.view().screen,
+        Screen::Image { path, .. } if path == Path::new("/p/b.jpg")
+    ));
+    h.get_by_role_and_label(Role::Image, "b.jpg");
 }

@@ -3,8 +3,9 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use pixpixpix::core::{Command, Core, Event, Key, KeyPress, Notice, Screen};
+use pixpixpix::core::{Command, Core, Event, Key, KeyPress, Notice, Screen, Thumb};
 use pixpixpix::decode::DecodedImage;
+use pixpixpix::folder;
 
 fn image() -> DecodedImage {
     DecodedImage {
@@ -176,10 +177,8 @@ fn right_and_left_step_through_the_listed_order() {
             path: PathBuf::from("/p/img10.jpg")
         }
     );
-    assert_eq!(
-        press(&mut core, Key::Left),
-        [Command::Decode(PathBuf::from("/p/img2.jpg"))]
-    );
+    // img2 is still being decoded from the start: no second decode.
+    assert!(press(&mut core, Key::Left).is_empty());
     assert_eq!(
         press(&mut core, Key::Left),
         [Command::Decode(PathBuf::from("/p/img1.jpg"))]
@@ -249,4 +248,265 @@ fn key_line_lists_the_image_view_keys() {
         "Ctrl+Q"
     };
     assert_eq!(keys, ["Left/Right", "F", quit]);
+}
+
+fn p(name: &str) -> PathBuf {
+    PathBuf::from(format!("/p/{name}"))
+}
+
+fn decodes(paths: &[&str]) -> Vec<Command> {
+    paths.iter().map(|n| Command::Decode(p(n))).collect()
+}
+
+fn decoded(core: &mut Core, name: &str) -> Vec<Command> {
+    core.handle(Event::Decoded {
+        path: p(name),
+        result: Ok(image()),
+    })
+}
+
+/// Fifteen files `f00.jpg` … `f14.jpg`.
+fn fifteen() -> Vec<String> {
+    (0..15).map(|i| format!("/p/f{i:02}.jpg")).collect()
+}
+
+fn browsing_fifteen(start: &str) -> Core {
+    let files = fifteen();
+    let names: Vec<&str> = files.iter().map(String::as_str).collect();
+    browsing(&format!("/p/{start}"), &names)
+}
+
+fn band(core: &Core) -> Vec<(String, bool)> {
+    core.view()
+        .band
+        .iter()
+        .map(|t| (folder::file_name(&t.path), t.current))
+        .collect()
+}
+
+#[test]
+fn neighbours_are_decoded_only_after_the_current_image_is_shown() {
+    let mut core = browsing_fifteen("f07.jpg");
+    assert_eq!(
+        decoded(&mut core, "f07.jpg"),
+        decodes(&[
+            "f08.jpg", "f06.jpg", "f09.jpg", "f05.jpg", "f10.jpg", "f04.jpg", "f11.jpg", "f03.jpg",
+            "f12.jpg", "f02.jpg"
+        ])
+    );
+}
+
+#[test]
+fn listing_after_the_image_is_shown_asks_for_its_neighbours() {
+    let mut core = started("/p/b.jpg");
+    decoded(&mut core, "b.jpg");
+    core.handle(Event::FirstFrameShown);
+    let commands = core.handle(Event::FolderListed {
+        dir: PathBuf::from("/p"),
+        result: Ok(vec![p("a.jpg"), p("b.jpg"), p("c.jpg")]),
+    });
+    assert_eq!(commands, decodes(&["c.jpg", "a.jpg"]));
+}
+
+#[test]
+fn no_neighbours_before_the_first_frame() {
+    let mut core = started("/p/a.jpg");
+    assert!(decoded(&mut core, "a.jpg").is_empty());
+}
+
+#[test]
+fn neighbours_stop_at_the_folder_ends() {
+    let mut core = browsing_fifteen("f01.jpg");
+    assert_eq!(
+        decoded(&mut core, "f01.jpg"),
+        decodes(&[
+            "f02.jpg", "f00.jpg", "f03.jpg", "f04.jpg", "f05.jpg", "f06.jpg"
+        ])
+    );
+}
+
+#[test]
+fn a_broken_current_file_still_preloads_its_neighbours() {
+    let mut core = browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]);
+    let commands = core.handle(Event::Decoded {
+        path: p("a.jpg"),
+        result: Err("broken".into()),
+    });
+    assert_eq!(commands, decodes(&["b.jpg"]));
+}
+
+#[test]
+fn stepping_to_a_cached_image_shows_it_without_decoding() {
+    let mut core = browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]);
+    decoded(&mut core, "a.jpg");
+    decoded(&mut core, "b.jpg");
+    assert!(press(&mut core, Key::Right).is_empty());
+    assert_eq!(
+        core.view().screen,
+        Screen::Image {
+            path: p("b.jpg"),
+            image: image()
+        }
+    );
+    assert!(press(&mut core, Key::Left).is_empty());
+    assert!(matches!(core.view().screen, Screen::Image { .. }));
+}
+
+#[test]
+fn stepping_to_a_broken_cached_file_shows_its_error_without_decoding() {
+    let mut core = browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]);
+    decoded(&mut core, "a.jpg");
+    core.handle(Event::Decoded {
+        path: p("b.jpg"),
+        result: Err("broken".into()),
+    });
+    assert!(press(&mut core, Key::Right).is_empty());
+    assert_eq!(
+        core.view().screen,
+        Screen::Error {
+            path: Some(p("b.jpg")),
+            message: "broken".into()
+        }
+    );
+}
+
+#[test]
+fn stepping_to_an_image_still_decoding_waits_for_it() {
+    let mut core = browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]);
+    decoded(&mut core, "a.jpg");
+    assert!(press(&mut core, Key::Right).is_empty());
+    assert_eq!(core.view().screen, Screen::Loading { path: p("b.jpg") });
+    decoded(&mut core, "b.jpg");
+    assert!(matches!(core.view().screen, Screen::Image { .. }));
+}
+
+#[test]
+fn shown_neighbour_asks_for_the_files_entering_the_window() {
+    let mut core = browsing_fifteen("f07.jpg");
+    decoded(&mut core, "f07.jpg");
+    decoded(&mut core, "f08.jpg");
+    let commands = press(&mut core, Key::Right);
+    assert_eq!(
+        commands,
+        [
+            Command::CancelDecode(p("f02.jpg")),
+            Command::Decode(p("f13.jpg")),
+        ]
+    );
+}
+
+#[test]
+fn decodes_leaving_the_window_are_cancelled_and_their_late_results_ignored() {
+    let mut core = browsing_fifteen("f00.jpg");
+    decoded(&mut core, "f00.jpg");
+    let mut cancelled = Vec::new();
+    for _ in 0..10 {
+        for command in press(&mut core, Key::Right) {
+            if let Command::CancelDecode(path) = command {
+                cancelled.push(path);
+            }
+        }
+    }
+    // Now on f10, still waiting: f00 to f04 left the window undecoded.
+    assert_eq!(
+        cancelled,
+        ["f01.jpg", "f02.jpg", "f03.jpg", "f04.jpg"].map(p)
+    );
+    assert!(decoded(&mut core, "f03.jpg").is_empty());
+    assert!(core.view().band.iter().all(|t| t.path != p("f03.jpg")));
+}
+
+#[test]
+fn images_leaving_the_window_are_dropped_from_the_cache() {
+    let mut core = browsing_fifteen("f00.jpg");
+    for name in [
+        "f00.jpg", "f01.jpg", "f02.jpg", "f03.jpg", "f04.jpg", "f05.jpg",
+    ] {
+        decoded(&mut core, name);
+    }
+    for _ in 0..6 {
+        press(&mut core, Key::Right);
+    }
+    // On f06: f00 left the window and is not in the band any more.
+    let names: Vec<String> = band(&core).into_iter().map(|(n, _)| n).collect();
+    assert_eq!(
+        names,
+        ["f01.jpg", "f02.jpg", "f03.jpg", "f04.jpg", "f05.jpg"]
+    );
+    // Going back has to decode f00 again.
+    for _ in 0..6 {
+        press(&mut core, Key::Left);
+    }
+    assert_eq!(core.view().screen, Screen::Loading { path: p("f00.jpg") });
+}
+
+#[test]
+fn band_shows_the_cached_images_in_folder_order_with_the_current_one_marked() {
+    let mut core = browsing("/p/b.jpg", &["/p/a.jpg", "/p/b.jpg", "/p/c.jpg"]);
+    decoded(&mut core, "b.jpg");
+    assert_eq!(band(&core), [("b.jpg".to_owned(), true)]);
+    decoded(&mut core, "c.jpg");
+    decoded(&mut core, "a.jpg");
+    assert_eq!(
+        band(&core),
+        [
+            ("a.jpg".to_owned(), false),
+            ("b.jpg".to_owned(), true),
+            ("c.jpg".to_owned(), false)
+        ]
+    );
+    assert_eq!(
+        core.view().band.first(),
+        Some(&Thumb {
+            path: p("a.jpg"),
+            image: image(),
+            current: false
+        })
+    );
+}
+
+#[test]
+fn broken_files_are_not_in_the_band() {
+    let mut core = browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]);
+    decoded(&mut core, "a.jpg");
+    core.handle(Event::Decoded {
+        path: p("b.jpg"),
+        result: Err("broken".into()),
+    });
+    assert_eq!(band(&core), [("a.jpg".to_owned(), true)]);
+}
+
+#[test]
+fn clicking_a_band_thumb_shows_that_image() {
+    let mut core = browsing_fifteen("f07.jpg");
+    decoded(&mut core, "f07.jpg");
+    decoded(&mut core, "f04.jpg");
+    let commands = core.handle(Event::Show(p("f04.jpg")));
+    assert_eq!(
+        core.view().screen,
+        Screen::Image {
+            path: p("f04.jpg"),
+            image: image()
+        }
+    );
+    // The window moved three to the left.
+    assert_eq!(
+        commands,
+        [
+            Command::CancelDecode(p("f10.jpg")),
+            Command::CancelDecode(p("f11.jpg")),
+            Command::CancelDecode(p("f12.jpg")),
+            Command::Decode(p("f01.jpg")),
+            Command::Decode(p("f00.jpg")),
+        ]
+    );
+    assert!(band(&core).contains(&("f04.jpg".to_owned(), true)));
+}
+
+#[test]
+fn showing_an_image_that_is_not_cached_does_nothing() {
+    let mut core = browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]);
+    decoded(&mut core, "a.jpg");
+    assert!(core.handle(Event::Show(p("b.jpg"))).is_empty());
+    assert!(matches!(&core.view().screen, Screen::Image { path, .. } if *path == p("a.jpg")));
 }

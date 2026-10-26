@@ -2,8 +2,11 @@
 //! events, and keeps the window state. The first decode starts before the
 //! window exists, so decoding and GL context creation overlap.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Instant;
 
@@ -26,9 +29,10 @@ pub fn run() -> ExitCode {
     let ctx = egui::Context::default();
     let (events, inbox) = channel();
     let (core, commands) = Core::start(start);
-    let worker = Worker {
+    let mut worker = Worker {
         ctx: ctx.clone(),
         events,
+        decodes: HashMap::new(),
     };
     for command in &commands {
         worker.spawn(command);
@@ -93,39 +97,57 @@ fn title(view: &crate::core::View) -> String {
 struct Worker {
     ctx: egui::Context,
     events: Sender<Event>,
+    /// Cancellation tokens of the decodes still running.
+    decodes: HashMap<PathBuf, Arc<AtomicBool>>,
 }
 
 impl Worker {
     /// Starts the background part of `command`; commands for the window itself
     /// are handled by the app.
-    fn spawn(&self, command: &Command) {
+    fn spawn(&mut self, command: &Command) {
         match command {
             Command::Decode(path) => {
+                let cancel = Arc::new(AtomicBool::new(false));
+                self.decodes.insert(path.clone(), Arc::clone(&cancel));
                 let path = path.clone();
                 self.run(move || {
-                    let result = decode::decode_file(&path);
-                    Event::Decoded { path, result }
+                    let result = decode::decode_file(&path, &cancel)?;
+                    Some(Event::Decoded { path, result })
                 });
+            }
+            Command::CancelDecode(path) => {
+                if let Some(cancel) = self.decodes.remove(path) {
+                    cancel.store(true, Ordering::Relaxed);
+                }
             }
             Command::ListFolder(dir) => {
                 let dir = dir.clone();
                 self.run(move || {
                     let result = folder::list_media(&dir).map_err(|e| e.to_string());
-                    Event::FolderListed { dir, result }
+                    Some(Event::FolderListed { dir, result })
                 });
             }
             Command::SetFullscreen(_) | Command::Quit => {}
         }
     }
 
-    /// Runs `job` on its own thread and sends its event back.
-    fn run(&self, job: impl FnOnce() -> Event + Send + 'static) {
+    /// Forgets the token of a decode that reported back.
+    fn finished(&mut self, event: &Event) {
+        if let Event::Decoded { path, .. } = event {
+            self.decodes.remove(path);
+        }
+    }
+
+    /// Runs `job` on its own thread and sends its event back, if it has one.
+    fn run(&self, job: impl FnOnce() -> Option<Event> + Send + 'static) {
         let events = self.events.clone();
         let ctx = self.ctx.clone();
         std::thread::spawn(move || {
-            // The app may already be gone; nothing to report to then.
-            let _ = events.send(job());
-            ctx.request_repaint();
+            if let Some(event) = job() {
+                // The app may already be gone; nothing to report to then.
+                let _ = events.send(event);
+                ctx.request_repaint();
+            }
         });
     }
 }
@@ -144,13 +166,16 @@ struct App {
 impl App {
     fn dispatch(&mut self, ctx: &egui::Context, event: Event) {
         let title_before = title(self.core.view());
+        self.worker.finished(&event);
         for command in self.core.handle(event) {
             match command {
                 Command::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
                 Command::SetFullscreen(on) => {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(on));
                 }
-                Command::Decode(_) | Command::ListFolder(_) => self.worker.spawn(&command),
+                Command::Decode(_) | Command::CancelDecode(_) | Command::ListFolder(_) => {
+                    self.worker.spawn(&command);
+                }
             }
         }
         let title_after = title(self.core.view());
@@ -193,7 +218,13 @@ impl eframe::App for App {
         for event in ui::input_events(&ctx) {
             self.dispatch(&ctx, event);
         }
-        ui::show(ui, self.core.view(), &mut self.textures);
+        let clicks = ui::show(ui, self.core.view(), &mut self.textures);
+        if !clicks.is_empty() {
+            ctx.request_repaint();
+        }
+        for event in clicks {
+            self.dispatch(&ctx, event);
+        }
         if !self.first_frame_drawn && !matches!(self.core.view().screen, Screen::Loading { .. }) {
             self.first_frame_drawn = true;
             ctx.request_repaint();
