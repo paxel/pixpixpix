@@ -22,6 +22,10 @@ pub enum Key {
     Escape,
     Left,
     Right,
+    Plus,
+    Minus,
+    Num0,
+    Num1,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,7 +54,14 @@ impl KeyPress {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A size or an offset in screen points.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Points {
+    pub x: f32,
+    pub y: f32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Event {
     Key(KeyPress),
     /// A decode asked for with [`Command::Decode`] finished.
@@ -68,6 +79,16 @@ pub enum Event {
     },
     /// A thumb of the band was clicked.
     Show(PathBuf),
+    /// The size of the area the image is shown in.
+    Viewport(Points),
+    /// The mouse wheel turned by `delta` points, positive away from the user,
+    /// with the pointer at `pointer` from the viewport's centre.
+    Wheel {
+        delta: f32,
+        pointer: Points,
+    },
+    /// The image was dragged by this many points.
+    Pan(Points),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,6 +154,18 @@ const IMAGE_VIEW_KEYS: &[KeyHint] = &[
         action: "previous/next",
     },
     KeyHint {
+        keys: "+/-",
+        action: "zoom",
+    },
+    KeyHint {
+        keys: "0",
+        action: "fit",
+    },
+    KeyHint {
+        keys: "1",
+        action: "100 %",
+    },
+    KeyHint {
         keys: "F",
         action: "fullscreen",
     },
@@ -153,14 +186,118 @@ pub struct Thumb {
 /// How many neighbours per side are kept decoded unless configured otherwise.
 const DEFAULT_CACHE_PER_SIDE: usize = 5;
 
+/// Zoom factor of one `+`/`-` press.
+const KEY_ZOOM_STEP: f32 = 1.25;
+/// Zoom per point of mouse wheel, as egui zooms with `Ctrl`+wheel.
+const WHEEL_ZOOM_SPEED: f32 = 1.0 / 200.0;
+const MIN_SCALE: f32 = 1.0 / 32.0;
+const MAX_SCALE: f32 = 32.0;
+
+/// How large the image is drawn.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Scale {
+    /// As large as the viewport allows, but never above 100 %.
+    Fit,
+    /// Screen points per image pixel.
+    Exact(f32),
+}
+
+/// Zoom level and position, kept when the image changes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Zoom {
+    pub scale: Scale,
+    /// The image point shown in the middle of the viewport, as fractions of
+    /// the image's width and height. An axis the viewport fully shows is
+    /// centred instead.
+    pub center_x: f32,
+    pub center_y: f32,
+}
+
+/// Where an image is drawn, in points from the viewport's top left corner.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Placement {
+    pub left: f32,
+    pub top: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+impl Zoom {
+    const FIT: Self = Self {
+        scale: Scale::Fit,
+        center_x: 0.5,
+        center_y: 0.5,
+    };
+
+    /// Screen points per image pixel for `image` in `viewport`.
+    fn factor(&self, image: &DecodedImage, viewport: Points) -> f32 {
+        match self.scale {
+            Scale::Fit => fit_scale(image, viewport),
+            Scale::Exact(scale) => scale,
+        }
+    }
+
+    pub fn placement(&self, image: &DecodedImage, viewport: Points) -> Placement {
+        let scale = self.factor(image, viewport);
+        let width = image.width as f32 * scale;
+        let height = image.height as f32 * scale;
+        Placement {
+            left: offset(width, viewport.x, self.center_x),
+            top: offset(height, viewport.y, self.center_y),
+            width,
+            height,
+        }
+    }
+
+    /// The centre actually shown: axes the viewport fully shows are centred.
+    fn shown_center(&self, image: &DecodedImage, viewport: Points) -> (f32, f32) {
+        let scale = self.factor(image, viewport);
+        let shown = |size: u32, view: f32, center: f32| {
+            if size as f32 * scale <= view {
+                0.5
+            } else {
+                center
+            }
+        };
+        (
+            shown(image.width, viewport.x, self.center_x),
+            shown(image.height, viewport.y, self.center_y),
+        )
+    }
+}
+
+/// The largest scale that fits `image` into `viewport`, at most 100 %.
+fn fit_scale(image: &DecodedImage, viewport: Points) -> f32 {
+    if image.width == 0 || image.height == 0 {
+        return 0.0;
+    }
+    (viewport.x / image.width as f32)
+        .min(viewport.y / image.height as f32)
+        .min(1.0)
+}
+
+/// Where an image side of `size` starts in a viewport side of `view`, with the
+/// fraction `center` of it in the middle; centred when it fits.
+fn offset(size: f32, view: f32, center: f32) -> f32 {
+    if size <= view {
+        (view - size) / 2.0
+    } else {
+        view / 2.0 - center * size
+    }
+}
+
 /// Everything the UI needs to draw a frame.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct View {
     pub screen: Screen,
     /// The cached images in folder order.
     pub band: Vec<Thumb>,
     pub fullscreen: bool,
     pub key_line: KeyLine,
+    pub zoom: Zoom,
+    /// The size of the area the image is shown in; zero until the UI reports
+    /// it.
+    pub viewport: Points,
 }
 
 pub struct Core {
@@ -208,6 +345,8 @@ impl Core {
                     keys: IMAGE_VIEW_KEYS.to_vec(),
                     notice: None,
                 },
+                zoom: Zoom::FIT,
+                viewport: Points::default(),
             },
             first_frame_shown: false,
             current,
@@ -237,6 +376,18 @@ impl Core {
                 self.refresh()
             }
             Event::Show(path) => self.show(path),
+            Event::Viewport(size) => {
+                self.view.viewport = size;
+                Vec::new()
+            }
+            Event::Wheel { delta, pointer } => {
+                self.zoom_by((delta * WHEEL_ZOOM_SPEED).exp(), pointer);
+                Vec::new()
+            }
+            Event::Pan(delta) => {
+                self.pan(delta);
+                Vec::new()
+            }
         }
     }
 
@@ -273,8 +424,73 @@ impl Core {
             }
             (Key::Left, false) => self.step(Step::Previous),
             (Key::Right, false) => self.step(Step::Next),
+            (Key::Plus, false) => {
+                self.zoom_by(KEY_ZOOM_STEP, Points::default());
+                Vec::new()
+            }
+            (Key::Minus, false) => {
+                self.zoom_by(KEY_ZOOM_STEP.recip(), Points::default());
+                Vec::new()
+            }
+            (Key::Num0, false) => {
+                self.view.zoom = Zoom::FIT;
+                Vec::new()
+            }
+            (Key::Num1, false) => {
+                self.view.zoom.scale = Scale::Exact(1.0);
+                Vec::new()
+            }
             _ => Vec::new(),
         }
+    }
+
+    /// The image on screen, if it and the viewport have a size, so zoom
+    /// math cannot divide by zero.
+    fn zoomable(&self) -> Option<&DecodedImage> {
+        let Screen::Image { image, .. } = &self.view.screen else {
+            return None;
+        };
+        let viewport = self.view.viewport;
+        let sized = image.width > 0 && image.height > 0 && viewport.x > 0.0 && viewport.y > 0.0;
+        sized.then_some(image)
+    }
+
+    /// Multiplies the scale by `factor`, keeping the image point under
+    /// `pointer` (from the viewport's centre) where it is.
+    fn zoom_by(&mut self, factor: f32, pointer: Points) {
+        let Some(image) = self.zoomable() else {
+            return;
+        };
+        let viewport = self.view.viewport;
+        let zoom = self.view.zoom;
+        let old = zoom.factor(image, viewport);
+        let new = (old * factor).clamp(MIN_SCALE, MAX_SCALE);
+        let (x, y) = zoom.shown_center(image, viewport);
+        // The image pixel under the pointer, as a fraction, moves by the
+        // pointer offset seen at the old minus the new scale.
+        let shift = |size: u32, offset: f32| offset * (old.recip() - new.recip()) / size as f32;
+        self.view.zoom = Zoom {
+            scale: Scale::Exact(new),
+            center_x: (x + shift(image.width, pointer.x)).clamp(0.0, 1.0),
+            center_y: (y + shift(image.height, pointer.y)).clamp(0.0, 1.0),
+        };
+    }
+
+    /// Moves the image with the pointer; a fitted image does not move.
+    fn pan(&mut self, delta: Points) {
+        let Some(image) = self.zoomable() else {
+            return;
+        };
+        let zoom = self.view.zoom;
+        let Scale::Exact(scale) = zoom.scale else {
+            return;
+        };
+        let (x, y) = zoom.shown_center(image, self.view.viewport);
+        let shift = |size: u32, offset: f32| offset / (scale * size as f32);
+        let center_x = (x - shift(image.width, delta.x)).clamp(0.0, 1.0);
+        let center_y = (y - shift(image.height, delta.y)).clamp(0.0, 1.0);
+        self.view.zoom.center_x = center_x;
+        self.view.zoom.center_y = center_y;
     }
 
     /// Moves to the neighbour file in the folder; at the ends it stays and says

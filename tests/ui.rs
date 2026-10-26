@@ -6,7 +6,7 @@ use std::sync::Arc;
 use egui::accesskit::{Role, Toggled};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
-use pixpixpix::core::{Command, Core, Event, Screen};
+use pixpixpix::core::{Command, Core, Event, Scale, Screen};
 use pixpixpix::decode::DecodedImage;
 use pixpixpix::ui;
 
@@ -115,6 +115,9 @@ fn key_line_lists_the_image_view_keys() {
     let mut h = harness(shown("/p/cat.jpg"));
     h.run();
     h.get_by_label("Left/Right");
+    h.get_by_label("+/-");
+    h.get_by_label("0");
+    h.get_by_label("1");
     h.get_by_label("F");
     h.get_by_label(if cfg!(target_os = "macos") {
         "Cmd+Q"
@@ -189,4 +192,70 @@ fn clicking_a_band_thumb_shows_that_image() {
         Screen::Image { path, .. } if path == Path::new("/p/b.jpg")
     ));
     h.get_by_role_and_label(Role::Image, "b.jpg");
+}
+
+#[test]
+fn zoom_keys_reach_the_core() {
+    let mut h = harness(shown("/p/cat.jpg"));
+    h.run();
+    h.key_press(egui::Key::Num1);
+    h.run();
+    assert_eq!(h.state().core.view().zoom.scale, Scale::Exact(1.0));
+    h.key_press(egui::Key::Plus);
+    h.run();
+    assert_eq!(h.state().core.view().zoom.scale, Scale::Exact(1.25));
+    h.key_press(egui::Key::Minus);
+    h.run();
+    assert_eq!(h.state().core.view().zoom.scale, Scale::Exact(1.0));
+    h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::Equals);
+    h.run();
+    assert_eq!(h.state().core.view().zoom.scale, Scale::Exact(1.25));
+    h.key_press(egui::Key::Num0);
+    h.run();
+    assert_eq!(h.state().core.view().zoom.scale, Scale::Fit);
+}
+
+#[test]
+fn mouse_wheel_over_the_image_zooms_in() {
+    let mut h = harness(shown("/p/cat.jpg"));
+    h.run();
+    h.hover_at(egui::pos2(400.0, 200.0));
+    h.event(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(0.0, 50.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run();
+    // The 2 × 1 image fits at 100 %.
+    assert!(matches!(
+        h.state().core.view().zoom.scale,
+        Scale::Exact(s) if s > 1.0
+    ));
+}
+
+#[test]
+fn dragging_a_zoomed_image_pans_it() {
+    let (mut core, _) = Core::start(Ok(PathBuf::from("/p/big.jpg")));
+    core.handle(Event::Decoded {
+        path: PathBuf::from("/p/big.jpg"),
+        result: Ok(DecodedImage {
+            width: 2000,
+            height: 1000,
+            rgba: Arc::from(vec![0; 2000 * 1000 * 4]),
+        }),
+    });
+    let mut h = harness(core);
+    h.run();
+    h.key_press(egui::Key::Num1);
+    h.run();
+    h.drag_at(egui::pos2(400.0, 200.0));
+    h.run();
+    h.hover_at(egui::pos2(300.0, 200.0));
+    h.run();
+    h.drop_at(egui::pos2(300.0, 200.0));
+    h.run();
+    // Dragged left by 100 points: 100 more of the 2000 pixels on the right.
+    let zoom = h.state().core.view().zoom;
+    assert!((zoom.center_x - 0.55).abs() < 1e-4, "{}", zoom.center_x);
 }
