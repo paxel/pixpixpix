@@ -122,12 +122,18 @@ fn folder_lists_media_in_natural_order_without_dot_files() {
         std::fs::write(dir.path().join(name), b"x").unwrap();
     }
     std::fs::create_dir(dir.path().join("sub.jpg")).unwrap();
-    let names: Vec<String> = folder::list_media(dir.path())
-        .unwrap()
-        .iter()
-        .map(|p| folder::file_name(p))
-        .collect();
-    assert_eq!(names, ["IMG1.png", "img2.JPG", "img10.jpg"]);
+    let names = |dots| -> Vec<String> {
+        folder::list_media(dir.path(), dots)
+            .unwrap()
+            .iter()
+            .map(|p| folder::file_name(p))
+            .collect()
+    };
+    assert_eq!(names(false), ["IMG1.png", "img2.JPG", "img10.jpg"]);
+    assert_eq!(
+        names(true),
+        [".hidden.jpg", "IMG1.png", "img2.JPG", "img10.jpg"]
+    );
 }
 
 #[test]
@@ -140,17 +146,123 @@ fn subfolders_are_listed_in_natural_order_without_dot_folders_or_files() {
     let elsewhere = tempfile::tempdir().unwrap();
     #[cfg(unix)]
     std::os::unix::fs::symlink(elsewhere.path(), dir.path().join("linked")).unwrap();
-    let names: Vec<String> = folder::list_dirs(dir.path())
-        .unwrap()
-        .iter()
-        .map(|p| folder::file_name(p))
-        .collect();
+    let names = |dots| -> Vec<String> {
+        folder::list_dirs(dir.path(), dots)
+            .unwrap()
+            .iter()
+            .map(|p| folder::file_name(p))
+            .collect()
+    };
     let expected: &[&str] = if cfg!(unix) {
         &["day1", "Day2", "day10", "linked"]
     } else {
         &["day1", "Day2", "day10"]
     };
-    assert_eq!(names, expected);
+    assert_eq!(names(false), expected);
+    assert_eq!(names(true).first().map(String::as_str), Some(".cache"));
+    assert_eq!(names(true).len(), expected.len() + 1);
+}
+
+/// Creates the folders and empty files of `entries` below `root`; names
+/// ending in `/` are folders.
+fn tree(root: &Path, entries: &[&str]) -> std::io::Result<()> {
+    for entry in entries {
+        let path = root.join(entry);
+        if entry.ends_with('/') {
+            std::fs::create_dir_all(path)?;
+        } else {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(path, b"x")?;
+        }
+    }
+    Ok(())
+}
+
+/// Searches below `root` with a token that is never set; the found folder
+/// relative to `root` and its file names.
+fn search(root: &Path, dots: bool) -> Option<(PathBuf, Vec<String>)> {
+    let found = folder::search_media(root, dots, &AtomicBool::new(false)).flatten()?;
+    let names = found.files.iter().map(|p| folder::file_name(p)).collect();
+    Some((found.dir.strip_prefix(root).ok()?.to_path_buf(), names))
+}
+
+#[test]
+fn search_finds_the_shallowest_folder_with_images() {
+    let root = tempfile::tempdir().unwrap();
+    tree(
+        root.path(),
+        &[
+            "top.jpg",
+            "a/deep/x.jpg",
+            "b/notes.txt",
+            "c/2.jpg",
+            "c/10.jpg",
+            "c/.hidden.jpg",
+            "d/1.jpg",
+        ],
+    )
+    .unwrap();
+    assert_eq!(
+        search(root.path(), false),
+        Some((PathBuf::from("c"), vec!["2.jpg".into(), "10.jpg".into()]))
+    );
+}
+
+#[test]
+fn search_takes_folders_of_a_level_in_natural_order() {
+    let root = tempfile::tempdir().unwrap();
+    tree(root.path(), &["b10/x.jpg", "b2/y.jpg", "a/"]).unwrap();
+    assert_eq!(
+        search(root.path(), false),
+        Some((PathBuf::from("b2"), vec!["y.jpg".into()]))
+    );
+}
+
+#[test]
+fn search_skips_dot_folders_unless_asked() {
+    let root = tempfile::tempdir().unwrap();
+    tree(root.path(), &[".cache/x.jpg", "a/b/y.jpg"]).unwrap();
+    assert_eq!(
+        search(root.path(), false).map(|(dir, _)| dir),
+        Some(PathBuf::from("a/b"))
+    );
+    assert_eq!(
+        search(root.path(), true).map(|(dir, _)| dir),
+        Some(PathBuf::from(".cache"))
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn search_does_not_follow_symlinked_folders() {
+    let root = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    tree(elsewhere.path(), &["x.jpg"]).unwrap();
+    tree(root.path(), &["a/b/y.jpg"]).unwrap();
+    std::os::unix::fs::symlink(elsewhere.path(), root.path().join("linked")).unwrap();
+    assert_eq!(
+        search(root.path(), false).map(|(dir, _)| dir),
+        Some(PathBuf::from("a/b"))
+    );
+}
+
+#[test]
+fn search_without_images_below_finds_nothing() {
+    let root = tempfile::tempdir().unwrap();
+    tree(root.path(), &["top.jpg", "a/b/", "c/notes.txt"]).unwrap();
+    assert_eq!(search(root.path(), false), None);
+}
+
+#[test]
+fn cancelled_search_reports_nothing() {
+    let root = tempfile::tempdir().unwrap();
+    tree(root.path(), &["a/x.jpg"]).unwrap();
+    assert_eq!(
+        folder::search_media(root.path(), false, &AtomicBool::new(true)),
+        None
+    );
 }
 
 #[test]

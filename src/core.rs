@@ -6,8 +6,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use crate::decode::DecodedImage;
-use crate::folder;
+use crate::folder::{self, Found};
 use crate::startup::NoFile;
+
+mod search;
+
+use search::Search;
 
 #[derive(Debug, Clone, Copy)]
 enum Step {
@@ -34,6 +38,8 @@ pub enum Key {
     Down,
     Enter,
     Backspace,
+    Period,
+    R,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,6 +110,13 @@ pub enum Event {
         dir: PathBuf,
         result: Result<Vec<PathBuf>, String>,
     },
+    /// A search asked for with [`Command::Search`] finished; `found` is absent
+    /// when no folder below `dir` has media files.
+    Searched {
+        dir: PathBuf,
+        dots: bool,
+        found: Option<Found>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -119,6 +132,16 @@ pub enum Command {
     WatchFolder(PathBuf),
     /// List the subfolders of a folder, answered by [`Event::DirsListed`].
     ListDirs(PathBuf),
+    /// Search the folders below `dir` breadth-first for the shallowest one with
+    /// media files, dot folders only with `dots`, replacing any search so far;
+    /// answered by [`Event::Searched`].
+    Search {
+        dir: PathBuf,
+        dots: bool,
+    },
+    /// The running search is no longer needed; it reports nothing once
+    /// cancelled.
+    CancelSearch,
     SetFullscreen(bool),
     Quit,
 }
@@ -148,6 +171,14 @@ pub enum Screen {
         dir: PathBuf,
         /// How many subfolders it has; absent until they are counted.
         folders: Option<usize>,
+    },
+    /// Searching the folders below `dir` for images.
+    Searching {
+        dir: PathBuf,
+    },
+    /// No folder below `dir` has images.
+    NothingBelow {
+        dir: PathBuf,
     },
 }
 
@@ -219,6 +250,14 @@ const DIR_COLUMN_KEYS: &[KeyHint] = &[
     KeyHint {
         keys: "Right/Enter",
         action: "open",
+    },
+    KeyHint {
+        keys: ".",
+        action: "dot entries",
+    },
+    KeyHint {
+        keys: "R",
+        action: "find images",
     },
     KeyHint {
         keys: "N",
@@ -419,8 +458,17 @@ pub struct Core {
     /// The folder listed and watched, once the first frame is shown.
     dir: Option<PathBuf>,
     /// The media files of the current file's folder, in natural order; empty
-    /// until listed.
+    /// until listed. Dot files only while [`Core::dots`] is set.
     files: Vec<PathBuf>,
+    /// The last listing of the folder, dot files included; absent until listed.
+    all_files: Option<Vec<PathBuf>>,
+    /// The last listing of the dir column's folder, dot folders included;
+    /// absent until listed.
+    column_dirs: Option<Vec<PathBuf>>,
+    /// Whether dot files and dot folders are shown: the one-shot `.` action.
+    dots: bool,
+    /// The one-shot `r` search of the dir column.
+    search: Option<Search>,
     /// How many neighbours per side of the current file are kept decoded.
     cache_per_side: usize,
     /// Decode results of the files in the window around the current one.
@@ -543,6 +591,10 @@ impl Core {
             current,
             dir: None,
             files: Vec::new(),
+            all_files: None,
+            column_dirs: None,
+            dots: false,
+            search: None,
             cache_per_side: DEFAULT_CACHE_PER_SIDE,
             cache: BTreeMap::new(),
             decoding,
@@ -591,6 +643,7 @@ impl Core {
                 self.dirs_listed(&dir, result);
                 Vec::new()
             }
+            Event::Searched { dir, dots, found } => self.searched(dir, dots, found),
         }
     }
 
@@ -607,11 +660,13 @@ impl Core {
             .map(PathBuf::as_path)
     }
 
-    /// Shows the preview if there is one, otherwise the current folder.
+    /// Shows the search or the preview if there is one, otherwise the current
+    /// folder.
     fn publish(&mut self) {
-        let preview = self
-            .previewed()
-            .and_then(|dir| Some(self.nav.get(dir)?.preview(dir)));
+        let preview = self.search_view().or_else(|| {
+            self.previewed()
+                .and_then(|dir| Some(self.nav.get(dir)?.preview(dir)))
+        });
         (self.view.screen, self.view.band) =
             preview.unwrap_or_else(|| (self.screen.clone(), self.band.clone()));
     }
@@ -657,7 +712,7 @@ impl Core {
     }
 
     /// A nav folder listed: its first file is decoded, a folder without media
-    /// gets its subfolders counted.
+    /// gets its subfolders counted. Dot files never count here.
     fn nav_listed(&mut self, dir: &Path, result: Result<Vec<PathBuf>, String>) -> Vec<Command> {
         let Some(nav) = self
             .nav
@@ -666,7 +721,7 @@ impl Core {
         else {
             return Vec::new();
         };
-        match result.map(|files| files.into_iter().next()) {
+        match result.map(|files| files.into_iter().find(|f| !folder::is_dot(f))) {
             Ok(Some(first)) => {
                 nav.state = NavState::Decoding(first.clone());
                 vec![Command::Decode(first)]
@@ -715,7 +770,9 @@ impl Core {
     }
 
     /// A folder that cannot be read is reported and leaves the files as they
-    /// were; the current image stays, a folder just entered shows the error. A current file that vanished from the folder gives way to the
+    /// were; the current image stays, a folder just entered shows the error.
+    /// Dot files are dropped unless shown. A current file that vanished from
+    /// the folder gives way to the
     /// file after it, or the last one; with no files left the folder's
     /// emptiness is shown until a file appears.
     fn folder_listed(&mut self, dir: &Path, result: Result<Vec<PathBuf>, String>) -> Vec<Command> {
@@ -736,6 +793,11 @@ impl Core {
             }
         };
         self.view.folder_error = None;
+        self.all_files = Some(files.clone());
+        let files: Vec<PathBuf> = files
+            .into_iter()
+            .filter(|f| self.dots || !folder::is_dot(f))
+            .collect();
         let vanished = self
             .current
             .as_ref()
@@ -799,18 +861,21 @@ impl Core {
         self.view.key_line.keys = focus_keys(focus, self.view.dir_column.is_some());
     }
 
-    /// Opens the column on the current folder, focused, or closes it and
-    /// returns focus to the image view. Nothing to list before the folder is
-    /// known.
+    /// Opens the column on the current folder, focused, or closes it, ending
+    /// the one-shot actions, and returns focus to the image view. Nothing to
+    /// list before the folder is known.
     fn toggle_column(&mut self) -> Vec<Command> {
-        if self.view.dir_column.take().is_some() {
+        if self.view.dir_column.is_some() {
+            let commands = self.reset_one_shot();
+            self.view.dir_column = None;
             self.set_focus(Focus::Image);
-            return Vec::new();
+            return commands;
         }
         let Some(dir) = self.dir.clone() else {
             return Vec::new();
         };
         self.came_from = None;
+        self.column_dirs = None;
         self.view.dir_column = Some(DirColumn {
             dir: dir.clone(),
             dirs: Vec::new(),
@@ -823,15 +888,21 @@ impl Core {
 
     /// Lists the column's subfolders, keeping the highlight on the folder just
     /// left or the one highlighted so far; or counts a nav folder's subfolders.
+    /// Dot folders are dropped unless shown, and never counted.
     fn dirs_listed(&mut self, dir: &Path, result: Result<Vec<PathBuf>, String>) {
         let Some(column) = self.view.dir_column.as_mut().filter(|c| c.dir == dir) else {
             if let (Some(nav), Ok(dirs)) = (self.nav.get_mut(dir), result) {
-                nav.folders = Some(dirs.len());
+                nav.folders = Some(dirs.iter().filter(|d| !folder::is_dot(d)).count());
             }
             return;
         };
+        self.column_dirs = result.as_ref().ok().cloned();
         match result {
             Ok(dirs) => {
+                let dirs: Vec<PathBuf> = dirs
+                    .into_iter()
+                    .filter(|d| self.dots || !folder::is_dot(d))
+                    .collect();
                 let highlighted = column.highlight.and_then(|i| column.dirs.get(i)).cloned();
                 let index = self
                     .came_from
@@ -851,7 +922,51 @@ impl Core {
         }
     }
 
+    /// Keys of the dir column; moving in it ends the one-shot actions first.
     fn dir_key(&mut self, key: Key) -> Vec<Command> {
+        let mut commands = match key {
+            Key::Period => {
+                let dots = !self.dots;
+                return self.set_dots(dots);
+            }
+            Key::R => return self.start_search(),
+            Key::Up
+            | Key::Down
+            | Key::Left
+            | Key::Right
+            | Key::Enter
+            | Key::Escape
+            | Key::Backspace => self.reset_one_shot(),
+            _ => Vec::new(),
+        };
+        commands.extend(self.move_in_column(key));
+        commands
+    }
+
+    /// Ends the one-shot actions: the search is aborted and dot entries are
+    /// hidden again.
+    fn reset_one_shot(&mut self) -> Vec<Command> {
+        let mut commands = self.abort_search();
+        if self.dots {
+            commands.extend(self.set_dots(false));
+        }
+        commands
+    }
+
+    /// Shows or hides dot entries in the column and the current folder.
+    fn set_dots(&mut self, dots: bool) -> Vec<Command> {
+        self.dots = dots;
+        let column = self.view.dir_column.as_ref().map(|c| c.dir.clone());
+        if let (Some(dir), Some(dirs)) = (column, self.column_dirs.clone()) {
+            self.dirs_listed(&dir, Ok(dirs));
+        }
+        match (self.dir.clone(), self.all_files.clone()) {
+            (Some(dir), Some(files)) => self.folder_listed(&dir, Ok(files)),
+            _ => Vec::new(),
+        }
+    }
+
+    fn move_in_column(&mut self, key: Key) -> Vec<Command> {
         let Some(column) = self.view.dir_column.as_mut() else {
             return Vec::new();
         };
@@ -923,6 +1038,9 @@ impl Core {
             .collect();
         self.cache.clear();
         self.files.clear();
+        self.all_files = None;
+        self.column_dirs = None;
+        self.dots = false;
         self.came_from = None;
         self.dir = Some(dir.clone());
         let cached = self.nav.remove(&dir).map(|n| n.state);
@@ -1051,6 +1169,9 @@ impl Core {
 
     /// Jumps to a cached file picked in the band, broken or not.
     fn show(&mut self, path: PathBuf) -> Vec<Command> {
+        if let Some(commands) = self.show_found(&path) {
+            return commands;
+        }
         if !self.cache.contains_key(&path) {
             return Vec::new();
         }
@@ -1077,16 +1198,18 @@ impl Core {
     }
 
     fn decoded(&mut self, path: PathBuf, result: Result<DecodedImage, String>) -> Vec<Command> {
+        let mut commands = self.search_decoded(&path, &result);
         if !self.decoding.remove(&path) {
             self.nav_decoded(path, result);
-            return Vec::new();
+            return commands;
         }
         let waiting = matches!(&self.screen, Screen::Loading { path: p } if *p == path);
         if waiting {
             self.screen = screen(&path, result.clone());
         }
         self.cache.insert(path, result);
-        self.refresh()
+        commands.extend(self.refresh());
+        commands
     }
 
     /// The current file and up to `cache_per_side` neighbours on each side, in

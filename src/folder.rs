@@ -2,8 +2,10 @@
 //! natural name order every list in the app uses.
 
 use std::cmp::Ordering;
+use std::collections::VecDeque;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{self, AtomicBool};
 
 /// Extensions of the image formats pixpixpix opens, lower case.
 const IMAGE_EXTENSIONS: &[&str] = &[
@@ -85,13 +87,19 @@ pub fn file_name(path: &Path) -> String {
         .unwrap_or_default()
 }
 
-/// The media files directly in `dir`, in natural order. Dot files are skipped.
-pub fn list_media(dir: &Path) -> io::Result<Vec<PathBuf>> {
+/// True when the name starts with a dot: a hidden file or folder.
+pub fn is_dot(path: &Path) -> bool {
+    file_name(path).starts_with('.')
+}
+
+/// The media files directly in `dir`, in natural order. Dot files are skipped
+/// unless `dots` is set.
+pub fn list_media(dir: &Path, dots: bool) -> io::Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-        if file_name(&path).starts_with('.') || !is_media(&path) {
+        if (!dots && is_dot(&path)) || !is_media(&path) {
             continue;
         }
         if entry.file_type()?.is_dir() {
@@ -103,13 +111,13 @@ pub fn list_media(dir: &Path) -> io::Result<Vec<PathBuf>> {
     Ok(files)
 }
 
-/// The subfolders directly in `dir`, in natural order. Dot folders are skipped;
-/// symlinks to folders count as folders.
-pub fn list_dirs(dir: &Path) -> io::Result<Vec<PathBuf>> {
+/// The subfolders directly in `dir`, in natural order. Dot folders are skipped
+/// unless `dots` is set; symlinks to folders count as folders.
+pub fn list_dirs(dir: &Path, dots: bool) -> io::Result<Vec<PathBuf>> {
     let mut dirs = Vec::new();
     for entry in std::fs::read_dir(dir)? {
         let path = entry?.path();
-        if !file_name(&path).starts_with('.') && path.is_dir() {
+        if (dots || !is_dot(&path)) && path.is_dir() {
             dirs.push(path);
         }
     }
@@ -119,5 +127,49 @@ pub fn list_dirs(dir: &Path) -> io::Result<Vec<PathBuf>> {
 
 /// The first media file of `dir` in natural order, if any.
 pub fn first_media(dir: &Path) -> io::Result<Option<PathBuf>> {
-    Ok(list_media(dir)?.into_iter().next())
+    Ok(list_media(dir, false)?.into_iter().next())
+}
+
+/// The folder a search below a folder stopped at, with its media files.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Found {
+    pub dir: PathBuf,
+    /// In natural order, dot files skipped.
+    pub files: Vec<PathBuf>,
+}
+
+/// The shallowest folder below `dir` with media files, searched breadth-first
+/// in natural order within a level. Dot folders are skipped unless `dots` is
+/// set, symlinked folders are not followed and unreadable ones are passed
+/// over. `None` once `cancel` is set, `Some(None)` when nothing was found.
+pub fn search_media(dir: &Path, dots: bool, cancel: &AtomicBool) -> Option<Option<Found>> {
+    let mut queue: VecDeque<PathBuf> = real_subfolders(dir, dots).into();
+    while let Some(next) = queue.pop_front() {
+        if cancel.load(atomic::Ordering::Relaxed) {
+            return None;
+        }
+        if let Ok(files) = list_media(&next, false)
+            && !files.is_empty()
+        {
+            return Some(Some(Found { dir: next, files }));
+        }
+        queue.extend(real_subfolders(&next, dots));
+    }
+    Some(None)
+}
+
+/// The subfolders of `dir` that are no symlinks, in natural order; none when
+/// it cannot be read.
+fn real_subfolders(dir: &Path, dots: bool) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut dirs: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .map(|e| e.path())
+        .filter(|p| dots || !is_dot(p))
+        .collect();
+    sort_natural(&mut dirs);
+    dirs
 }

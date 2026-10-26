@@ -454,3 +454,40 @@ fn entering_an_unreadable_folder_shows_the_error() {
     listed(&mut h, "/p/holidays", Err("permission denied".into()));
     h.get_by_label("Cannot read /p/holidays: permission denied");
 }
+
+#[test]
+fn r_in_the_column_searches_and_shows_progress_then_the_result() {
+    let mut h = column_open();
+    h.state_mut().commands.clear();
+    h.key_press(egui::Key::R);
+    h.run();
+    assert_eq!(
+        h.state().commands,
+        [Command::Search {
+            dir: PathBuf::from("/p"),
+            dots: false
+        }]
+    );
+    h.get_by_label("Searching…");
+    h.state_mut().core.handle(Event::Searched {
+        dir: PathBuf::from("/p"),
+        dots: false,
+        found: None,
+    });
+    h.run();
+    h.get_by_label("No images below");
+}
+
+#[test]
+fn dot_in_the_column_shows_dot_folders() {
+    let mut h = column_open();
+    h.state_mut().core.handle(Event::DirsListed {
+        dir: PathBuf::from("/p"),
+        result: Ok(vec![PathBuf::from("/p/.git"), PathBuf::from("/p/work")]),
+    });
+    h.run();
+    assert!(h.query_by_label(".git").is_none());
+    h.key_press(egui::Key::Period);
+    h.run();
+    h.get_by_label(".git");
+}

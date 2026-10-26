@@ -34,6 +34,7 @@ pub fn run() -> ExitCode {
         events,
         decodes: HashMap::new(),
         watcher: None,
+        search: None,
     };
     for command in &commands {
         worker.spawn(command);
@@ -86,7 +87,10 @@ pub fn run() -> ExitCode {
 fn title(view: &crate::core::View) -> String {
     let path = match &view.screen {
         Screen::Loading { path } | Screen::Image { path, .. } => Some(path),
-        Screen::Listing { dir } | Screen::NoImages { dir, .. } => Some(dir),
+        Screen::Listing { dir }
+        | Screen::NoImages { dir, .. }
+        | Screen::Searching { dir }
+        | Screen::NothingBelow { dir } => Some(dir),
         Screen::Error { path, .. } => path.as_ref(),
     };
     match path {
@@ -103,6 +107,8 @@ struct Worker {
     decodes: HashMap<PathBuf, Arc<AtomicBool>>,
     /// Watches the current folder while it is kept.
     watcher: Option<notify::RecommendedWatcher>,
+    /// Cancellation token of the running search.
+    search: Option<Arc<AtomicBool>>,
 }
 
 impl Worker {
@@ -127,16 +133,32 @@ impl Worker {
             Command::ListFolder(dir) => {
                 let dir = dir.clone();
                 self.run(move || {
-                    let result = folder::list_media(&dir).map_err(|e| e.to_string());
+                    let result = folder::list_media(&dir, true).map_err(|e| e.to_string());
                     Some(Event::FolderListed { dir, result })
                 });
             }
             Command::ListDirs(dir) => {
                 let dir = dir.clone();
                 self.run(move || {
-                    let result = folder::list_dirs(&dir).map_err(|e| e.to_string());
+                    let result = folder::list_dirs(&dir, true).map_err(|e| e.to_string());
                     Some(Event::DirsListed { dir, result })
                 });
+            }
+            Command::Search { dir, dots } => {
+                let cancel = Arc::new(AtomicBool::new(false));
+                if let Some(old) = self.search.replace(Arc::clone(&cancel)) {
+                    old.store(true, Ordering::Relaxed);
+                }
+                let (dir, dots) = (dir.clone(), *dots);
+                self.run(move || {
+                    let found = folder::search_media(&dir, dots, &cancel)?;
+                    Some(Event::Searched { dir, dots, found })
+                });
+            }
+            Command::CancelSearch => {
+                if let Some(cancel) = self.search.take() {
+                    cancel.store(true, Ordering::Relaxed);
+                }
             }
             Command::WatchFolder(dir) => {
                 // Dropping the old watcher stops it.
@@ -206,7 +228,9 @@ impl App {
                 | Command::CancelDecode(_)
                 | Command::ListFolder(_)
                 | Command::WatchFolder(_)
-                | Command::ListDirs(_) => {
+                | Command::ListDirs(_)
+                | Command::Search { .. }
+                | Command::CancelSearch => {
                     self.worker.spawn(&command);
                 }
             }

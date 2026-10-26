@@ -102,6 +102,8 @@ fn map_key(key: egui::Key) -> Option<Key> {
         egui::Key::ArrowDown => Key::Down,
         egui::Key::Enter => Key::Enter,
         egui::Key::Backspace => Key::Backspace,
+        egui::Key::Period => Key::Period,
+        egui::Key::R => Key::R,
         _ => return None,
     })
 }
@@ -152,6 +154,8 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
                 }
                 Screen::Error { path, message } => show_error(ui, path.as_deref(), message),
                 Screen::NoImages { folders, .. } => show_no_images(ui, *folders),
+                Screen::Searching { .. } => show_status(ui, "Searching…"),
+                Screen::NothingBelow { .. } => show_status(ui, "No images below"),
             }
         });
     events
@@ -396,6 +400,11 @@ fn show_no_images(ui: &mut egui::Ui, folders: Option<usize>) {
         Some(1) => "No images · 1 folder".to_owned(),
         Some(n) => format!("No images · {n} folders"),
     };
+    show_status(ui, &text);
+}
+
+/// A dim line in the middle of the main area.
+fn show_status(ui: &mut egui::Ui, text: &str) {
     ui.centered_and_justified(|ui| {
         ui.label(RichText::new(text).color(DIM_TEXT).size(15.0));
     });

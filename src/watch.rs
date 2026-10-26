@@ -15,8 +15,8 @@ use crate::folder;
 const SETTLE: Duration = Duration::from_millis(200);
 
 /// Watches `dir` and calls `on_change` with a fresh listing (as
-/// [`folder::list_media`] gives it) after every burst of changes. Watching
-/// stops when the returned watcher is dropped.
+/// [`folder::list_media`] gives it, dot files included) after every burst of
+/// changes. Watching stops when the returned watcher is dropped.
 pub fn watch(
     dir: &Path,
     on_change: impl Fn(Result<Vec<PathBuf>, String>) + Send + 'static,
@@ -50,7 +50,7 @@ pub fn watch(
                     Err(RecvTimeoutError::Disconnected) => return,
                 }
             }
-            on_change(folder::list_media(&dir).map_err(|e| e.to_string()));
+            on_change(folder::list_media(&dir, true).map_err(|e| e.to_string()));
         }
     });
     Ok(watcher)
