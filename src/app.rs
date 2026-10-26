@@ -10,7 +10,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use crate::clipboard::Clipboard;
+use crate::clipboard::{self, Clipboard};
 use crate::core::{Command, Core, Event, Export, Region, Screen, Shape};
 use crate::decode::DecodedImage;
 use crate::geometry::{self, Geometry};
@@ -150,8 +150,8 @@ const THUMBNAIL_THREADS: usize = 4;
 
 /// One copy to the clipboard.
 enum CopyJob {
-    /// One `c`: the file and its pixels as shown.
-    Shown(PathBuf, DecodedImage, Rotation, Vec<Shape>),
+    /// One `c`: the file, if any, and its pixels as shown.
+    Shown(Option<PathBuf>, DecodedImage, Rotation, Vec<Shape>),
     /// The pixels of an export, without a file.
     Export(DecodedImage, Rotation, Vec<Shape>, Region, Export),
     /// Only these pixels, without a file.
@@ -548,8 +548,11 @@ impl Worker {
                 for job in inbox {
                     let result = match job {
                         CopyJob::Shown(path, image, rotation, shapes) => {
-                            annotate::render(&image, &shapes)
-                                .and_then(|image| clipboard.copy(&path, &image, rotation))
+                            annotate::render(&image, &shapes).and_then(|image| match &path {
+                                Some(path) => clipboard.copy(path, &image, rotation),
+                                None => clipboard::turned(&image, rotation)
+                                    .and_then(|image| clipboard.copy_pixels(&image)),
+                            })
                         }
                         CopyJob::Export(image, rotation, shapes, area, export) => {
                             annotate::exported(&image, rotation, &shapes, area, &export)

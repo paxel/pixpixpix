@@ -607,7 +607,7 @@ impl Core {
         }
         if let Some(Ok(image)) = self.cache.get(&path) {
             commands.push(Command::Copy {
-                path: path.clone(),
+                path: Some(path.clone()),
                 image: image.clone(),
                 rotation: Rotation::None,
                 shapes: Vec::new(),
@@ -619,6 +619,12 @@ impl Core {
         }
         self.gallery.copying = Some(path);
         commands
+    }
+
+    /// Cancels the decode of `path` the image view no longer needs, unless
+    /// `c` waits for it.
+    pub(super) fn cancel_decode(&self, path: PathBuf) -> Option<Command> {
+        (self.gallery.copying.as_ref() != Some(&path)).then_some(Command::CancelDecode(path))
     }
 
     /// The decode `c` waits for arrived: the image goes to the clipboard, or
@@ -634,7 +640,7 @@ impl Core {
         self.gallery.copying = None;
         match result {
             Ok(image) => vec![Command::Copy {
-                path: path.to_path_buf(),
+                path: Some(path.to_path_buf()),
                 image: image.clone(),
                 rotation: Rotation::None,
                 shapes: Vec::new(),

@@ -221,7 +221,7 @@ fn c_copies_the_image_shown() {
     assert_eq!(
         press(&mut core, Key::C),
         [Command::Copy {
-            path: p("a.tiff"),
+            path: Some(p("a.tiff")),
             image: gray(1),
             rotation: Rotation::None,
             shapes: Vec::new(),

@@ -274,7 +274,7 @@ fn c_copies_the_frame_shown() {
     assert_eq!(
         commands,
         [Command::Copy {
-            path: p("a.gif"),
+            path: Some(p("a.gif")),
             image: gray(1),
             rotation: Rotation::None,
             shapes: Vec::new(),

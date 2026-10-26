@@ -761,7 +761,7 @@ fn c_reaches_the_core_and_the_outcome_shows_in_the_key_line() {
             path,
             rotation: pixpixpix::rotate::Rotation::Right,
             ..
-        }) if path == Path::new("/p/a.jpg")
+        }) if path.as_deref() == Some(Path::new("/p/a.jpg"))
     ));
     h.state_mut().core.handle(Event::Copied(Ok(())));
     h.run();
@@ -1206,6 +1206,35 @@ fn ctrl_wheel_over_the_overview_resizes_the_thumbnails() {
     });
     h.run();
     assert_eq!(h.state().core.view().settings.thumbnail_size, 200);
+}
+
+#[test]
+fn a_touchpad_steps_the_tiles_once_per_50_points_of_ctrl_scroll() {
+    let (mut h, scan) = overview_open();
+    overview_section(&mut h, scan.unwrap(), "/p", &["/p/a.jpg".into()]);
+    h.hover_at(egui::pos2(400.0, 300.0));
+    let mut scroll = |y: f32| {
+        h.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, y),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::COMMAND,
+        });
+        h.run();
+        h.state().core.view().settings.thumbnail_size
+    };
+    // 45 points: not a step yet.
+    for _ in 0..9 {
+        assert_eq!(scroll(5.0), 160);
+    }
+    assert_eq!(scroll(5.0), 200);
+    for _ in 0..9 {
+        assert_eq!(scroll(5.0), 200);
+    }
+    assert_eq!(scroll(5.0), 256);
+    // Turning back starts counting afresh.
+    assert_eq!(scroll(-30.0), 256);
+    assert_eq!(scroll(-30.0), 200);
 }
 
 #[test]

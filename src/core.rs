@@ -346,9 +346,10 @@ pub enum Command {
     /// Move the file to the system trash, answered by [`Event::Trashed`].
     Trash(PathBuf),
     /// Put the file and its pixels, with `shapes` drawn into them and turned
-    /// by `rotation`, on the clipboard, answered by [`Event::Copied`].
+    /// by `rotation`, on the clipboard, answered by [`Event::Copied`]. Without
+    /// a file only the pixels go: an edited video frame is not the video.
     Copy {
-        path: PathBuf,
+        path: Option<PathBuf>,
         image: DecodedImage,
         rotation: Rotation,
         shapes: Vec<Shape>,
@@ -2239,7 +2240,7 @@ impl Core {
         let mut commands: Vec<Command> = gone
             .into_values()
             .filter_map(|nav| match nav.state {
-                NavState::Decoding(path) => Some(Command::CancelDecode(path)),
+                NavState::Decoding(path) => self.cancel_decode(path),
                 _ => None,
             })
             .collect();
@@ -2562,7 +2563,8 @@ impl Core {
         }
     }
 
-    /// Keys of the dir column; moving in it ends the one-shot actions first.
+    /// Keys of the dir column; moving the highlight aborts the search,
+    /// leaving the folder ends both one-shot actions first.
     fn dir_key(&mut self, key: Key) -> Vec<Command> {
         let mut commands = match key {
             Key::Period => {
@@ -2570,13 +2572,10 @@ impl Core {
                 return self.set_dots(dots);
             }
             Key::R => return self.start_search(),
-            Key::Up
-            | Key::Down
-            | Key::Left
-            | Key::Right
-            | Key::Enter
-            | Key::Escape
-            | Key::Backspace => self.reset_one_shot(),
+            Key::Up | Key::Down => self.abort_search(),
+            Key::Left | Key::Right | Key::Enter | Key::Escape | Key::Backspace => {
+                self.reset_one_shot()
+            }
             _ => Vec::new(),
         };
         commands.extend(self.move_in_column(key));
@@ -2687,7 +2686,7 @@ impl Core {
         }
         let mut commands: Vec<Command> = std::mem::take(&mut self.decoding)
             .into_iter()
-            .map(Command::CancelDecode)
+            .filter_map(|path| self.cancel_decode(path))
             .collect();
         self.cache.clear();
         self.files.clear();
@@ -2818,7 +2817,7 @@ impl Core {
             .map(|e| e.shapes.clone())
             .unwrap_or_default();
         let command = Command::Copy {
-            path: path.clone(),
+            path: copied_file(path, &shapes),
             image: image.clone(),
             rotation: self.rotation,
             shapes,
@@ -3126,7 +3125,10 @@ impl Core {
                 .into_iter()
                 .partition(|p| window.contains(p));
         self.decoding = keep;
-        let mut commands: Vec<Command> = cancel.into_iter().map(Command::CancelDecode).collect();
+        let mut commands: Vec<Command> = cancel
+            .into_iter()
+            .filter_map(|path| self.cancel_decode(path))
+            .collect();
         if !matches!(self.screen, Screen::Loading { .. }) {
             for path in self.neighbours() {
                 if !self.cache.contains_key(&path) && self.decoding.insert(path.clone()) {
@@ -3156,6 +3158,13 @@ impl Core {
 /// The message for a folder that cannot be read.
 fn cannot_read(dir: &Path, message: &str) -> String {
     format!("Cannot read {}: {message}", dir.display())
+}
+
+/// The file a copy of `path` with `shapes` drawn in puts on the clipboard
+/// beside the pixels: none for an edited video frame, whose pixels the video
+/// file does not hold.
+fn copied_file(path: &Path, shapes: &[Shape]) -> Option<PathBuf> {
+    (shapes.is_empty() || !folder::is_video(path)).then(|| path.to_path_buf())
 }
 
 fn screen(path: &Path, result: Result<DecodedImage, String>) -> Screen {

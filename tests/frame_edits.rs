@@ -254,3 +254,26 @@ fn an_export_of_a_frame_offers_no_overwrite() {
     assert!(dialog.frame);
     assert_eq!(dialog.name, "clip_64x32.jpg");
 }
+
+#[test]
+fn an_edited_frame_is_copied_without_the_video_file() {
+    let mut core = edited();
+    assert!(matches!(
+        press(&mut core, Key::C).as_slice(),
+        [Command::Copy { path: None, .. }]
+    ));
+    press(&mut core, Key::Enter);
+    assert!(matches!(
+        core.handle(Event::SaveChoice(SaveChoice::Copy)).as_slice(),
+        [Command::Copy { path: None, .. }]
+    ));
+}
+
+#[test]
+fn an_unedited_frame_is_copied_with_the_video_file() {
+    let mut core = browsing("clip.mp4", &["clip.mp4"]);
+    assert!(matches!(
+        press(&mut core, Key::C).as_slice(),
+        [Command::Copy { path: Some(path), .. }] if *path == p("clip.mp4")
+    ));
+}

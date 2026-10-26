@@ -626,7 +626,7 @@ fn c_copies_a_cached_file_at_once_and_decodes_another_first() {
     assert_eq!(
         commands,
         [Command::Copy {
-            path: p("b.jpg"),
+            path: Some(p("b.jpg")),
             image: image(),
             rotation: Rotation::None,
             shapes: Vec::new(),
@@ -643,7 +643,7 @@ fn c_copies_a_cached_file_at_once_and_decodes_another_first() {
     assert_eq!(
         commands,
         [Command::Copy {
-            path: c.clone(),
+            path: Some(c.clone()),
             image: image(),
             rotation: Rotation::None,
             shapes: Vec::new(),
@@ -879,4 +879,40 @@ fn a_late_thumbnail_of_the_old_size_waits_for_the_new_one() {
         result: Ok(image()),
     });
     assert!(overview(&core).unwrap().tiles[0].thumbnail.is_some());
+}
+
+#[test]
+fn c_on_a_file_the_image_view_decodes_copies_even_when_the_view_drops_it() {
+    let (mut core, _) = Core::start(Ok(p("a.jpg")));
+    decoded(&mut core, p("a.jpg"));
+    core.handle(Event::FirstFrameShown);
+    let files = ["a.jpg", "b.jpg", "c.jpg", "d.jpg", "e.jpg", "f.jpg"];
+    core.handle(Event::FolderListed {
+        dir: PathBuf::from("/p"),
+        result: Ok(files.iter().map(|n| p(n)).collect()),
+    });
+    let scan = scan_of(&press(&mut core, Key::G)).unwrap().0;
+    section(&mut core, scan, "/p", &["/p/a.jpg", "/p/f.jpg"]);
+    press(&mut core, Key::Right);
+    assert_eq!(press(&mut core, Key::C), []);
+
+    // A new file pushes f.jpg out of the image view's cache.
+    let commands = core.handle(Event::FolderListed {
+        dir: PathBuf::from("/p"),
+        result: Ok(["a.jpg", "a2.jpg"]
+            .iter()
+            .chain(&files[1..])
+            .map(|n| p(n))
+            .collect()),
+    });
+    assert!(!commands.contains(&Command::CancelDecode(p("f.jpg"))));
+    assert_eq!(
+        decoded(&mut core, p("f.jpg")),
+        [Command::Copy {
+            path: Some(p("f.jpg")),
+            image: image(),
+            rotation: Rotation::None,
+            shapes: Vec::new(),
+        }]
+    );
 }

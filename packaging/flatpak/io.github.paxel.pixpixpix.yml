@@ -21,7 +21,8 @@ rename-icon: pixpixpix
 finish-args:
   - --share=ipc
   - --socket=wayland
-  - --socket=fallback-x11
+  # The window is native on Wayland; the clipboard needs X11 (XWayland) too.
+  - --socket=x11
   - --device=dri
   - --socket=pulseaudio
   - --filesystem=home

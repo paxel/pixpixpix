@@ -184,10 +184,8 @@ fn dot_again_hides_them_and_moves_off_a_dot_file() {
 }
 
 #[test]
-fn any_navigation_resets_dots_and_aborts_the_search() {
+fn leaving_the_folder_resets_dots_and_aborts_the_search() {
     for key in [
-        Key::Up,
-        Key::Down,
         Key::Left,
         Key::Right,
         Key::Enter,
@@ -210,11 +208,23 @@ fn any_navigation_resets_dots_and_aborts_the_search() {
 }
 
 #[test]
-fn moving_the_highlight_hides_dot_folders_again() {
-    let mut core = column_open();
-    press(&mut core, Key::Period);
-    press(&mut core, Key::Down);
-    assert_eq!(column_dirs(&core), paths(&["/p/x", "/p/y"]));
+fn moving_the_highlight_aborts_the_search_but_keeps_dot_folders() {
+    for key in [Key::Up, Key::Down] {
+        let mut core = column_open();
+        press(&mut core, Key::Period);
+        press(&mut core, Key::R);
+        assert_eq!(
+            press(&mut core, key).first(),
+            Some(&Command::CancelSearch),
+            "{key:?}"
+        );
+        assert_eq!(
+            column_dirs(&core),
+            paths(&["/p/.git", "/p/x", "/p/y"]),
+            "{key:?}"
+        );
+        assert_eq!(press(&mut core, Key::R), [search("/p", true)], "{key:?}");
+    }
 }
 
 #[test]

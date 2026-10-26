@@ -18,6 +18,8 @@ const GAP: f32 = 10.0;
 const HEADER_HEIGHT: f32 = 30.0;
 /// A tile whose thumbnail is not decoded, or a video without one.
 const PLACEHOLDER: Color32 = Color32::from_rgb(0x2a, 0x2a, 0x30);
+/// The points a touchpad scrolls with `Ctrl` held for one thumbnail size.
+const TOUCHPAD_STEP: f32 = 50.0;
 
 /// The grid of tiles of `side` points in a width of `columns` tiles.
 #[derive(Clone, Copy)]
@@ -72,18 +74,41 @@ pub(super) fn show_overview(
     textures: &mut Textures,
     events: &mut Vec<Event>,
 ) {
-    // One step per turn of the wheel; egui's zoom is smoothed over frames.
-    let turns: Vec<bool> = ui.input(|i| {
-        i.events
-            .iter()
-            .filter_map(|e| match e {
-                egui::Event::MouseWheel {
-                    delta, modifiers, ..
-                } if modifiers.command && delta.y != 0.0 => Some(delta.y > 0.0),
-                _ => None,
-            })
-            .collect()
+    // One step per notch of a wheel, or per `TOUCHPAD_STEP` points a touchpad
+    // scrolls; egui's zoom is smoothed over frames.
+    let id = egui::Id::new("thumbnail touchpad");
+    let mut scrolled: f32 = ui.data(|d| d.get_temp(id)).unwrap_or_default();
+    let mut turns = Vec::new();
+    ui.input(|i| {
+        for event in &i.events {
+            let egui::Event::MouseWheel {
+                unit,
+                delta,
+                modifiers,
+                ..
+            } = event
+            else {
+                continue;
+            };
+            if !modifiers.command || delta.y == 0.0 {
+                continue;
+            }
+            if *unit != egui::MouseWheelUnit::Point {
+                scrolled = 0.0;
+                turns.push(delta.y > 0.0);
+                continue;
+            }
+            if scrolled.signum() != delta.y.signum() {
+                scrolled = 0.0;
+            }
+            scrolled += delta.y;
+            while scrolled.abs() >= TOUCHPAD_STEP {
+                turns.push(scrolled > 0.0);
+                scrolled -= TOUCHPAD_STEP.copysign(scrolled);
+            }
+        }
     });
+    ui.data_mut(|d| d.insert_temp(id, scrolled));
     events.extend(
         turns
             .into_iter()

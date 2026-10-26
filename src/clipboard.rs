@@ -98,7 +98,8 @@ impl Clipboard {
     }
 
     /// Puts only `image` on the clipboard, without a file: the pixels of an
-    /// export. The error is meant to be shown to the user as is.
+    /// export or an edited video frame. The error is meant to be shown to the
+    /// user as is.
     pub fn copy_pixels(&mut self, image: &DecodedImage) -> Result<(), String> {
         png(image)
             .map(|png| Content {
@@ -107,7 +108,7 @@ impl Clipboard {
                 gnome_files: String::new(),
             })
             .and_then(|content| self.set(content))
-            .map_err(|e| format!("Cannot copy the export: {e}"))
+            .map_err(|e| format!("Cannot copy the image: {e}"))
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]

@@ -44,7 +44,7 @@ fn browsing(start: &str, names: &[&str]) -> Core {
 
 fn copy(name: &str, rotation: Rotation) -> Command {
     Command::Copy {
-        path: p(name),
+        path: Some(p(name)),
         image: image(),
         rotation,
         shapes: Vec::new(),
