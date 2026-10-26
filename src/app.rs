@@ -86,6 +86,7 @@ pub fn run() -> ExitCode {
 fn title(view: &crate::core::View) -> String {
     let path = match &view.screen {
         Screen::Loading { path } | Screen::Image { path, .. } => Some(path),
+        Screen::Listing { dir } => Some(dir),
         Screen::Error { path, .. } => path.as_ref(),
     };
     match path {
@@ -128,6 +129,13 @@ impl Worker {
                 self.run(move || {
                     let result = folder::list_media(&dir).map_err(|e| e.to_string());
                     Some(Event::FolderListed { dir, result })
+                });
+            }
+            Command::ListDirs(dir) => {
+                let dir = dir.clone();
+                self.run(move || {
+                    let result = folder::list_dirs(&dir).map_err(|e| e.to_string());
+                    Some(Event::DirsListed { dir, result })
                 });
             }
             Command::WatchFolder(dir) => {
@@ -197,7 +205,8 @@ impl App {
                 Command::Decode(_)
                 | Command::CancelDecode(_)
                 | Command::ListFolder(_)
-                | Command::WatchFolder(_) => {
+                | Command::WatchFolder(_)
+                | Command::ListDirs(_) => {
                     self.worker.spawn(&command);
                 }
             }

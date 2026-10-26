@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 
 use egui::{Color32, ColorImage, RichText, TextureHandle, TextureOptions};
 
-use crate::core::{Event, Key, KeyLine, KeyPress, Notice, Points, Screen, Thumb, View, Zoom};
+use crate::core::{
+    DirColumn, Event, Focus, Key, KeyLine, KeyPress, Notice, Points, Screen, Thumb, View, Zoom,
+};
 use crate::decode::DecodedImage;
 use crate::folder;
 
@@ -17,6 +19,13 @@ const DIM_TEXT: Color32 = Color32::from_rgb(0x9a, 0x9a, 0xa0);
 const NOTICE_TEXT: Color32 = Color32::from_rgb(0xff, 0xd5, 0x80);
 const CURRENT_MARK: Color32 = Color32::from_rgb(0xff, 0xd5, 0x80);
 const BROKEN_TILE: Color32 = Color32::from_rgb(0x3a, 0x1e, 0x1c);
+/// The highlighted folder of the focused dir column, and its text.
+const HIGHLIGHT: Color32 = Color32::from_rgb(0xff, 0xd5, 0x80);
+const HIGHLIGHT_TEXT: Color32 = Color32::from_rgb(0x12, 0x12, 0x14);
+/// The highlighted folder while the image view has the focus.
+const HIGHLIGHT_UNFOCUSED: Color32 = Color32::from_rgb(0x3a, 0x3a, 0x40);
+/// Width of the dir column.
+const DIR_COLUMN_WIDTH: f32 = 220.0;
 /// Height of the band's thumbnails.
 const THUMB_HEIGHT: f32 = 64.0;
 /// Below the error of a file that failed to decode.
@@ -87,6 +96,12 @@ fn map_key(key: egui::Key) -> Option<Key> {
         egui::Key::Minus => Key::Minus,
         egui::Key::Num0 => Key::Num0,
         egui::Key::Num1 => Key::Num1,
+        egui::Key::N => Key::N,
+        egui::Key::Tab => Key::Tab,
+        egui::Key::ArrowUp => Key::Up,
+        egui::Key::ArrowDown => Key::Down,
+        egui::Key::Enter => Key::Enter,
+        egui::Key::Backspace => Key::Backspace,
         _ => return None,
     })
 }
@@ -110,6 +125,15 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
             .frame(egui::Frame::NONE.fill(BACKGROUND).inner_margin(6.0))
             .show(ui, |ui| show_band(ui, &view.band, textures, &mut events));
     }
+    if let Some(column) = &view.dir_column {
+        egui::Panel::left("dir_column")
+            .resizable(false)
+            .exact_size(DIR_COLUMN_WIDTH)
+            .frame(egui::Frame::NONE.fill(BACKGROUND).inner_margin(6.0))
+            .show(ui, |ui| {
+                show_dir_column(ui, column, view.focus == Focus::Dirs)
+            });
+    }
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE.fill(BACKGROUND))
         .show(ui, |ui| {
@@ -122,7 +146,7 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
                 events.push(Event::Viewport(viewport));
             }
             match &view.screen {
-                Screen::Loading { .. } => {}
+                Screen::Loading { .. } | Screen::Listing { .. } => {}
                 Screen::Image { path, image } => {
                     show_image(ui, path, image, view.zoom, textures, &mut events);
                 }
@@ -189,6 +213,62 @@ fn show_band(ui: &mut egui::Ui, band: &[Thumb], textures: &mut Textures, events:
             }
         }
     });
+}
+
+/// The current folder's name over its subfolders, the highlighted one painted
+/// brighter while the column has the focus.
+fn show_dir_column(ui: &mut egui::Ui, column: &DirColumn, focused: bool) {
+    let header = match folder::file_name(&column.dir) {
+        name if name.is_empty() => column.dir.display().to_string(),
+        name => name,
+    };
+    ui.label(RichText::new(header).color(TEXT).strong().size(15.0));
+    ui.add_space(4.0);
+    if let Some(error) = &column.error {
+        ui.label(RichText::new(error).color(ERROR_TEXT));
+    }
+    egui::ScrollArea::vertical()
+        .auto_shrink(false)
+        .show(ui, |ui| {
+            let font = egui::FontId::proportional(14.0);
+            let row_height = ui.ctx().fonts_mut(|f| f.row_height(&font)) + 6.0;
+            for (index, dir) in column.dirs.iter().enumerate() {
+                let name = folder::file_name(dir);
+                let highlighted = column.highlight == Some(index);
+                let size = egui::vec2(ui.available_width(), row_height);
+                let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
+                let fg = match (highlighted, focused) {
+                    (true, true) => {
+                        ui.painter().rect_filled(rect, 3.0, HIGHLIGHT);
+                        HIGHLIGHT_TEXT
+                    }
+                    (true, false) => {
+                        ui.painter().rect_filled(rect, 3.0, HIGHLIGHT_UNFOCUSED);
+                        TEXT
+                    }
+                    (false, _) => TEXT,
+                };
+                ui.painter().text(
+                    egui::pos2(rect.min.x + 6.0, rect.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    &name,
+                    font.clone(),
+                    fg,
+                );
+                response.widget_info(|| {
+                    egui::WidgetInfo::selected(
+                        egui::WidgetType::SelectableLabel,
+                        true,
+                        highlighted,
+                        name.clone(),
+                    )
+                });
+                // Only when needed: scrolling every frame never settles.
+                if highlighted && !ui.clip_rect().contains_rect(rect) {
+                    ui.scroll_to_rect(rect, None);
+                }
+            }
+        });
 }
 
 fn show_key_line(ui: &mut egui::Ui, key_line: &KeyLine, folder_error: Option<&str>) {

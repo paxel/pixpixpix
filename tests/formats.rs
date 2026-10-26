@@ -131,6 +131,29 @@ fn folder_lists_media_in_natural_order_without_dot_files() {
 }
 
 #[test]
+fn subfolders_are_listed_in_natural_order_without_dot_folders_or_files() {
+    let dir = tempfile::tempdir().unwrap();
+    for name in ["day10", "Day2", "day1", ".cache"] {
+        std::fs::create_dir(dir.path().join(name)).unwrap();
+    }
+    std::fs::write(dir.path().join("photo.jpg"), b"x").unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(elsewhere.path(), dir.path().join("linked")).unwrap();
+    let names: Vec<String> = folder::list_dirs(dir.path())
+        .unwrap()
+        .iter()
+        .map(|p| folder::file_name(p))
+        .collect();
+    let expected: &[&str] = if cfg!(unix) {
+        &["day1", "Day2", "day10", "linked"]
+    } else {
+        &["day1", "Day2", "day10"]
+    };
+    assert_eq!(names, expected);
+}
+
+#[test]
 fn start_with_a_file_uses_it_without_reading_the_folder() {
     let file = fixture("sample.png");
     assert_eq!(startup::resolve(Some(&file), Path::new("/")), Ok(file));

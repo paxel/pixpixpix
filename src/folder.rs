@@ -103,6 +103,20 @@ pub fn list_media(dir: &Path) -> io::Result<Vec<PathBuf>> {
     Ok(files)
 }
 
+/// The subfolders directly in `dir`, in natural order. Dot folders are skipped;
+/// symlinks to folders count as folders.
+pub fn list_dirs(dir: &Path) -> io::Result<Vec<PathBuf>> {
+    let mut dirs = Vec::new();
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        if !file_name(&path).starts_with('.') && path.is_dir() {
+            dirs.push(path);
+        }
+    }
+    sort_natural(&mut dirs);
+    Ok(dirs)
+}
+
 /// The first media file of `dir` in natural order, if any.
 pub fn first_media(dir: &Path) -> io::Result<Option<PathBuf>> {
     Ok(list_media(dir)?.into_iter().next())

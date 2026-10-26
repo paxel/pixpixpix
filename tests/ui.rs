@@ -309,3 +309,77 @@ fn an_unreadable_folder_is_shown_in_the_key_line() {
     h.run();
     h.get_by_label("Cannot read the folder: permission denied");
 }
+
+/// [`browsing`] with the column opened by `n` and listing `holidays` and
+/// `work`.
+fn column_open() -> Harness<'static, State> {
+    let mut h = harness(browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]));
+    h.run();
+    h.key_press(egui::Key::N);
+    h.run();
+    assert_eq!(h.state().commands, [Command::ListDirs(PathBuf::from("/p"))]);
+    h.state_mut().core.handle(Event::DirsListed {
+        dir: PathBuf::from("/p"),
+        result: Ok(vec![PathBuf::from("/p/holidays"), PathBuf::from("/p/work")]),
+    });
+    h.run();
+    h
+}
+
+#[test]
+fn n_shows_the_folder_and_its_subfolders_with_the_first_highlighted() {
+    let mut h = column_open();
+    h.get_by_label("p");
+    let toggled = |h: &Harness<'_, State>, name: &str| {
+        h.get_by_role_and_label(Role::Button, name)
+            .accesskit_node()
+            .toggled()
+    };
+    assert_eq!(toggled(&h, "holidays"), Some(Toggled::True));
+    assert_eq!(toggled(&h, "work"), Some(Toggled::False));
+    h.key_press(egui::Key::ArrowDown);
+    h.run();
+    assert_eq!(toggled(&h, "work"), Some(Toggled::True));
+    h.key_press(egui::Key::N);
+    h.run();
+    assert!(h.query_by_label("holidays").is_none());
+}
+
+#[test]
+fn enter_opens_the_highlighted_folder() {
+    let mut h = column_open();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    assert_eq!(
+        h.state().core.view().screen,
+        Screen::Listing {
+            dir: PathBuf::from("/p/holidays")
+        }
+    );
+    h.get_by_label("holidays");
+}
+
+#[test]
+fn backspace_goes_to_the_parent() {
+    let mut h = column_open();
+    h.key_press(egui::Key::Backspace);
+    h.run();
+    assert_eq!(
+        h.state().core.view().screen,
+        Screen::Listing {
+            dir: PathBuf::from("/")
+        }
+    );
+    h.get_by_label("/");
+}
+
+#[test]
+fn tab_switches_the_key_line_between_column_and_image_view() {
+    let mut h = column_open();
+    h.get_by_label("Up/Down");
+    assert!(h.query_by_label("Left/Right").is_none());
+    h.key_press(egui::Key::Tab);
+    h.run();
+    h.get_by_label("Left/Right");
+    assert!(h.query_by_label("Up/Down").is_none());
+}

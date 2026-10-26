@@ -27,6 +27,12 @@ pub enum Key {
     Minus,
     Num0,
     Num1,
+    N,
+    Tab,
+    Up,
+    Down,
+    Enter,
+    Backspace,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,6 +97,12 @@ pub enum Event {
     },
     /// The image was dragged by this many points.
     Pan(Points),
+    /// A listing asked for with [`Command::ListDirs`] finished; the folders are
+    /// in natural order.
+    DirsListed {
+        dir: PathBuf,
+        result: Result<Vec<PathBuf>, String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,6 +116,8 @@ pub enum Command {
     /// Watch a folder, replacing the folder watched so far, and answer every
     /// change in it with a fresh [`Event::FolderListed`].
     WatchFolder(PathBuf),
+    /// List the subfolders of a folder, answered by [`Event::DirsListed`].
+    ListDirs(PathBuf),
     SetFullscreen(bool),
     Quit,
 }
@@ -114,6 +128,10 @@ pub enum Screen {
     /// Waiting for the decode of `path`.
     Loading {
         path: PathBuf,
+    },
+    /// Waiting for the listing of the folder just entered.
+    Listing {
+        dir: PathBuf,
     },
     Image {
         path: PathBuf,
@@ -171,6 +189,43 @@ const IMAGE_VIEW_KEYS: &[KeyHint] = &[
         action: "100 %",
     },
     KeyHint {
+        keys: "N",
+        action: "folders",
+    },
+];
+
+/// Image view keys while the dir column is open.
+const IMAGE_VIEW_TAB_KEY: KeyHint = KeyHint {
+    keys: "Tab",
+    action: "folders",
+};
+
+const DIR_COLUMN_KEYS: &[KeyHint] = &[
+    KeyHint {
+        keys: "Up/Down",
+        action: "select",
+    },
+    KeyHint {
+        keys: "Left/Esc/Backspace",
+        action: "parent",
+    },
+    KeyHint {
+        keys: "Right/Enter",
+        action: "open",
+    },
+    KeyHint {
+        keys: "N",
+        action: "close",
+    },
+    KeyHint {
+        keys: "Tab",
+        action: "image view",
+    },
+];
+
+/// Keys of every focus area, listed last.
+const GLOBAL_KEYS: &[KeyHint] = &[
+    KeyHint {
         keys: "F",
         action: "fullscreen",
     },
@@ -179,6 +234,39 @@ const IMAGE_VIEW_KEYS: &[KeyHint] = &[
         action: "quit",
     },
 ];
+
+/// The area keys go to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Focus {
+    Dirs,
+    Image,
+}
+
+/// The keys the key line lists for `focus`.
+fn focus_keys(focus: Focus, column_open: bool) -> Vec<KeyHint> {
+    let mut keys = match focus {
+        Focus::Dirs => DIR_COLUMN_KEYS.to_vec(),
+        Focus::Image => IMAGE_VIEW_KEYS.to_vec(),
+    };
+    if focus == Focus::Image && column_open {
+        keys.push(IMAGE_VIEW_TAB_KEY);
+    }
+    keys.extend_from_slice(GLOBAL_KEYS);
+    keys
+}
+
+/// The column on the left listing the subfolders of the current folder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirColumn {
+    /// The current folder.
+    pub dir: PathBuf,
+    /// Its subfolders in natural order; empty until listed.
+    pub dirs: Vec<PathBuf>,
+    /// The index of the highlighted subfolder, if there is one.
+    pub highlight: Option<usize>,
+    /// Why the subfolders could not be listed.
+    pub error: Option<String>,
+}
 
 /// One file of the band.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -306,6 +394,9 @@ pub struct View {
     pub viewport: Points,
     /// Why the folder could not be read the last time it was listed.
     pub folder_error: Option<String>,
+    pub focus: Focus,
+    /// Absent while the column is closed.
+    pub dir_column: Option<DirColumn>,
 }
 
 pub struct Core {
@@ -325,6 +416,9 @@ pub struct Core {
     cache: BTreeMap<PathBuf, Result<DecodedImage, String>>,
     /// Decodes asked for and neither answered nor cancelled yet.
     decoding: BTreeSet<PathBuf>,
+    /// The subfolder to highlight once the dir column is listed: the folder
+    /// just left by going up.
+    came_from: Option<PathBuf>,
 }
 
 impl Core {
@@ -352,12 +446,14 @@ impl Core {
                 band: Vec::new(),
                 fullscreen: false,
                 key_line: KeyLine {
-                    keys: IMAGE_VIEW_KEYS.to_vec(),
+                    keys: focus_keys(Focus::Image, false),
                     notice: None,
                 },
                 zoom: Zoom::FIT,
                 viewport: Points::default(),
                 folder_error: None,
+                focus: Focus::Image,
+                dir_column: None,
             },
             first_frame_shown: false,
             current,
@@ -366,6 +462,7 @@ impl Core {
             cache_per_side: DEFAULT_CACHE_PER_SIDE,
             cache: BTreeMap::new(),
             decoding,
+            came_from: None,
         };
         (core, commands)
     }
@@ -395,6 +492,10 @@ impl Core {
             }
             Event::Pan(delta) => {
                 self.pan(delta);
+                Vec::new()
+            }
+            Event::DirsListed { dir, result } => {
+                self.dirs_listed(&dir, result);
                 Vec::new()
             }
         }
@@ -468,6 +569,7 @@ impl Core {
         }
     }
 
+    /// Keys of every focus area first, then those of the focused one.
     fn key(&mut self, key: KeyPress) -> Vec<Command> {
         match (key.key, key.command) {
             (Key::Q, true) => vec![Command::Quit],
@@ -475,21 +577,165 @@ impl Core {
                 self.view.fullscreen = !self.view.fullscreen;
                 vec![Command::SetFullscreen(self.view.fullscreen)]
             }
-            (Key::Left, false) => self.step(Step::Previous),
-            (Key::Right, false) => self.step(Step::Next),
-            (Key::Plus, false) => {
+            (Key::N, false) => self.toggle_column(),
+            (Key::Tab, false) => {
+                if self.view.dir_column.is_some() {
+                    let focus = match self.view.focus {
+                        Focus::Dirs => Focus::Image,
+                        Focus::Image => Focus::Dirs,
+                    };
+                    self.set_focus(focus);
+                }
+                Vec::new()
+            }
+            (_, true) => Vec::new(),
+            _ => match self.view.focus {
+                Focus::Dirs => self.dir_key(key.key),
+                Focus::Image => self.image_key(key.key),
+            },
+        }
+    }
+
+    fn set_focus(&mut self, focus: Focus) {
+        self.view.focus = focus;
+        self.view.key_line.keys = focus_keys(focus, self.view.dir_column.is_some());
+    }
+
+    /// Opens the column on the current folder, focused, or closes it and
+    /// returns focus to the image view. Nothing to list before the folder is
+    /// known.
+    fn toggle_column(&mut self) -> Vec<Command> {
+        if self.view.dir_column.take().is_some() {
+            self.set_focus(Focus::Image);
+            return Vec::new();
+        }
+        let Some(dir) = self.dir.clone() else {
+            return Vec::new();
+        };
+        self.came_from = None;
+        self.view.dir_column = Some(DirColumn {
+            dir: dir.clone(),
+            dirs: Vec::new(),
+            highlight: None,
+            error: None,
+        });
+        self.set_focus(Focus::Dirs);
+        vec![Command::ListDirs(dir)]
+    }
+
+    fn dirs_listed(&mut self, dir: &Path, result: Result<Vec<PathBuf>, String>) {
+        let Some(column) = self.view.dir_column.as_mut().filter(|c| c.dir == dir) else {
+            return;
+        };
+        match result {
+            Ok(dirs) => {
+                let index = self
+                    .came_from
+                    .take()
+                    .and_then(|from| dirs.iter().position(|d| *d == from))
+                    .unwrap_or(0);
+                column.highlight = (index < dirs.len()).then_some(index);
+                column.dirs = dirs;
+                column.error = None;
+            }
+            Err(message) => {
+                column.dirs = Vec::new();
+                column.highlight = None;
+                column.error = Some(message);
+            }
+        }
+    }
+
+    fn dir_key(&mut self, key: Key) -> Vec<Command> {
+        let Some(column) = self.view.dir_column.as_mut() else {
+            return Vec::new();
+        };
+        match key {
+            Key::Up => {
+                if let Some(index) = column.highlight {
+                    column.highlight = Some(index.saturating_sub(1));
+                }
+                Vec::new()
+            }
+            Key::Down => {
+                if let Some(index) = column.highlight
+                    && let Some(next) = index.checked_add(1).filter(|i| *i < column.dirs.len())
+                {
+                    column.highlight = Some(next);
+                }
+                Vec::new()
+            }
+            Key::Left | Key::Escape | Key::Backspace => {
+                let current = column.dir.clone();
+                match current.parent() {
+                    Some(parent) => {
+                        let parent = parent.to_path_buf();
+                        let commands = self.enter(parent);
+                        self.came_from = Some(current);
+                        commands
+                    }
+                    None => Vec::new(),
+                }
+            }
+            Key::Right | Key::Enter => {
+                let target = column.highlight.and_then(|i| column.dirs.get(i)).cloned();
+                match target {
+                    Some(dir) => self.enter(dir),
+                    None => Vec::new(),
+                }
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Makes `dir` the current folder, like a start there: all work of the old
+    /// folder is cancelled and dropped, and once it is listed its first file
+    /// is shown before any neighbour is decoded.
+    fn enter(&mut self, dir: PathBuf) -> Vec<Command> {
+        let mut commands: Vec<Command> = std::mem::take(&mut self.decoding)
+            .into_iter()
+            .map(Command::CancelDecode)
+            .collect();
+        self.cache.clear();
+        self.files.clear();
+        self.current = None;
+        self.came_from = None;
+        self.dir = Some(dir.clone());
+        self.view.screen = Screen::Listing { dir: dir.clone() };
+        self.view.key_line.notice = None;
+        self.view.folder_error = None;
+        self.view.dir_column = Some(DirColumn {
+            dir: dir.clone(),
+            dirs: Vec::new(),
+            highlight: None,
+            error: None,
+        });
+        commands.extend(self.refresh());
+        commands.extend([
+            Command::WatchFolder(dir.clone()),
+            Command::ListFolder(dir.clone()),
+            Command::ListDirs(dir),
+        ]);
+        commands
+    }
+
+    fn image_key(&mut self, key: Key) -> Vec<Command> {
+        match key {
+            Key::Left => self.step(Step::Previous),
+            Key::Right => self.step(Step::Next),
+            Key::Plus => {
                 self.zoom_by(KEY_ZOOM_STEP, Points::default());
                 Vec::new()
             }
-            (Key::Minus, false) => {
+            Key::Minus => {
                 self.zoom_by(KEY_ZOOM_STEP.recip(), Points::default());
                 Vec::new()
             }
-            (Key::Num0, false) => {
+            Key::Num0 => {
                 self.view.zoom = Zoom::FIT;
                 Vec::new()
             }
-            (Key::Num1, false) => {
+            Key::Num1 => {
                 self.view.zoom.scale = Scale::Exact(1.0);
                 Vec::new()
             }
