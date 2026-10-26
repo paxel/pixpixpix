@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use crate::decode::DecodedImage;
 use crate::folder::{self, Found};
+use crate::rotate::Rotation;
 use crate::settings::Settings;
 use crate::startup::NoFile;
 
@@ -44,6 +45,7 @@ pub enum Key {
     B,
     S,
     O,
+    L,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,6 +133,11 @@ pub enum Event {
     /// A [`Command::OpenExternally`] failed to start the program, or the
     /// program reported failure; the message says which and why.
     OpenFailed(String),
+    /// A [`Command::WriteRotation`] finished.
+    RotationWritten {
+        path: PathBuf,
+        result: Result<(), String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -166,6 +173,12 @@ pub enum Command {
     OpenExternally {
         path: PathBuf,
         app: Option<String>,
+    },
+    /// Turn the image in the file by `rotation` from how it is shown,
+    /// answered by [`Event::RotationWritten`].
+    WriteRotation {
+        path: PathBuf,
+        rotation: Rotation,
     },
     SetFullscreen(bool),
     Quit,
@@ -250,6 +263,14 @@ const IMAGE_VIEW_KEYS: &[KeyHint] = &[
     KeyHint {
         keys: "1",
         action: "100 %",
+    },
+    KeyHint {
+        keys: "L/R",
+        action: "rotate",
+    },
+    KeyHint {
+        keys: "Enter",
+        action: "write rotation",
     },
     KeyHint {
         keys: "O",
@@ -450,18 +471,25 @@ impl Zoom {
         center_y: 0.5,
     };
 
-    /// Screen points per image pixel for `image` in `viewport`.
-    fn factor(&self, image: &DecodedImage, viewport: Points) -> f32 {
+    /// Screen points per image pixel for an image of `size` in `viewport`.
+    fn factor(&self, size: Points, viewport: Points) -> f32 {
         match self.scale {
-            Scale::Fit => fit_scale(image, viewport),
+            Scale::Fit => fit_scale(size, viewport),
             Scale::Exact(scale) => scale,
         }
     }
 
-    pub fn placement(&self, image: &DecodedImage, viewport: Points) -> Placement {
-        let scale = self.factor(image, viewport);
-        let width = image.width as f32 * scale;
-        let height = image.height as f32 * scale;
+    /// Where `image` is drawn turned by `rotation`.
+    pub fn placement(
+        &self,
+        image: &DecodedImage,
+        rotation: Rotation,
+        viewport: Points,
+    ) -> Placement {
+        let size = shown_size(image, rotation);
+        let scale = self.factor(size, viewport);
+        let width = size.x * scale;
+        let height = size.y * scale;
         Placement {
             left: offset(width, viewport.x, self.center_x),
             top: offset(height, viewport.y, self.center_y),
@@ -471,30 +499,41 @@ impl Zoom {
     }
 
     /// The centre actually shown: axes the viewport fully shows are centred.
-    fn shown_center(&self, image: &DecodedImage, viewport: Points) -> (f32, f32) {
-        let scale = self.factor(image, viewport);
-        let shown = |size: u32, view: f32, center: f32| {
-            if size as f32 * scale <= view {
-                0.5
-            } else {
-                center
-            }
+    fn shown_center(&self, size: Points, viewport: Points) -> (f32, f32) {
+        let scale = self.factor(size, viewport);
+        let shown = |size: f32, view: f32, center: f32| {
+            if size * scale <= view { 0.5 } else { center }
         };
         (
-            shown(image.width, viewport.x, self.center_x),
-            shown(image.height, viewport.y, self.center_y),
+            shown(size.x, viewport.x, self.center_x),
+            shown(size.y, viewport.y, self.center_y),
         )
     }
 }
 
-/// The largest scale that fits `image` into `viewport`, at most 100 %.
-fn fit_scale(image: &DecodedImage, viewport: Points) -> f32 {
-    if image.width == 0 || image.height == 0 {
+/// The size of `image` in pixels as shown turned by `rotation`.
+fn shown_size(image: &DecodedImage, rotation: Rotation) -> Points {
+    let (width, height) = (image.width as f32, image.height as f32);
+    if rotation.sideways() {
+        Points {
+            x: height,
+            y: width,
+        }
+    } else {
+        Points {
+            x: width,
+            y: height,
+        }
+    }
+}
+
+/// The largest scale that fits an image of `size` into `viewport`, at most
+/// 100 %.
+fn fit_scale(size: Points, viewport: Points) -> f32 {
+    if size.x <= 0.0 || size.y <= 0.0 {
         return 0.0;
     }
-    (viewport.x / image.width as f32)
-        .min(viewport.y / image.height as f32)
-        .min(1.0)
+    (viewport.x / size.x).min(viewport.y / size.y).min(1.0)
 }
 
 /// Where an image side of `size` starts in a viewport side of `view`, with the
@@ -535,6 +574,10 @@ pub struct View {
     pub settings_error: Option<String>,
     /// Why the last `o` could not open the current file elsewhere.
     pub open_error: Option<String>,
+    /// The pending turn of the image shown, not yet written to its file.
+    pub rotation: Rotation,
+    /// Why the last rotation could not be written.
+    pub rotation_error: Option<String>,
 }
 
 pub struct Core {
@@ -580,6 +623,10 @@ pub struct Core {
     /// The highlighted file of the band while it has the focus; the current
     /// one when unset or no longer in the band.
     band_highlight: Option<PathBuf>,
+    /// The pending turn of the current file; dropped when it changes.
+    rotation: Rotation,
+    /// The file whose rotation is being written, until it is decoded again.
+    writing: Option<PathBuf>,
 }
 
 /// What the nav cache knows of a folder.
@@ -685,6 +732,8 @@ impl Core {
                 settings_open: false,
                 settings_error: None,
                 open_error: None,
+                rotation: Rotation::None,
+                rotation_error: None,
             },
             screen,
             band: Vec::new(),
@@ -703,6 +752,8 @@ impl Core {
             nav: BTreeMap::new(),
             band_from: Focus::Image,
             band_highlight: None,
+            rotation: Rotation::None,
+            writing: None,
         };
         (core, commands)
     }
@@ -716,7 +767,13 @@ impl Core {
     }
 
     pub fn handle(&mut self, event: Event) -> Vec<Command> {
+        let before = self.current.clone();
         let mut commands = self.dispatch(event);
+        // Leaving a file drops its pending rotation; nothing is written.
+        if self.current != before {
+            self.rotation = Rotation::None;
+            self.view.rotation_error = None;
+        }
         commands.extend(self.sync_nav());
         self.publish();
         commands
@@ -768,6 +825,7 @@ impl Core {
                 self.view.open_error = Some(message);
                 Vec::new()
             }
+            Event::RotationWritten { path, result } => self.rotation_written(path, result),
         }
     }
 
@@ -808,6 +866,12 @@ impl Core {
             self.previewed()
                 .and_then(|dir| Some(self.nav.get(dir)?.preview(dir)))
         });
+        // A preview is never the current file, so it is shown unturned.
+        self.view.rotation = if preview.is_some() {
+            Rotation::None
+        } else {
+            self.rotation
+        };
         (self.view.screen, self.view.band) =
             preview.unwrap_or_else(|| (self.screen.clone(), self.band.clone()));
         self.publish_band_highlight();
@@ -1314,8 +1378,81 @@ impl Core {
                 Vec::new()
             }
             Key::O => self.open_externally(),
+            Key::L => {
+                self.rotate(Rotation::left);
+                Vec::new()
+            }
+            Key::R => {
+                self.rotate(Rotation::right);
+                Vec::new()
+            }
+            Key::Enter => self.write_rotation(),
             _ => Vec::new(),
         }
+    }
+
+    /// The current file while it shows as an image and no rotation of it is
+    /// being written.
+    fn rotatable(&self) -> Option<&PathBuf> {
+        let Screen::Image { path, .. } = &self.screen else {
+            return None;
+        };
+        (self.writing.as_ref() != Some(path)).then_some(path)
+    }
+
+    /// Turns the image on screen only, keeping the image point in the middle
+    /// of the viewport there.
+    fn rotate(&mut self, turn: fn(Rotation) -> Rotation) {
+        if self.rotatable().is_none() {
+            return;
+        }
+        let new = turn(self.rotation);
+        let zoom = &mut self.view.zoom;
+        let (x, y) = (zoom.center_x, zoom.center_y);
+        (zoom.center_x, zoom.center_y) = if new == self.rotation.right() {
+            (1.0 - y, x)
+        } else {
+            (y, 1.0 - x)
+        };
+        self.rotation = new;
+        self.view.rotation_error = None;
+    }
+
+    /// Writes the pending rotation into the current file.
+    fn write_rotation(&mut self) -> Vec<Command> {
+        if self.rotation == Rotation::None {
+            return Vec::new();
+        }
+        let Some(path) = self.rotatable().cloned() else {
+            return Vec::new();
+        };
+        self.writing = Some(path.clone());
+        self.view.rotation_error = None;
+        vec![Command::WriteRotation {
+            path,
+            rotation: self.rotation,
+        }]
+    }
+
+    /// A written file is decoded again; its pending rotation goes once the
+    /// turned pixels arrive, so the image does not flash unturned. A failed
+    /// write keeps the rotation pending and says why.
+    fn rotation_written(&mut self, path: PathBuf, result: Result<(), String>) -> Vec<Command> {
+        let mut commands = Vec::new();
+        match result {
+            Ok(()) if self.cache.contains_key(&path) && self.decoding.insert(path.clone()) => {
+                commands.push(Command::Decode(path.clone()));
+            }
+            Ok(()) => {}
+            // The message names the file, which may no longer be the current
+            // one.
+            Err(message) => self.view.rotation_error = Some(message),
+        }
+        // Without a decode to wait for, the write is over.
+        if commands.is_empty() && self.writing.as_ref() == Some(&path) {
+            self.writing = None;
+        }
+        commands
     }
 
     /// Hands the current file, broken or not, to the app the settings name
@@ -1335,51 +1472,51 @@ impl Core {
         vec![Command::OpenExternally { path, app }]
     }
 
-    /// The image on screen, if it and the viewport have a size, so zoom
-    /// math cannot divide by zero.
-    fn zoomable(&self) -> Option<&DecodedImage> {
+    /// The size of the image on screen as shown, if it and the viewport have
+    /// a size, so zoom math cannot divide by zero.
+    fn zoomable(&self) -> Option<Points> {
         let Screen::Image { image, .. } = &self.view.screen else {
             return None;
         };
         let viewport = self.view.viewport;
         let sized = image.width > 0 && image.height > 0 && viewport.x > 0.0 && viewport.y > 0.0;
-        sized.then_some(image)
+        sized.then(|| shown_size(image, self.view.rotation))
     }
 
     /// Multiplies the scale by `factor`, keeping the image point under
     /// `pointer` (from the viewport's centre) where it is.
     fn zoom_by(&mut self, factor: f32, pointer: Points) {
-        let Some(image) = self.zoomable() else {
+        let Some(size) = self.zoomable() else {
             return;
         };
         let viewport = self.view.viewport;
         let zoom = self.view.zoom;
-        let old = zoom.factor(image, viewport);
+        let old = zoom.factor(size, viewport);
         let new = (old * factor).clamp(MIN_SCALE, MAX_SCALE);
-        let (x, y) = zoom.shown_center(image, viewport);
+        let (x, y) = zoom.shown_center(size, viewport);
         // The image pixel under the pointer, as a fraction, moves by the
         // pointer offset seen at the old minus the new scale.
-        let shift = |size: u32, offset: f32| offset * (old.recip() - new.recip()) / size as f32;
+        let shift = |size: f32, offset: f32| offset * (old.recip() - new.recip()) / size;
         self.view.zoom = Zoom {
             scale: Scale::Exact(new),
-            center_x: (x + shift(image.width, pointer.x)).clamp(0.0, 1.0),
-            center_y: (y + shift(image.height, pointer.y)).clamp(0.0, 1.0),
+            center_x: (x + shift(size.x, pointer.x)).clamp(0.0, 1.0),
+            center_y: (y + shift(size.y, pointer.y)).clamp(0.0, 1.0),
         };
     }
 
     /// Moves the image with the pointer; a fitted image does not move.
     fn pan(&mut self, delta: Points) {
-        let Some(image) = self.zoomable() else {
+        let Some(size) = self.zoomable() else {
             return;
         };
         let zoom = self.view.zoom;
         let Scale::Exact(scale) = zoom.scale else {
             return;
         };
-        let (x, y) = zoom.shown_center(image, self.view.viewport);
-        let shift = |size: u32, offset: f32| offset / (scale * size as f32);
-        let center_x = (x - shift(image.width, delta.x)).clamp(0.0, 1.0);
-        let center_y = (y - shift(image.height, delta.y)).clamp(0.0, 1.0);
+        let (x, y) = zoom.shown_center(size, self.view.viewport);
+        let shift = |size: f32, offset: f32| offset / (scale * size);
+        let center_x = (x - shift(size.x, delta.x)).clamp(0.0, 1.0);
+        let center_y = (y - shift(size.y, delta.y)).clamp(0.0, 1.0);
         self.view.zoom.center_x = center_x;
         self.view.zoom.center_y = center_y;
     }
@@ -1443,7 +1580,18 @@ impl Core {
             self.nav_decoded(path, result);
             return commands;
         }
-        let waiting = matches!(&self.screen, Screen::Loading { path: p } if *p == path);
+        let rewritten = self.writing.as_ref() == Some(&path);
+        if rewritten {
+            self.writing = None;
+            if self.current.as_ref() == Some(&path) {
+                self.rotation = Rotation::None;
+            }
+        }
+        let waiting = match &self.screen {
+            Screen::Loading { path: p } => *p == path,
+            Screen::Image { path: p, .. } => rewritten && *p == path,
+            _ => false,
+        };
         if waiting {
             self.screen = screen(&path, result.clone());
         }

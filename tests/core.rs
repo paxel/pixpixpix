@@ -279,6 +279,8 @@ fn key_line_lists_the_image_view_keys() {
             "+/-",
             "0",
             "1",
+            "L/R",
+            "Enter",
             "O",
             "N",
             "B",

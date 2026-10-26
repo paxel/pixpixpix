@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use pixpixpix::core::{Core, Event, Key, KeyPress, Placement, Points, Scale, Screen};
 use pixpixpix::decode::DecodedImage;
+use pixpixpix::rotate::Rotation;
 
 /// 400 × 200, twice as wide as the 200 × 200 viewport: fit is 50 %.
 fn wide() -> DecodedImage {
@@ -218,7 +219,7 @@ fn fit_places_the_image_centred_and_never_upscaled() {
     let viewport = Points { x: 200.0, y: 200.0 };
     let zoom = core.view().zoom;
     assert_eq!(
-        zoom.placement(&wide(), viewport),
+        zoom.placement(&wide(), Rotation::None, viewport),
         Placement {
             left: 0.0,
             top: 50.0,
@@ -227,7 +228,7 @@ fn fit_places_the_image_centred_and_never_upscaled() {
         }
     );
     assert_eq!(
-        zoom.placement(&image(20, 10), viewport),
+        zoom.placement(&image(20, 10), Rotation::None, viewport),
         Placement {
             left: 90.0,
             top: 95.0,
@@ -247,7 +248,7 @@ fn zoomed_placement_puts_the_centre_point_in_the_middle() {
     assert_eq!(
         core.view()
             .zoom
-            .placement(&wide(), Points { x: 200.0, y: 200.0 }),
+            .placement(&wide(), Rotation::None, Points { x: 200.0, y: 200.0 }),
         Placement {
             left: -150.0,
             top: 0.0,

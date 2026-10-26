@@ -667,3 +667,60 @@ fn the_external_apps_are_typed_on_the_settings_screen() {
         }))
     );
 }
+
+/// Showing `/p/wide.jpg`, 200 × 100 pixels.
+fn shown_wide() -> Core {
+    let path = PathBuf::from("/p/wide.jpg");
+    let (mut core, _) = Core::start(Ok(path.clone()));
+    core.handle(Event::Decoded {
+        path,
+        result: Ok(DecodedImage {
+            width: 200,
+            height: 100,
+            rgba: Arc::from(vec![255; 200 * 100 * 4]),
+        }),
+    });
+    core
+}
+
+#[test]
+fn r_and_l_turn_the_drawn_image() {
+    let mut h = harness(shown_wide());
+    h.run();
+    let size = |h: &Harness<'static, State>| {
+        h.get_by_role_and_label(Role::Image, "wide.jpg")
+            .rect()
+            .size()
+    };
+    assert_eq!(size(&h), egui::vec2(200.0, 100.0));
+    h.key_press(egui::Key::R);
+    h.run();
+    assert_eq!(size(&h), egui::vec2(100.0, 200.0));
+    h.key_press(egui::Key::L);
+    h.run();
+    assert_eq!(size(&h), egui::vec2(200.0, 100.0));
+    h.get_by_label("L/R");
+    h.get_by_label("write rotation");
+}
+
+#[test]
+fn enter_writes_the_rotation_and_a_failure_shows_in_the_key_line() {
+    let mut h = harness(shown_wide());
+    h.run();
+    h.key_press(egui::Key::R);
+    h.key_press(egui::Key::Enter);
+    h.run();
+    assert_eq!(
+        h.state().commands.last(),
+        Some(&Command::WriteRotation {
+            path: PathBuf::from("/p/wide.jpg"),
+            rotation: pixpixpix::rotate::Rotation::Right,
+        })
+    );
+    h.state_mut().core.handle(Event::RotationWritten {
+        path: PathBuf::from("/p/wide.jpg"),
+        result: Err("Cannot rotate wide.jpg: no libturbojpeg".into()),
+    });
+    h.run();
+    h.get_by_label("Cannot rotate wide.jpg: no libturbojpeg");
+}

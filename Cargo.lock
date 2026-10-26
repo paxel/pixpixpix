@@ -2398,6 +2398,7 @@ dependencies = [
  "egui",
  "egui_kittest",
  "image",
+ "libloading",
  "notify",
  "serde",
  "tempfile",

@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use egui::{Color32, ColorImage, RichText, TextureHandle, TextureOptions};
 
@@ -11,6 +12,7 @@ use crate::core::{
 };
 use crate::decode::DecodedImage;
 use crate::folder;
+use crate::rotate::Rotation;
 use crate::settings::{self, Settings};
 
 const BACKGROUND: Color32 = Color32::from_rgb(0x12, 0x12, 0x14);
@@ -45,21 +47,27 @@ const APP_HINT: &str = if cfg!(target_os = "macos") {
     "A command such as gwenview or vlc, the file is added last. Empty: the system default."
 };
 
-/// GPU textures of decoded images, uploaded once per path.
+/// GPU textures of decoded images, uploaded once per path and decode; a file
+/// decoded again, after a rotation was written, is uploaded again.
 #[derive(Default)]
 pub struct Textures {
-    loaded: HashMap<PathBuf, TextureHandle>,
+    loaded: HashMap<PathBuf, (Arc<[u8]>, TextureHandle)>,
 }
 
 impl Textures {
     fn get(&mut self, ctx: &egui::Context, path: &Path, image: &DecodedImage) -> TextureHandle {
-        if let Some(t) = self.loaded.get(path) {
+        if let Some((pixels, t)) = self.loaded.get(path)
+            && Arc::ptr_eq(pixels, &image.rgba)
+        {
             return t.clone();
         }
         let size = [image.width as usize, image.height as usize];
         let color = ColorImage::from_rgba_unmultiplied(size, &image.rgba);
         let handle = ctx.load_texture(folder::file_name(path), color, TextureOptions::LINEAR);
-        self.loaded.insert(path.to_path_buf(), handle.clone());
+        self.loaded.insert(
+            path.to_path_buf(),
+            (Arc::clone(&image.rgba), handle.clone()),
+        );
         handle
     }
 
@@ -121,6 +129,7 @@ fn map_key(key: egui::Key) -> Option<Key> {
         egui::Key::B => Key::B,
         egui::Key::S => Key::S,
         egui::Key::O => Key::O,
+        egui::Key::L => Key::L,
         _ => return None,
     })
 }
@@ -169,7 +178,12 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
             match &view.screen {
                 Screen::Loading { .. } | Screen::Listing { .. } => {}
                 Screen::Image { path, image } => {
-                    show_image(ui, path, image, view.zoom, textures, &mut events);
+                    let shown = Shown {
+                        path,
+                        image,
+                        rotation: view.rotation,
+                    };
+                    show_image(ui, &shown, view.zoom, textures, &mut events);
                 }
                 Screen::Error { path, message } => show_error(ui, path.as_deref(), message),
                 Screen::NoImages { folders, .. } => show_no_images(ui, *folders),
@@ -383,15 +397,24 @@ fn show_key_line(ui: &mut egui::Ui, view: &View) {
         if let Some(error) = &view.open_error {
             ui.label(RichText::new(error).color(ERROR_TEXT));
         }
+        if let Some(error) = &view.rotation_error {
+            ui.label(RichText::new(error).color(ERROR_TEXT));
+        }
     });
 }
 
-/// Draws the visible part of the image as the core places it; the wheel over
-/// it zooms and dragging pans.
+/// The image of the main area and how it is turned.
+struct Shown<'a> {
+    path: &'a Path,
+    image: &'a DecodedImage,
+    rotation: Rotation,
+}
+
+/// Draws the visible part of the image, turned, as the core places it; the
+/// wheel over it zooms and dragging pans.
 fn show_image(
     ui: &mut egui::Ui,
-    path: &Path,
-    image: &DecodedImage,
+    shown: &Shown<'_>,
     zoom: Zoom,
     textures: &mut Textures,
     events: &mut Vec<Event>,
@@ -425,32 +448,49 @@ fn show_image(
         x: area.width(),
         y: area.height(),
     };
-    let placed = zoom.placement(image, viewport);
+    let placed = zoom.placement(shown.image, shown.rotation, viewport);
     let full = egui::Rect::from_min_size(
         egui::pos2(area.min.x + placed.left, area.min.y + placed.top),
         egui::vec2(placed.width, placed.height),
     );
-    let shown = full.intersect(area);
-    if !shown.is_positive() {
+    let visible = full.intersect(area);
+    if !visible.is_positive() {
         return;
     }
-    // The part of the texture inside the area.
-    let uv = egui::Rect::from_min_max(
-        egui::pos2(
-            (shown.min.x - full.min.x) / full.width(),
-            (shown.min.y - full.min.y) / full.height(),
-        ),
-        egui::pos2(
-            (shown.max.x - full.min.x) / full.width(),
-            (shown.max.y - full.min.y) / full.height(),
-        ),
-    );
-    let texture = textures.get(ui.ctx(), path, image);
-    let widget = egui::Image::new(&texture)
-        .uv(uv)
-        .fit_to_exact_size(shown.size())
-        .alt_text(folder::file_name(path));
-    ui.put(shown, widget);
+    // The corners of the visible part, each with its spot in the texture.
+    let texture = textures.get(ui.ctx(), shown.path, shown.image);
+    let mut mesh = egui::Mesh::with_texture(texture.id());
+    for corner in [
+        visible.left_top(),
+        visible.right_top(),
+        visible.right_bottom(),
+        visible.left_bottom(),
+    ] {
+        let u = (corner.x - full.min.x) / full.width();
+        let v = (corner.y - full.min.y) / full.height();
+        mesh.vertices.push(egui::epaint::Vertex {
+            pos: corner,
+            uv: texture_point(shown.rotation, u, v),
+            color: Color32::WHITE,
+        });
+    }
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(0, 2, 3);
+    ui.painter().add(mesh);
+    let name = folder::file_name(shown.path);
+    ui.allocate_rect(visible, egui::Sense::hover())
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Image, true, &name));
+}
+
+/// The texture point shown at `(u, v)` of an image turned by `rotation`, all
+/// as fractions of width and height.
+fn texture_point(rotation: Rotation, u: f32, v: f32) -> egui::Pos2 {
+    match rotation {
+        Rotation::None => egui::pos2(u, v),
+        Rotation::Right => egui::pos2(v, 1.0 - u),
+        Rotation::Half => egui::pos2(1.0 - u, 1.0 - v),
+        Rotation::Left => egui::pos2(1.0 - v, u),
+    }
 }
 
 /// The largest size with the image's aspect ratio that fits `area`, never
