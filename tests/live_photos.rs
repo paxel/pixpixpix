@@ -315,3 +315,17 @@ fn a_motion_photo_is_marked_and_space_plays_it() {
     assert_eq!(press(&mut core, Key::Left), [Command::StopVideo]);
     assert_eq!(core.view().video, None);
 }
+
+#[test]
+fn m_on_a_still_live_photo_leaves_the_sound_alone() {
+    let mut core = browsing("IMG_1.HEIC", LIVE);
+    assert_eq!(press(&mut core, Key::M), []);
+    assert_eq!(
+        press(&mut core, Key::Space),
+        [Command::PlayVideo {
+            path: p("IMG_1.MOV"),
+            muted: false,
+            paused: false,
+        }]
+    );
+}

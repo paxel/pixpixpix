@@ -329,3 +329,28 @@ fn multi_image_files_are_refused_and_left_untouched() {
         );
     }
 }
+
+#[test]
+fn motion_photos_are_refused_rather_than_losing_their_video() {
+    let dir = tempfile::tempdir().unwrap();
+    let jpeg = std::fs::read(fixture("sample.jpg")).unwrap();
+    let mut video = vec![0, 0, 0, 16];
+    video.extend(b"ftypisom\0\0\0\0");
+    video.extend([7u8; 64]);
+    let xmp = format!(
+        "http://ns.adobe.com/xap/1.0/\0<x:xmpmeta><rdf:Description GCamera:MicroVideo=\"1\" \
+         GCamera:MicroVideoOffset=\"{}\"/></x:xmpmeta>",
+        video.len()
+    );
+    let mut bytes = jpeg[..2].to_vec();
+    bytes.extend([0xFF, 0xE1]);
+    bytes.extend(((xmp.len() + 2) as u16).to_be_bytes());
+    bytes.extend(xmp.as_bytes());
+    bytes.extend(&jpeg[2..]);
+    bytes.extend(&video);
+    let path = dir.path().join("PXL_1.MP.jpg");
+    std::fs::write(&path, &bytes).unwrap();
+    let error = rotate::write(&path, Rotation::Right).unwrap_err();
+    assert!(error.contains("Motion Photo"), "{error}");
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+}

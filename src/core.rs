@@ -1561,7 +1561,8 @@ impl Core {
 
     /// Turns the sound of videos off or on while a video is shown.
     fn toggle_mute(&mut self) -> Vec<Command> {
-        let Some(video) = &self.video else {
+        // A still Live or Motion Photo has no sound to mute.
+        let Some(video) = self.video.as_ref().filter(|v| !v.motion || v.started) else {
             return Vec::new();
         };
         self.muted = !self.muted;

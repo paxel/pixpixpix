@@ -16,7 +16,7 @@ use image::metadata::Orientation;
 use image::{AnimationDecoder, DynamicImage, ImageDecoder, ImageFormat, ImageReader};
 
 use crate::turbojpeg::{self, Transform, TurboJpeg};
-use crate::{decode, folder, multi};
+use crate::{decode, folder, motion, multi};
 
 /// A turn of the shown image in quarter steps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -87,6 +87,11 @@ fn rotated(path: &Path, rotation: Rotation) -> Result<Vec<u8>, String> {
         return Err(
             "rotating files of several images is not supported, the other images would be lost"
                 .to_owned(),
+        );
+    }
+    if matches!(motion::find(path), Ok(Some(_))) {
+        return Err(
+            "rotating Motion Photos is not supported, the embedded video would be lost".to_owned(),
         );
     }
     let format = image::guess_format(&bytes)
