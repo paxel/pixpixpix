@@ -40,6 +40,7 @@ pub enum Key {
     Backspace,
     Period,
     R,
+    B,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -230,13 +231,15 @@ const IMAGE_VIEW_KEYS: &[KeyHint] = &[
         keys: "N",
         action: "folders",
     },
+    KeyHint {
+        keys: "B",
+        action: "band",
+    },
+    KeyHint {
+        keys: "Tab",
+        action: "band",
+    },
 ];
-
-/// Image view keys while the dir column is open.
-const IMAGE_VIEW_TAB_KEY: KeyHint = KeyHint {
-    keys: "Tab",
-    action: "folders",
-};
 
 const DIR_COLUMN_KEYS: &[KeyHint] = &[
     KeyHint {
@@ -264,10 +267,41 @@ const DIR_COLUMN_KEYS: &[KeyHint] = &[
         action: "close",
     },
     KeyHint {
+        keys: "B",
+        action: "band",
+    },
+    KeyHint {
         keys: "Tab",
         action: "image view",
     },
 ];
+
+const BAND_KEYS: &[KeyHint] = &[
+    KeyHint {
+        keys: "Left/Right",
+        action: "select",
+    },
+    KeyHint {
+        keys: "Enter",
+        action: "show",
+    },
+    KeyHint {
+        keys: "Esc",
+        action: "back",
+    },
+];
+
+/// Band keys while the dir column is open.
+const BAND_TAB_TO_COLUMN: KeyHint = KeyHint {
+    keys: "Tab",
+    action: "folders",
+};
+
+/// Band keys while the dir column is closed.
+const BAND_TAB_TO_IMAGE: KeyHint = KeyHint {
+    keys: "Tab",
+    action: "image view",
+};
 
 /// Keys of every focus area, listed last.
 const GLOBAL_KEYS: &[KeyHint] = &[
@@ -286,6 +320,7 @@ const GLOBAL_KEYS: &[KeyHint] = &[
 pub enum Focus {
     Dirs,
     Image,
+    Band,
 }
 
 /// The keys the key line lists for `focus`.
@@ -293,9 +328,14 @@ fn focus_keys(focus: Focus, column_open: bool) -> Vec<KeyHint> {
     let mut keys = match focus {
         Focus::Dirs => DIR_COLUMN_KEYS.to_vec(),
         Focus::Image => IMAGE_VIEW_KEYS.to_vec(),
+        Focus::Band => BAND_KEYS.to_vec(),
     };
-    if focus == Focus::Image && column_open {
-        keys.push(IMAGE_VIEW_TAB_KEY);
+    if focus == Focus::Band {
+        keys.push(if column_open {
+            BAND_TAB_TO_COLUMN
+        } else {
+            BAND_TAB_TO_IMAGE
+        });
     }
     keys.extend_from_slice(GLOBAL_KEYS);
     keys
@@ -441,6 +481,8 @@ pub struct View {
     /// Why the folder could not be read the last time it was listed.
     pub folder_error: Option<String>,
     pub focus: Focus,
+    /// The index of the highlighted thumb while the band has the focus.
+    pub band_highlight: Option<usize>,
     /// Absent while the column is closed.
     pub dir_column: Option<DirColumn>,
 }
@@ -484,6 +526,12 @@ pub struct Core {
     /// The nav cache: the first image of the parent folder and of the
     /// highlighted subfolder, by folder, while the dir column is open.
     nav: BTreeMap<PathBuf, Nav>,
+    /// The area that had the focus before the band; the band keeps showing
+    /// the dir column's preview or search when it was the column.
+    band_from: Focus,
+    /// The highlighted file of the band while it has the focus; the current
+    /// one when unset or no longer in the band.
+    band_highlight: Option<PathBuf>,
 }
 
 /// What the nav cache knows of a folder.
@@ -583,6 +631,7 @@ impl Core {
                 viewport: Points::default(),
                 folder_error: None,
                 focus: Focus::Image,
+                band_highlight: None,
                 dir_column: None,
             },
             screen,
@@ -601,6 +650,8 @@ impl Core {
             came_from: None,
             start_dir,
             nav: BTreeMap::new(),
+            band_from: Focus::Image,
+            band_highlight: None,
         };
         (core, commands)
     }
@@ -647,10 +698,20 @@ impl Core {
         }
     }
 
-    /// The highlighted subfolder while the dir column has the focus: the main
-    /// area and the band preview it.
+    /// Whether the dir column decides what the main area and the band show:
+    /// while it has the focus, or the band has it coming from the column.
+    pub(super) fn column_shown(&self) -> bool {
+        match self.view.focus {
+            Focus::Dirs => true,
+            Focus::Band => self.band_from == Focus::Dirs,
+            Focus::Image => false,
+        }
+    }
+
+    /// The highlighted subfolder while the dir column decides what is shown:
+    /// the main area and the band preview it.
     fn previewed(&self) -> Option<&Path> {
-        if self.view.focus != Focus::Dirs {
+        if !self.column_shown() {
             return None;
         }
         let column = self.view.dir_column.as_ref()?;
@@ -669,6 +730,25 @@ impl Core {
         });
         (self.view.screen, self.view.band) =
             preview.unwrap_or_else(|| (self.screen.clone(), self.band.clone()));
+        self.publish_band_highlight();
+    }
+
+    /// Keeps the band highlight on a thumb while the band has the focus: on
+    /// the one highlighted so far, otherwise the current one, otherwise the
+    /// first.
+    fn publish_band_highlight(&mut self) {
+        let band = &self.view.band;
+        let index = (self.view.focus == Focus::Band)
+            .then(|| {
+                self.band_highlight
+                    .as_ref()
+                    .and_then(|h| band.iter().position(|t| t.path == *h))
+                    .or_else(|| band.iter().position(|t| t.current))
+                    .or((!band.is_empty()).then_some(0))
+            })
+            .flatten();
+        self.band_highlight = index.and_then(|i| band.get(i)).map(|t| t.path.clone());
+        self.view.band_highlight = index;
     }
 
     /// The folders the nav cache holds while the dir column is open: the
@@ -838,13 +918,16 @@ impl Core {
                 vec![Command::SetFullscreen(self.view.fullscreen)]
             }
             (Key::N, false) => self.toggle_column(),
+            (Key::B, false) => {
+                self.focus_band();
+                Vec::new()
+            }
             (Key::Tab, false) => {
-                if self.view.dir_column.is_some() {
-                    let focus = match self.view.focus {
-                        Focus::Dirs => Focus::Image,
-                        Focus::Image => Focus::Dirs,
-                    };
-                    self.set_focus(focus);
+                match self.view.focus {
+                    Focus::Dirs => self.set_focus(Focus::Image),
+                    Focus::Image => self.focus_band(),
+                    Focus::Band if self.view.dir_column.is_some() => self.set_focus(Focus::Dirs),
+                    Focus::Band => self.set_focus(Focus::Image),
                 }
                 Vec::new()
             }
@@ -852,13 +935,51 @@ impl Core {
             _ => match self.view.focus {
                 Focus::Dirs => self.dir_key(key.key),
                 Focus::Image => self.image_key(key.key),
+                Focus::Band => self.band_key(key.key),
             },
         }
     }
 
     fn set_focus(&mut self, focus: Focus) {
         self.view.focus = focus;
+        self.band_highlight = None;
         self.view.key_line.keys = focus_keys(focus, self.view.dir_column.is_some());
+    }
+
+    /// Gives the band the focus, its highlight on the current file.
+    fn focus_band(&mut self) {
+        if self.view.focus != Focus::Band {
+            self.band_from = self.view.focus;
+            self.set_focus(Focus::Band);
+        }
+    }
+
+    /// Keys of the band: the arrows move the highlight, `Enter` shows the
+    /// highlighted file like a click and returns to the image view, `Esc`
+    /// returns to the area the band was focused from.
+    fn band_key(&mut self, key: Key) -> Vec<Command> {
+        let index = self.view.band_highlight;
+        let target = match key {
+            Key::Left => index.and_then(|i| i.checked_sub(1)),
+            Key::Right => index.and_then(|i| i.checked_add(1)),
+            Key::Enter => {
+                let path = index
+                    .and_then(|i| self.view.band.get(i))
+                    .map(|t| t.path.clone());
+                let commands = path.map(|p| self.show(p)).unwrap_or_default();
+                self.set_focus(Focus::Image);
+                return commands;
+            }
+            Key::Escape => {
+                self.set_focus(self.band_from);
+                return Vec::new();
+            }
+            _ => None,
+        };
+        if let Some(thumb) = target.and_then(|i| self.view.band.get(i)) {
+            self.band_highlight = Some(thumb.path.clone());
+        }
+        Vec::new()
     }
 
     /// Opens the column on the current folder, focused, or closes it, ending

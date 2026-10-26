@@ -232,6 +232,9 @@ fn the_image_view_shows_the_current_image_and_tab_back_previews_again() {
     // The image view still steps through the current folder.
     press(&mut core, Key::Right);
     assert!(shows_image(&core, "/r/p/b.jpg"));
+    // Back through the band, which shows the current folder too.
+    press(&mut core, Key::Tab);
+    assert!(shows_image(&core, "/r/p/b.jpg"));
     press(&mut core, Key::Tab);
     assert!(shows_image(&core, "/r/p/x/1.jpg"));
 }

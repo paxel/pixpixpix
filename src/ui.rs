@@ -18,6 +18,8 @@ const ERROR_TEXT: Color32 = Color32::from_rgb(0xff, 0xb4, 0xa8);
 const DIM_TEXT: Color32 = Color32::from_rgb(0x9a, 0x9a, 0xa0);
 const NOTICE_TEXT: Color32 = Color32::from_rgb(0xff, 0xd5, 0x80);
 const CURRENT_MARK: Color32 = Color32::from_rgb(0xff, 0xd5, 0x80);
+/// The highlighted thumb while the band has the focus, around the current mark.
+const BAND_HIGHLIGHT: Color32 = Color32::from_rgb(0x7c, 0xc4, 0xff);
 const BROKEN_TILE: Color32 = Color32::from_rgb(0x3a, 0x1e, 0x1c);
 /// The highlighted folder of the focused dir column, and its text.
 const HIGHLIGHT: Color32 = Color32::from_rgb(0xff, 0xd5, 0x80);
@@ -104,6 +106,7 @@ fn map_key(key: egui::Key) -> Option<Key> {
         egui::Key::Backspace => Key::Backspace,
         egui::Key::Period => Key::Period,
         egui::Key::R => Key::R,
+        egui::Key::B => Key::B,
         _ => return None,
     })
 }
@@ -125,7 +128,9 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
             .resizable(false)
             .show_separator_line(false)
             .frame(egui::Frame::NONE.fill(BACKGROUND).inner_margin(6.0))
-            .show(ui, |ui| show_band(ui, &view.band, textures, &mut events));
+            .show(ui, |ui| {
+                show_band(ui, &view.band, view.band_highlight, textures, &mut events)
+            });
     }
     if let Some(column) = &view.dir_column {
         egui::Panel::left("dir_column")
@@ -168,10 +173,17 @@ fn shown(view: &View, path: &Path) -> bool {
 }
 
 /// The cached files as small thumbs, broken ones as a marked tile, the current
-/// one framed; a click on a thumb asks the core to show it.
-fn show_band(ui: &mut egui::Ui, band: &[Thumb], textures: &mut Textures, events: &mut Vec<Event>) {
+/// one framed and the highlighted one framed wider; a click on a thumb asks the
+/// core to show it.
+fn show_band(
+    ui: &mut egui::Ui,
+    band: &[Thumb],
+    highlight: Option<usize>,
+    textures: &mut Textures,
+    events: &mut Vec<Event>,
+) {
     ui.horizontal(|ui| {
-        for thumb in band {
+        for (index, thumb) in band.iter().enumerate() {
             let name = folder::file_name(&thumb.path);
             let (rect, response, label) = match &thumb.image {
                 Some(image) => {
@@ -205,6 +217,15 @@ fn show_band(ui: &mut egui::Ui, band: &[Thumb], textures: &mut Textures, events:
                     egui::StrokeKind::Outside,
                 );
             }
+            let highlighted = highlight == Some(index);
+            if highlighted {
+                ui.painter().rect_stroke(
+                    rect.expand(4.0),
+                    3.0,
+                    egui::Stroke::new(2.0, BAND_HIGHLIGHT),
+                    egui::StrokeKind::Outside,
+                );
+            }
             response.widget_info(|| {
                 egui::WidgetInfo::selected(
                     egui::WidgetType::Button,
@@ -213,6 +234,8 @@ fn show_band(ui: &mut egui::Ui, band: &[Thumb], textures: &mut Textures, events:
                     label.clone(),
                 )
             });
+            ui.ctx()
+                .accesskit_node_builder(response.id, |node| node.set_selected(highlighted));
             if response.clicked() {
                 events.push(Event::Show(thumb.path.clone()));
             }

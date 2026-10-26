@@ -176,6 +176,7 @@ fn dot_again_hides_them_and_moves_off_a_dot_file() {
     press(&mut core, Key::Left);
     decoded(&mut core, "/p/.b.jpg");
     press(&mut core, Key::Tab);
+    press(&mut core, Key::Tab);
     press(&mut core, Key::Period);
     assert_eq!(column_dirs(&core), paths(&["/p/x", "/p/y"]));
     press(&mut core, Key::Tab);
@@ -303,6 +304,9 @@ fn the_found_folder_decodes_its_first_file_first_then_the_rest() {
 fn the_search_shows_only_while_the_column_has_the_focus() {
     let mut core = found();
     decoded(&mut core, "/p/y/z/1.jpg");
+    press(&mut core, Key::Tab);
+    assert!(shows_image(&core, "/p/a.jpg"));
+    // The band reached from the image view shows the current folder too.
     press(&mut core, Key::Tab);
     assert!(shows_image(&core, "/p/a.jpg"));
     press(&mut core, Key::Tab);

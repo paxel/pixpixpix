@@ -294,8 +294,10 @@ fn moving_between_folders_keeps_fullscreen() {
 }
 
 #[test]
-fn tab_toggles_focus_only_while_the_column_is_open() {
+fn tab_reaches_the_column_only_while_it_is_open() {
     let mut core = browsing();
+    press(&mut core, Key::Tab);
+    assert_eq!(core.view().focus, Focus::Band);
     press(&mut core, Key::Tab);
     assert_eq!(core.view().focus, Focus::Image);
     press(&mut core, Key::N);
@@ -307,6 +309,7 @@ fn tab_toggles_focus_only_while_the_column_is_open() {
         &core.view().screen,
         Screen::Loading { path } if path == Path::new("/p/b.jpg")
     ));
+    press(&mut core, Key::Tab);
     press(&mut core, Key::Tab);
     assert_eq!(core.view().focus, Focus::Dirs);
 }
@@ -329,6 +332,7 @@ fn the_key_line_lists_the_keys_of_the_focused_area() {
             ".",
             "R",
             "N",
+            "B",
             "Tab",
             "F",
             quit
@@ -337,11 +341,6 @@ fn the_key_line_lists_the_keys_of_the_focused_area() {
     press(&mut core, Key::Tab);
     assert_eq!(
         key_names(&core),
-        ["Left/Right", "+/-", "0", "1", "N", "Tab", "F", quit]
-    );
-    press(&mut core, Key::N);
-    assert_eq!(
-        key_names(&core),
-        ["Left/Right", "+/-", "0", "1", "N", "F", quit]
+        ["Left/Right", "+/-", "0", "1", "N", "B", "Tab", "F", quit]
     );
 }

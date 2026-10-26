@@ -161,11 +161,11 @@ impl Core {
         self.search_refresh()
     }
 
-    /// The main area and band while the dir column has the focus and a search
-    /// ran: its progress, or the first file found with the band holding the
-    /// decoded ones.
+    /// The main area and band while the dir column decides what is shown and a
+    /// search ran: its progress, or the first file found with the band holding
+    /// the decoded ones.
     pub(super) fn search_view(&self) -> Option<(Screen, Vec<Thumb>)> {
-        if self.view.focus != Focus::Dirs {
+        if !self.column_shown() {
             return None;
         }
         Some(match self.search.as_ref()? {
@@ -199,7 +199,7 @@ impl Core {
     /// current one and the image view shows the file. `None` while the band
     /// is not the search's.
     pub(super) fn show_found(&mut self, path: &Path) -> Option<Vec<Command>> {
-        if self.view.focus != Focus::Dirs {
+        if !self.column_shown() {
             return None;
         }
         let Some(Search::Found { cache, .. }) = &self.search else {

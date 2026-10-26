@@ -491,3 +491,78 @@ fn dot_in_the_column_shows_dot_folders() {
     h.run();
     h.get_by_label(".git");
 }
+
+/// Whether the band thumb `name` is highlighted for keyboard selection.
+fn band_selected(h: &Harness<'_, State>, name: &str) -> Option<bool> {
+    h.get_by_role_and_label(Role::Button, name)
+        .accesskit_node()
+        .is_selected()
+}
+
+#[test]
+fn b_highlights_the_current_thumb_and_the_arrows_move_the_highlight() {
+    let mut core = browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg", "/p/c.jpg"]);
+    decoded(&mut core, "/p/b.jpg");
+    decoded(&mut core, "/p/c.jpg");
+    let mut h = harness(core);
+    h.run();
+    assert_eq!(band_selected(&h, "a.jpg"), Some(false));
+    h.key_press(egui::Key::B);
+    h.run();
+    assert_eq!(band_selected(&h, "a.jpg"), Some(true));
+    h.key_press(egui::Key::ArrowRight);
+    h.run();
+    h.key_press(egui::Key::ArrowRight);
+    h.run();
+    assert_eq!(band_selected(&h, "a.jpg"), Some(false));
+    assert_eq!(band_selected(&h, "c.jpg"), Some(true));
+    // The current mark stays on the shown file.
+    let toggled = h
+        .get_by_role_and_label(Role::Button, "a.jpg")
+        .accesskit_node()
+        .toggled();
+    assert_eq!(toggled, Some(Toggled::True));
+}
+
+#[test]
+fn enter_in_the_band_shows_the_highlighted_image_once() {
+    let mut core = browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg", "/p/c.jpg"]);
+    decoded(&mut core, "/p/b.jpg");
+    decoded(&mut core, "/p/c.jpg");
+    let mut h = harness(core);
+    h.run();
+    h.key_press(egui::Key::Tab);
+    h.run();
+    h.key_press(egui::Key::ArrowRight);
+    h.run();
+    h.key_press(egui::Key::ArrowRight);
+    h.run();
+    h.state_mut().commands.clear();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    assert!(matches!(
+        &h.state().core.view().screen,
+        Screen::Image { path, .. } if path == Path::new("/p/c.jpg")
+    ));
+    h.get_by_role_and_label(Role::Image, "c.jpg");
+    // Every file is cached, and no stray click shows a second one.
+    assert_eq!(h.state().commands, []);
+    assert_eq!(band_selected(&h, "c.jpg"), Some(false));
+    h.get_by_label("Left/Right");
+    h.get_by_label("+/-");
+}
+
+#[test]
+fn the_key_line_lists_the_band_keys_while_it_has_the_focus() {
+    let mut h = harness(browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]));
+    h.run();
+    h.key_press(egui::Key::B);
+    h.run();
+    h.get_by_label("Enter");
+    h.get_by_label("Esc");
+    assert!(h.query_by_label("+/-").is_none());
+    h.key_press(egui::Key::Escape);
+    h.run();
+    h.get_by_label("+/-");
+    assert!(h.query_by_label("Esc").is_none());
+}

@@ -269,7 +269,10 @@ fn key_line_lists_the_image_view_keys() {
     } else {
         "Ctrl+Q"
     };
-    assert_eq!(keys, ["Left/Right", "+/-", "0", "1", "N", "F", quit]);
+    assert_eq!(
+        keys,
+        ["Left/Right", "+/-", "0", "1", "N", "B", "Tab", "F", quit]
+    );
 }
 
 fn p(name: &str) -> PathBuf {
