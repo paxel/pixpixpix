@@ -332,7 +332,8 @@ pub(crate) struct Kept {
 
 /// What of the metadata of the file `source`, held in `bytes`, an edited
 /// image keeps: EXIF, colour profile and XMP, whatever of them there is. A
-/// TIFF's EXIF is the whole file and is not kept.
+/// TIFF's EXIF is the whole file and is not kept, nor XMP that describes a
+/// Motion Photo's video or a gain map.
 pub(crate) fn kept(source: &Path, bytes: &[u8]) -> Kept {
     let format = image::guess_format(bytes).ok();
     let exif = (format != Some(ImageFormat::Tiff))
@@ -361,8 +362,24 @@ pub(crate) fn kept(source: &Path, bytes: &[u8]) -> Kept {
     let xmp = decoder
         .as_mut()
         .and_then(|d| d.xmp_metadata().ok().flatten())
-        .filter(|xmp| !xmp.is_empty());
+        .filter(|xmp| !xmp.is_empty() && !describes_container(xmp));
     Kept { exif, icc, xmp }
+}
+
+/// XMP markers of a video or gain map stored behind the image.
+const CONTAINER_XMP: [&[u8]; 4] = [
+    b"Container:Directory",
+    b"GCamera:MicroVideo",
+    b"GCamera:MotionPhoto",
+    b"hdrgm:",
+];
+
+/// Whether `xmp` describes what is stored behind the image, which an edited
+/// image is written without.
+fn describes_container(xmp: &[u8]) -> bool {
+    CONTAINER_XMP
+        .iter()
+        .any(|marker| xmp.windows(marker.len()).any(|w| w == *marker))
 }
 
 /// Ends the IFD chain of the TIFF-structured EXIF block `tiff` after the

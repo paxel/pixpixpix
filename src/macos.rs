@@ -8,7 +8,7 @@
 
 use std::sync::mpsc::Sender;
 
-use objc2::rc::Retained;
+use objc2::rc::{Retained, autoreleasepool};
 use objc2::runtime::ProtocolObject;
 use objc2::{AnyThread, DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
@@ -27,34 +27,37 @@ use crate::core::Event;
 /// Puts `content` on the general pasteboard as one item: the PNG for image
 /// apps and, if there is one, the file for Finder.
 pub fn copy(content: &Content) -> Result<(), String> {
-    let item = NSPasteboardItem::init(NSPasteboardItem::alloc());
-    let png = NSData::with_bytes(&content.png);
-    // SAFETY: the pasteboard type constants are immutable strings AppKit
-    // defines.
-    let png_type = unsafe { NSPasteboardTypePNG };
-    if !item.setData_forType(&png, png_type) {
-        return Err("the pasteboard refused the image".to_owned());
-    }
-    let uri = content.uri_list.trim_end();
-    if !uri.is_empty() {
-        let url = NSString::from_str(uri);
-        // SAFETY: as above.
-        let url_type = unsafe { NSPasteboardTypeFileURL };
-        if !item.setString_forType(&url, url_type) {
-            return Err("the pasteboard refused the file".to_owned());
+    // The clipboard thread has no pool of its own for what AppKit
+    // autoreleases.
+    autoreleasepool(|_| {
+        let item = NSPasteboardItem::init(NSPasteboardItem::alloc());
+        let png = NSData::with_bytes(&content.png);
+        // SAFETY: the pasteboard type constants are immutable strings AppKit
+        // defines.
+        let png_type = unsafe { NSPasteboardTypePNG };
+        if !item.setData_forType(&png, png_type) {
+            return Err("the pasteboard refused the image".to_owned());
         }
-    }
-    let pasteboard = NSPasteboard::generalPasteboard();
-    pasteboard.clearContents();
-    let items =
-        NSArray::from_retained_slice(&[ProtocolObject::<dyn NSPasteboardWriting>::from_retained(
-            item,
-        )]);
-    if pasteboard.writeObjects(&items) {
-        Ok(())
-    } else {
-        Err("the pasteboard refused the image".to_owned())
-    }
+        let uri = content.uri_list.trim_end();
+        if !uri.is_empty() {
+            let url = NSString::from_str(uri);
+            // SAFETY: as above.
+            let url_type = unsafe { NSPasteboardTypeFileURL };
+            if !item.setString_forType(&url, url_type) {
+                return Err("the pasteboard refused the file".to_owned());
+            }
+        }
+        let pasteboard = NSPasteboard::generalPasteboard();
+        pasteboard.clearContents();
+        let items = NSArray::from_retained_slice(&[
+            ProtocolObject::<dyn NSPasteboardWriting>::from_retained(item),
+        ]);
+        if pasteboard.writeObjects(&items) {
+            Ok(())
+        } else {
+            Err("the pasteboard refused the image".to_owned())
+        }
+    })
 }
 
 /// Where the files AppKit asks to open go.

@@ -509,3 +509,41 @@ fn the_thumbnail_of_the_unedited_image_is_not_kept() {
     assert_eq!(orientation(&after), Some(1));
     assert!(!after.fields().any(|f| f.ifd_num == exif::In::THUMBNAIL));
 }
+
+#[test]
+fn xmp_of_a_video_or_gain_map_behind_the_image_is_not_kept() {
+    for xmp in [
+        r#"<rdf:Description GCamera:MotionPhoto="1"><Container:Directory/></rdf:Description>"#,
+        r#"<rdf:Description GCamera:MicroVideo="1" GCamera:MicroVideoOffset="9"/>"#,
+        r#"<rdf:Description hdrgm:Version="1.0"/>"#,
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("a.jpg");
+        described_jpeg(&source).unwrap();
+        let bytes = fs::read(&source).unwrap();
+        let bytes = bytes
+            .windows(XMP.len())
+            .position(|w| w == XMP)
+            .map(|at| [&bytes[..at], xmp.as_bytes(), &bytes[at + XMP.len()..]].concat())
+            .unwrap();
+        // The segment length follows the packet.
+        let at = bytes
+            .windows(29)
+            .position(|w| w == b"http://ns.adobe.com/xap/1.0/\0")
+            .unwrap();
+        let length = (29 + xmp.len() + 2) as u16;
+        let mut bytes = bytes;
+        bytes[at - 2..at].copy_from_slice(&length.to_be_bytes());
+        fs::write(&source, bytes).unwrap();
+        assert_eq!(
+            described(&source).unwrap().2.as_deref(),
+            Some(xmp.as_bytes())
+        );
+        let target = dir.path().join("b.jpg");
+        annotate::save(&source, &white(200, 100), Rotation::None, &[], &target).unwrap();
+        let (exif, icc, kept) = described(&target).unwrap();
+        assert_eq!(kept, None, "{xmp}");
+        assert_eq!(orientation(&exif), Some(1));
+        assert_eq!(icc.as_deref(), Some(ICC));
+    }
+}
