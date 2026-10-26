@@ -21,6 +21,7 @@ pub mod external;
 pub mod folder;
 pub mod geometry;
 pub mod heif;
+pub mod multi;
 pub mod rotate;
 pub mod settings;
 pub mod startup;

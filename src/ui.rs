@@ -8,7 +8,7 @@ use std::sync::Arc;
 use egui::{Color32, ColorImage, RichText, TextureHandle, TextureOptions};
 
 use crate::core::{
-    DirColumn, Event, Focus, Key, KeyPress, Notice, Points, Screen, Thumb, View, Zoom,
+    DirColumn, Event, Focus, InnerImages, Key, KeyPress, Notice, Points, Screen, Thumb, View, Zoom,
 };
 use crate::decode::DecodedImage;
 use crate::folder;
@@ -24,7 +24,7 @@ const CURRENT_MARK: Color32 = Color32::from_rgb(0xff, 0xd5, 0x80);
 /// The highlighted thumb while the band has the focus, around the current mark.
 const BAND_HIGHLIGHT: Color32 = Color32::from_rgb(0x7c, 0xc4, 0xff);
 const BROKEN_TILE: Color32 = Color32::from_rgb(0x3a, 0x1e, 0x1c);
-/// The badge of an animated thumb and its film frames.
+/// The badge of an animated or multi-image thumb and its marks.
 const ANIMATED_BADGE: Color32 = Color32::from_rgba_premultiplied(0x12, 0x12, 0x14, 0xc0);
 const ANIMATED_MARK: Color32 = Color32::from_rgb(0xe8, 0xe8, 0xea);
 /// The highlighted folder of the focused dir column, and its text.
@@ -206,6 +206,9 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
                 Screen::Searching { .. } => show_status(ui, "Searching…"),
                 Screen::NothingBelow { .. } => show_status(ui, "No images below"),
             }
+            if let Some(inner) = view.inner {
+                show_inner(ui, inner);
+            }
         });
     if view.settings_open {
         show_settings(
@@ -247,6 +250,9 @@ fn show_band(
                     if thumb.animated {
                         paint_animated_badge(ui.painter(), rect);
                         (rect, response, format!("{name} (animated)"))
+                    } else if thumb.images > 1 {
+                        paint_images_badge(ui.painter(), rect, thumb.images);
+                        (rect, response, format!("{name} ({} images)", thumb.images))
                     } else {
                         (rect, response, name)
                     }
@@ -314,6 +320,23 @@ fn paint_animated_badge(painter: &egui::Painter, rect: egui::Rect) {
             egui::Rect::from_min_size(egui::pos2(left, badge.min.y + 2.0), egui::vec2(5.0, 6.0));
         painter.rect_filled(frame, 1.0, ANIMATED_MARK);
     }
+}
+
+/// The badge of a multi-image thumb in its bottom left corner: how many
+/// images the file holds.
+fn paint_images_badge(painter: &egui::Painter, rect: egui::Rect, images: usize) {
+    let badge = egui::Rect::from_min_size(
+        egui::pos2(rect.min.x + 3.0, rect.max.y - 15.0),
+        egui::vec2(22.0, 12.0),
+    );
+    painter.rect_filled(badge, 2.0, ANIMATED_BADGE);
+    painter.text(
+        badge.center(),
+        egui::Align2::CENTER_CENTER,
+        images.to_string(),
+        egui::FontId::proportional(10.0),
+        ANIMATED_MARK,
+    );
 }
 
 /// The current folder's name over its subfolders, the highlighted one painted
@@ -524,6 +547,25 @@ fn show_image(
     let name = folder::file_name(shown.path);
     ui.allocate_rect(visible, egui::Sense::hover())
         .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Image, true, &name));
+}
+
+/// Which image of a multi-image file is shown, in the top right corner.
+fn show_inner(ui: &mut egui::Ui, inner: InnerImages) {
+    let text = format!("{} / {}", inner.index.saturating_add(1), inner.count);
+    let area = ui.max_rect();
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(area.max.x - 80.0, area.min.y + 6.0),
+        egui::vec2(74.0, 20.0),
+    );
+    ui.put(
+        rect,
+        egui::Label::new(
+            RichText::new(text)
+                .color(TEXT)
+                .background_color(ANIMATED_BADGE),
+        )
+        .selectable(false),
+    );
 }
 
 /// The texture point shown at `(u, v)` of an image turned by `rotation`, all

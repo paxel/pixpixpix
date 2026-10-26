@@ -310,3 +310,22 @@ fn heic_and_avif_are_refused_and_left_untouched() {
         );
     }
 }
+
+#[test]
+fn multi_image_files_are_refused_and_left_untouched() {
+    for name in ["pages.tiff", "stereo.mpo"] {
+        let (_dir, path) = copy(name).unwrap();
+        let error = rotate::write(&path, Rotation::Right).unwrap_err();
+        assert_eq!(
+            error,
+            format!(
+                "Cannot rotate {name}: rotating files of several images is not supported, \
+                 the other images would be lost"
+            )
+        );
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            std::fs::read(fixture(name)).unwrap()
+        );
+    }
+}

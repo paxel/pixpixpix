@@ -188,6 +188,7 @@ impl Core {
                             image,
                             current: path == first,
                             animated: false,
+                            images: 1,
                         })
                     })
                     .collect();

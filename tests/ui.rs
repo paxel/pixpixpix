@@ -828,3 +828,32 @@ fn a_playing_animation_is_drawn_frame_by_frame() {
     h.get_by_role_and_label(Role::Image, "a.gif");
     h.get_by_role_and_label(Role::Button, "a.gif (animated)");
 }
+
+#[test]
+fn multi_image_files_show_which_image_and_are_marked_in_the_band() {
+    let mut core = browsing("/p/a.tiff", &["/p/a.tiff", "/p/b.jpg"]);
+    core.handle(Event::Images {
+        path: PathBuf::from("/p/a.tiff"),
+        count: 3,
+    });
+    decoded(&mut core, "/p/b.jpg");
+    let mut h = harness(core);
+    h.run();
+    h.get_by_label("1 / 3");
+    h.get_by_role_and_label(Role::Button, "a.tiff (3 images)");
+    h.get_by_role_and_label(Role::Button, "b.jpg");
+    h.key_press(egui::Key::ArrowDown);
+    h.run();
+    assert_eq!(
+        h.state().commands.last(),
+        Some(&Command::DecodeInner {
+            path: PathBuf::from("/p/a.tiff"),
+            index: 1,
+        })
+    );
+    h.get_by_label("2 / 3");
+    h.key_press(egui::Key::ArrowRight);
+    h.run();
+    assert!(h.query_by_label("2 / 3").is_none());
+    assert!(h.query_by_label("1 / 3").is_none());
+}

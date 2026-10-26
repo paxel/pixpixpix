@@ -39,6 +39,7 @@ pub fn run() -> ExitCode {
         watcher: None,
         search: None,
         frames: None,
+        inner: None,
         settings_path: settings::default_path(),
         copier: None,
     };
@@ -117,6 +118,8 @@ struct Worker {
     search: Option<Arc<AtomicBool>>,
     /// Cancellation token of the running frames decode.
     frames: Option<Arc<AtomicBool>>,
+    /// Cancellation token of the running decode of an inner image.
+    inner: Option<Arc<AtomicBool>>,
     /// Where the settings file lives; absent without a config directory.
     settings_path: Option<PathBuf>,
     /// Hands copies to the clipboard thread, started on the first copy.
@@ -141,16 +144,22 @@ impl Worker {
                 self.run_all(move || {
                     let result = decode::decode_first_frame(&path, &cancel)?;
                     let animated = matches!(&result, Ok(first) if first.animated);
+                    let images = result.as_ref().map_or(1, |first| first.images);
                     let result = result.map(|first| first.image);
-                    let decoded = Event::Decoded {
+                    let mut events = vec![Event::Decoded {
                         path: path.clone(),
                         result,
-                    };
-                    Some(if animated {
-                        vec![decoded, Event::Animated(path)]
-                    } else {
-                        vec![decoded]
-                    })
+                    }];
+                    if animated {
+                        events.push(Event::Animated(path.clone()));
+                    }
+                    if images > 1 {
+                        events.push(Event::Images {
+                            path,
+                            count: images,
+                        });
+                    }
+                    Some(events)
                 });
             }
             Command::DecodeFrames(path) => {
@@ -166,6 +175,26 @@ impl Worker {
             }
             Command::CancelFrames => {
                 if let Some(cancel) = self.frames.take() {
+                    cancel.store(true, Ordering::Relaxed);
+                }
+            }
+            Command::DecodeInner { path, index } => {
+                let cancel = Arc::new(AtomicBool::new(false));
+                if let Some(old) = self.inner.replace(Arc::clone(&cancel)) {
+                    old.store(true, Ordering::Relaxed);
+                }
+                let (path, index) = (path.clone(), *index);
+                self.run(move || {
+                    let result = decode::decode_inner(&path, index, &cancel)?;
+                    Some(Event::InnerDecoded {
+                        path,
+                        index,
+                        result,
+                    })
+                });
+            }
+            Command::CancelInner => {
+                if let Some(cancel) = self.inner.take() {
                     cancel.store(true, Ordering::Relaxed);
                 }
             }
@@ -378,7 +407,9 @@ impl App {
                 | Command::Trash(_)
                 | Command::Copy { .. }
                 | Command::DecodeFrames(_)
-                | Command::CancelFrames => {
+                | Command::CancelFrames
+                | Command::DecodeInner { .. }
+                | Command::CancelInner => {
                     self.worker.spawn(&command);
                 }
             }

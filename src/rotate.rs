@@ -16,7 +16,7 @@ use image::metadata::Orientation;
 use image::{AnimationDecoder, DynamicImage, ImageDecoder, ImageFormat, ImageReader};
 
 use crate::turbojpeg::{self, Transform, TurboJpeg};
-use crate::{decode, folder};
+use crate::{decode, folder, multi};
 
 /// A turn of the shown image in quarter steps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -82,6 +82,12 @@ fn rotated(path: &Path, rotation: Rotation) -> Result<Vec<u8>, String> {
     let bytes = fs::read(path).map_err(|e| e.to_string())?;
     if decode::is_heif(path, &bytes) {
         return Err("rotating HEIC/HEIF and AVIF is not supported".to_owned());
+    }
+    if multi::count(&bytes) > 1 {
+        return Err(
+            "rotating files of several images is not supported, the other images would be lost"
+                .to_owned(),
+        );
     }
     let format = image::guess_format(&bytes)
         .or_else(|_| ImageFormat::from_path(path))

@@ -1,5 +1,5 @@
 //! libheif, loaded on the first HEIC/HEIF or AVIF file: decodes the primary
-//! image of the file. The library is never linked at build time; without it,
+//! image of the file, or another of its top-level images. The library is never linked at build time; without it,
 //! or without a decoder for the file's codec, the file shows as broken with
 //! the reason.
 //!
@@ -74,7 +74,12 @@ type ContextAlloc = unsafe extern "C" fn() -> Context;
 type ContextFree = unsafe extern "C" fn(Context);
 type ReadFromMemory =
     unsafe extern "C" fn(Context, *const c_void, usize, *const c_void) -> HeifError;
-type PrimaryImageHandle = unsafe extern "C" fn(Context, *mut Handle) -> HeifError;
+/// `heif_item_id`.
+type ItemId = u32;
+type PrimaryImageId = unsafe extern "C" fn(Context, *mut ItemId) -> HeifError;
+type TopLevelCount = unsafe extern "C" fn(Context) -> c_int;
+type TopLevelIds = unsafe extern "C" fn(Context, *mut ItemId, c_int) -> c_int;
+type ImageHandle = unsafe extern "C" fn(Context, ItemId, *mut Handle) -> HeifError;
 type HandleRelease = unsafe extern "C" fn(Handle);
 type DecodeImage =
     unsafe extern "C" fn(Handle, *mut Image, c_int, c_int, *const c_void) -> HeifError;
@@ -88,7 +93,10 @@ pub struct Heif {
     context_alloc: ContextAlloc,
     context_free: ContextFree,
     read: ReadFromMemory,
-    primary: PrimaryImageHandle,
+    primary: PrimaryImageId,
+    top_level_count: TopLevelCount,
+    top_level_ids: TopLevelIds,
+    image_handle: ImageHandle,
     handle_release: HandleRelease,
     decode: DecodeImage,
     image_release: ImageRelease,
@@ -136,7 +144,16 @@ fn functions(library: Library) -> Result<Heif, String> {
                 .get::<ReadFromMemory>(b"heif_context_read_from_memory_without_copy\0")
                 .map_err(missing)?,
             primary: *library
-                .get::<PrimaryImageHandle>(b"heif_context_get_primary_image_handle\0")
+                .get::<PrimaryImageId>(b"heif_context_get_primary_image_ID\0")
+                .map_err(missing)?,
+            top_level_count: *library
+                .get::<TopLevelCount>(b"heif_context_get_number_of_top_level_images\0")
+                .map_err(missing)?,
+            top_level_ids: *library
+                .get::<TopLevelIds>(b"heif_context_get_list_of_top_level_image_IDs\0")
+                .map_err(missing)?,
+            image_handle: *library
+                .get::<ImageHandle>(b"heif_context_get_image_handle\0")
                 .map_err(missing)?,
             handle_release: *library
                 .get::<HandleRelease>(b"heif_image_handle_release\0")
@@ -167,10 +184,12 @@ fn functions(library: Library) -> Result<Heif, String> {
 }
 
 impl Heif {
-    /// The primary image of the HEIF or AVIF file `bytes`, upright: libheif
-    /// applies the file's rotation, mirroring and crop. The EXIF orientation
-    /// is not applied on top, as it describes the same turn.
-    pub fn decode(&self, bytes: &[u8]) -> Result<DecodedImage, String> {
+    /// Top-level image `index` of the HEIF or AVIF file `bytes`, upright, and
+    /// how many top-level images the file has. Image 0 is the primary one,
+    /// the others follow in file order. libheif applies the file's rotation,
+    /// mirroring and crop; the EXIF orientation is not applied on top, as it
+    /// describes the same turn.
+    pub fn decode(&self, bytes: &[u8], index: usize) -> Result<(DecodedImage, usize), String> {
         // SAFETY: the context is checked and freed once, after everything
         // taken from it; `bytes` outlives it, as reading without a copy needs.
         let result = unsafe {
@@ -178,7 +197,7 @@ impl Heif {
             if context.is_null() {
                 return Err("libheif could not start".to_owned());
             }
-            let result = self.decode_in(context, bytes);
+            let result = self.decode_in(context, bytes, index);
             (self.context_free)(context);
             result
         };
@@ -187,7 +206,12 @@ impl Heif {
 
     /// # Safety
     /// `context` is a live context; `bytes` outlives it.
-    unsafe fn decode_in(&self, context: Context, bytes: &[u8]) -> Result<DecodedImage, String> {
+    unsafe fn decode_in(
+        &self,
+        context: Context,
+        bytes: &[u8],
+        index: usize,
+    ) -> Result<(DecodedImage, usize), String> {
         // SAFETY: see the function's contract; the handle is released once.
         unsafe {
             check((self.read)(
@@ -196,14 +220,38 @@ impl Heif {
                 bytes.len(),
                 ptr::null(),
             ))?;
+            let ids = self.image_ids(context)?;
+            let id = ids
+                .get(index)
+                .ok_or_else(|| format!("the file has no image {}", index.saturating_add(1)))?;
             let mut handle: Handle = ptr::null_mut();
-            check((self.primary)(context, &mut handle))?;
+            check((self.image_handle)(context, *id, &mut handle))?;
             if handle.is_null() {
                 return Err("libheif found no image".to_owned());
             }
             let result = self.decode_handle(handle);
             (self.handle_release)(handle);
-            result
+            result.map(|image| (image, ids.len()))
+        }
+    }
+
+    /// The top-level images of the file read into `context`, the primary one
+    /// first.
+    ///
+    /// # Safety
+    /// `context` is a live context holding a file.
+    unsafe fn image_ids(&self, context: Context) -> Result<Vec<ItemId>, String> {
+        // SAFETY: see the function's contract; the array holds as many IDs as
+        // libheif is told it may fill.
+        unsafe {
+            let mut primary: ItemId = 0;
+            check((self.primary)(context, &mut primary))?;
+            let count = (self.top_level_count)(context);
+            let mut ids: Vec<ItemId> = vec![0; usize::try_from(count).unwrap_or(0)];
+            let filled = (self.top_level_ids)(context, ids.as_mut_ptr(), count);
+            ids.truncate(usize::try_from(filled).unwrap_or(0));
+            let others = ids.into_iter().filter(|id| *id != primary);
+            Ok(std::iter::once(primary).chain(others).collect())
         }
     }
 

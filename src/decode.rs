@@ -12,8 +12,8 @@ use image::codecs::gif::GifDecoder;
 use image::codecs::webp::WebPDecoder;
 use image::{AnimationDecoder, DynamicImage, ImageDecoder, ImageFormat, ImageReader};
 
-use crate::folder;
 use crate::heif::{self, Heif};
+use crate::{folder, multi};
 
 /// Decoded RGBA pixels, shared cheaply between the core and the UI.
 #[derive(Clone, PartialEq, Eq)]
@@ -47,6 +47,9 @@ pub struct FirstFrame {
     pub image: DecodedImage,
     /// An animated GIF or WebP.
     pub animated: bool,
+    /// How many images the file holds: more than one for a multi-page TIFF,
+    /// an MPO or a multi-image HEIC/HEIF.
+    pub images: usize,
 }
 
 /// One picture of an animation and how long it shows, as the file says.
@@ -71,8 +74,8 @@ pub fn decode_file(path: &Path, cancel: &AtomicBool) -> Option<Result<DecodedIma
     decode_first_frame(path, cancel).map(|result| result.map(|first| first.image))
 }
 
-/// Like [`decode_file`], telling an animation apart; finding out reads only
-/// the file's headers.
+/// Like [`decode_file`], telling an animation and a multi-image file apart;
+/// finding out reads only the file's headers.
 pub fn decode_first_frame(path: &Path, cancel: &AtomicBool) -> Option<Result<FirstFrame, String>> {
     let cancelled = || cancel.load(Ordering::Relaxed);
     let bytes = match read(path, &cancelled) {
@@ -84,7 +87,34 @@ pub fn decode_first_frame(path: &Path, cancel: &AtomicBool) -> Option<Result<Fir
         return None;
     }
     let animated = is_animated(&bytes);
-    let result = decode_bytes(path, bytes).map(|image| FirstFrame { image, animated });
+    let result = decode_bytes(path, bytes, 0).map(|(image, images)| FirstFrame {
+        image,
+        animated,
+        images,
+    });
+    if cancelled() {
+        return None;
+    }
+    Some(result)
+}
+
+/// Like [`decode_file`], for image `index` of a multi-image file, counted
+/// from 0 for the one [`decode_file`] gives.
+pub fn decode_inner(
+    path: &Path,
+    index: usize,
+    cancel: &AtomicBool,
+) -> Option<Result<DecodedImage, String>> {
+    let cancelled = || cancel.load(Ordering::Relaxed);
+    let bytes = match read(path, &cancelled) {
+        Ok(Some(bytes)) => bytes,
+        Ok(None) => return None,
+        Err(e) => return Some(Err(e.to_string())),
+    };
+    if cancelled() {
+        return None;
+    }
+    let result = decode_bytes(path, bytes, index).map(|(image, _)| image);
     if cancelled() {
         return None;
     }
@@ -232,16 +262,22 @@ pub fn is_heif(path: &Path, bytes: &[u8]) -> bool {
     heif::is_heif(bytes) || (folder::is_heif(path) && image::guess_format(bytes).is_err())
 }
 
-/// Decodes the bytes of the file at `path`; the file content decides the
-/// format, its extension is the fallback.
-fn decode_bytes(path: &Path, bytes: Vec<u8>) -> Result<DecodedImage, String> {
+/// Decodes image `index` of the bytes of the file at `path` and counts the
+/// file's images; the file content decides the format, its extension is the
+/// fallback.
+fn decode_bytes(
+    path: &Path,
+    bytes: Vec<u8>,
+    index: usize,
+) -> Result<(DecodedImage, usize), String> {
     if is_heif(path, &bytes) {
         return HEIF
             .get_or_init(|| heif::load(heif::LIBRARY_NAMES))
             .as_ref()
             .map_err(Clone::clone)?
-            .decode(&bytes);
+            .decode(&bytes, index);
     }
+    let (bytes, images) = multi::picture(bytes, index)?;
     let mut reader = ImageReader::new(Cursor::new(bytes));
     if let Ok(format) = ImageFormat::from_path(path) {
         reader.set_format(format);
@@ -254,5 +290,5 @@ fn decode_bytes(path: &Path, bytes: Vec<u8>) -> Result<DecodedImage, String> {
     let orientation = decoder.orientation().map_err(|e| e.to_string())?;
     let mut image = DynamicImage::from_decoder(decoder).map_err(|e| e.to_string())?;
     image.apply_orientation(orientation);
-    Ok(DecodedImage::from_dynamic(image))
+    Ok((DecodedImage::from_dynamic(image), images))
 }

@@ -9,7 +9,7 @@ use std::sync::atomic::{self, AtomicBool};
 
 /// Extensions of the image formats pixpixpix opens, lower case.
 const IMAGE_EXTENSIONS: &[&str] = &[
-    "jpg", "jpeg", "jpe", "png", "gif", "webp", "bmp", "tif", "tiff",
+    "jpg", "jpeg", "jpe", "png", "gif", "webp", "bmp", "tif", "tiff", "mpo",
 ];
 
 /// True when the file name has an extension of a supported image format.

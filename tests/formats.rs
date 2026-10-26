@@ -499,3 +499,86 @@ fn frames_of_a_still_image_are_an_error() {
     let result = decode::decode_frames(&fixture("sample.png"), &AtomicBool::new(false)).unwrap();
     assert!(result.is_err());
 }
+
+/// Decodes image `index` of `path` with a token that is never set.
+fn decode_inner(path: &Path, index: usize) -> Result<DecodedImage, String> {
+    decode::decode_inner(path, index, &AtomicBool::new(false))
+        .unwrap_or_else(|| Err("cancelled".into()))
+}
+
+fn is_green(p: [u8; 4]) -> bool {
+    p[0] < 60 && p[1] > 200 && p[2] < 60
+}
+
+/// The multi-image fixtures, each a red/blue image and a green one; the
+/// HEIC only with libheif.
+fn multi_image_fixtures() -> Vec<&'static str> {
+    let mut names = vec!["pages.tiff", "stereo.mpo"];
+    if heif::load(heif::LIBRARY_NAMES).is_ok() {
+        names.push("images.heic");
+    }
+    names
+}
+
+#[test]
+fn multi_image_files_count_their_whole_images() {
+    // pages.tiff has a third, reduced-resolution page, which does not count.
+    for name in multi_image_fixtures() {
+        let first = decode_first_frame(&fixture(name)).unwrap().unwrap();
+        assert_eq!(first.images, 2, "{name}");
+        assert!(!first.animated, "{name}");
+        assert!(is_red(pixel(&first.image, 0, 0)), "{name}");
+    }
+}
+
+#[test]
+fn single_image_files_count_one() {
+    // gainmap.jpg's MPF index lists a second JPEG of undefined type, as Ultra
+    // HDR photos list their gain map: not a picture of its own.
+    for name in [
+        "sample.png",
+        "sample.jpg",
+        "sample.gif",
+        "sample.webp",
+        "sample.bmp",
+        "sample.tiff",
+        "orientation6.jpg",
+        "gainmap.jpg",
+    ] {
+        let first = decode_first_frame(&fixture(name)).unwrap().unwrap();
+        assert_eq!(first.images, 1, "{name}");
+    }
+}
+
+#[test]
+fn inner_images_decode_by_index() {
+    for name in multi_image_fixtures() {
+        let path = fixture(name);
+        assert_eq!(decode_inner(&path, 0), decode_file(&path), "{name}");
+        let second = decode_inner(&path, 1).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!((second.width, second.height), (4, 2), "{name}");
+        assert!(is_green(pixel(&second, 3, 1)), "{name}");
+        assert_eq!(
+            decode_inner(&path, 2),
+            Err("the file has no image 3".to_owned()),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn a_single_image_file_has_no_second_image() {
+    let error = decode_inner(&fixture("sample.png"), 1).unwrap_err();
+    assert_eq!(error, "the file has no image 2");
+}
+
+#[test]
+fn a_cancelled_inner_decode_reports_nothing() {
+    let path = fixture("pages.tiff");
+    assert_eq!(decode::decode_inner(&path, 1, &AtomicBool::new(true)), None);
+}
+
+#[test]
+fn mpo_files_are_listed() {
+    assert!(folder::is_image(Path::new("stereo.MPO")));
+}

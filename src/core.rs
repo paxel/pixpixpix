@@ -158,6 +158,18 @@ pub enum Event {
     },
     /// The time has come for the frame [`View::next_frame_in`] announced.
     Tick(Instant),
+    /// The file of a successful [`Event::Decoded`], sent right after it,
+    /// holds `count` images, more than one; that event showed the first.
+    Images {
+        path: PathBuf,
+        count: usize,
+    },
+    /// A [`Command::DecodeInner`] finished.
+    InnerDecoded {
+        path: PathBuf,
+        index: usize,
+        result: Result<DecodedImage, String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -215,6 +227,16 @@ pub enum Command {
     /// The running [`Command::DecodeFrames`] is no longer needed; it reports
     /// nothing once cancelled.
     CancelFrames,
+    /// Decode image `index` of a multi-image file, counted from 0 for the one
+    /// [`Command::Decode`] gives, replacing any such decode running; answered
+    /// by [`Event::InnerDecoded`].
+    DecodeInner {
+        path: PathBuf,
+        index: usize,
+    },
+    /// The running [`Command::DecodeInner`] is no longer needed; it reports
+    /// nothing once cancelled.
+    CancelInner,
     SetFullscreen(bool),
     Quit,
 }
@@ -334,6 +356,12 @@ const IMAGE_VIEW_KEYS: &[KeyHint] = &[
         action: "band",
     },
 ];
+
+/// Image view keys of a multi-image file, listed after the first.
+const INNER_KEYS: KeyHint = KeyHint {
+    keys: "Up/Down",
+    action: "images in the file",
+};
 
 const DIR_COLUMN_KEYS: &[KeyHint] = &[
     KeyHint {
@@ -473,6 +501,16 @@ pub struct Thumb {
     pub current: bool,
     /// The file is an animation.
     pub animated: bool,
+    /// How many images the file holds; more than one for a multi-image file.
+    pub images: usize,
+}
+
+/// Which of the images of a multi-image file is shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InnerImages {
+    /// Counted from 0.
+    pub index: usize,
+    pub count: usize,
 }
 
 /// Zoom factor of one `+`/`-` press.
@@ -632,6 +670,8 @@ pub struct View {
     /// While the main area plays an animation: when its next frame is due,
     /// to be announced with [`Event::Tick`]. Zero before the first tick.
     pub next_frame_in: Option<Duration>,
+    /// While the main area shows a multi-image file: which of its images.
+    pub inner: Option<InnerImages>,
 }
 
 pub struct Core {
@@ -688,6 +728,20 @@ pub struct Core {
     animated: BTreeSet<PathBuf>,
     /// The animation of the current file, once the first frame is shown.
     animation: Option<Animation>,
+    /// How many images the files whose last decode found more than one hold.
+    images: BTreeMap<PathBuf, usize>,
+    /// The image shown of the current file while it holds more than one.
+    inner: Option<Inner>,
+}
+
+/// The image shown of a multi-image file.
+#[derive(Debug)]
+struct Inner {
+    path: PathBuf,
+    count: usize,
+    index: usize,
+    /// Its decode is running; the image shown before stays meanwhile.
+    decoding: bool,
 }
 
 /// Shorter frame delays than this are taken as [`SLOW_DELAY`], as browsers do.
@@ -777,6 +831,7 @@ impl Nav {
                     image: result.as_ref().ok().cloned(),
                     current: true,
                     animated: false,
+                    images: 1,
                 }],
             ),
         }
@@ -828,6 +883,7 @@ impl Core {
                 trash_error: None,
                 copy_error: None,
                 next_frame_in: None,
+                inner: None,
             },
             screen,
             band: Vec::new(),
@@ -851,6 +907,8 @@ impl Core {
             trashing: BTreeSet::new(),
             animated: BTreeSet::new(),
             animation: None,
+            images: BTreeMap::new(),
+            inner: None,
         };
         (core, commands)
     }
@@ -873,6 +931,7 @@ impl Core {
         }
         commands.extend(self.sync_nav());
         commands.extend(self.sync_animation());
+        commands.extend(self.sync_inner());
         self.publish();
         commands
     }
@@ -944,6 +1003,18 @@ impl Core {
                 self.tick(now);
                 Vec::new()
             }
+            Event::Images { path, count } => {
+                self.images.insert(path, count);
+                Vec::new()
+            }
+            Event::InnerDecoded {
+                path,
+                index,
+                result,
+            } => {
+                self.inner_decoded(&path, index, result);
+                Vec::new()
+            }
         }
     }
 
@@ -990,6 +1061,13 @@ impl Core {
         } else {
             self.rotation
         };
+        self.view.inner = match (&preview, &self.inner) {
+            (None, Some(inner)) => Some(InnerImages {
+                index: inner.index,
+                count: inner.count,
+            }),
+            _ => None,
+        };
         self.view.next_frame_in = match (&preview, &self.animation) {
             (None, Some(Animation::Playing { next_in, .. })) => Some(*next_in),
             _ => None,
@@ -998,8 +1076,89 @@ impl Core {
             preview.unwrap_or_else(|| (self.screen.clone(), self.band.clone()));
         for thumb in &mut self.view.band {
             thumb.animated = thumb.image.is_some() && self.animated.contains(&thumb.path);
+            thumb.images = match (&thumb.image, self.images.get(&thumb.path)) {
+                (Some(_), Some(count)) => *count,
+                _ => 1,
+            };
+        }
+        if self.view.focus == Focus::Image && !self.view.settings_open {
+            let mut keys = focus_keys(Focus::Image, self.view.dir_column.is_some());
+            if self.view.inner.is_some() {
+                keys.insert(1, INNER_KEYS);
+            }
+            self.view.key_line.keys = keys;
         }
         self.publish_band_highlight();
+    }
+
+    /// Fits the inner images to the current file: one holding several starts
+    /// at its first; the decode of an image of a file left is cancelled.
+    fn sync_inner(&mut self) -> Vec<Command> {
+        let wanted = self
+            .current
+            .as_ref()
+            .and_then(|path| Some((path, *self.images.get(path)?)));
+        let kept = self.inner.as_ref().map(|i| (&i.path, i.count));
+        if kept == wanted {
+            return Vec::new();
+        }
+        let wanted = wanted.map(|(path, count)| Inner {
+            path: path.clone(),
+            count,
+            index: 0,
+            decoding: false,
+        });
+        self.leave_inner(wanted)
+    }
+
+    /// Replaces the inner images, cancelling a decode for the old ones.
+    fn leave_inner(&mut self, new: Option<Inner>) -> Vec<Command> {
+        match std::mem::replace(&mut self.inner, new) {
+            Some(Inner { decoding: true, .. }) => vec![Command::CancelInner],
+            _ => Vec::new(),
+        }
+    }
+
+    /// Steps through the images of a multi-image file, stopping at the ends:
+    /// the first shows from the cache at once, any other once decoded.
+    fn step_inner(&mut self, step: Step) -> Vec<Command> {
+        let Some(inner) = self.inner.as_mut() else {
+            return Vec::new();
+        };
+        let target = match step {
+            Step::Previous => inner.index.checked_sub(1),
+            Step::Next => inner.index.checked_add(1).filter(|i| *i < inner.count),
+        };
+        let Some(index) = target else {
+            return Vec::new();
+        };
+        inner.index = index;
+        let path = inner.path.clone();
+        if let Some(result) = self.cache.get(&path).filter(|_| index == 0) {
+            self.screen = screen(&path, result.clone());
+            let cancel = std::mem::replace(&mut inner.decoding, false);
+            return if cancel {
+                vec![Command::CancelInner]
+            } else {
+                Vec::new()
+            };
+        }
+        inner.decoding = true;
+        vec![Command::DecodeInner { path, index }]
+    }
+
+    /// An image of a multi-image file arrived: it shows if it is still the
+    /// one wanted.
+    fn inner_decoded(&mut self, path: &Path, index: usize, result: Result<DecodedImage, String>) {
+        let Some(inner) = self
+            .inner
+            .as_mut()
+            .filter(|i| i.decoding && i.path == path && i.index == index)
+        else {
+            return;
+        };
+        inner.decoding = false;
+        self.screen = screen(path, result);
     }
 
     /// Fits the animation to the current file: an animated one shown as an
@@ -1576,6 +1735,8 @@ impl Core {
         match key {
             Key::Left => self.step(Step::Previous),
             Key::Right => self.step(Step::Next),
+            Key::Up => self.step_inner(Step::Previous),
+            Key::Down => self.step_inner(Step::Next),
             Key::Plus => {
                 self.zoom_by(KEY_ZOOM_STEP, Points::default());
                 Vec::new()
@@ -1843,7 +2004,8 @@ impl Core {
         self.view.open_error = None;
         self.view.trash_error = None;
         self.view.copy_error = None;
-        let mut commands = Vec::new();
+        // The screen shows the file's first image again.
+        let mut commands = self.leave_inner(None);
         self.screen = match self.cache.get(&path) {
             Some(result) => screen(&path, result.clone()),
             None => {
@@ -1858,8 +2020,9 @@ impl Core {
     }
 
     fn decoded(&mut self, path: PathBuf, result: Result<DecodedImage, String>) -> Vec<Command> {
-        // An animation says so right after this.
+        // An animation or a multi-image file says so right after this.
         self.animated.remove(&path);
+        self.images.remove(&path);
         let mut commands = self.search_decoded(&path, &result);
         if !self.decoding.remove(&path) {
             self.nav_decoded(path, result);
@@ -1947,6 +2110,7 @@ impl Core {
                     current: self.current.as_ref() == Some(&path),
                     path,
                     animated: false,
+                    images: 1,
                 })
             })
             .collect();
