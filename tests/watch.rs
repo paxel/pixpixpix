@@ -81,6 +81,9 @@ fn reading_a_file_is_no_change() {
     let dir = tempfile::tempdir().unwrap();
     fs::write(dir.path().join("a.jpg"), b"x").unwrap();
     let (_watcher, listings) = watching(dir.path()).unwrap();
+    // macOS reports the write from just before the watch began; that
+    // listing comes first and goes.
+    while listings.recv_timeout(Duration::from_millis(600)).is_ok() {}
     fs::read(dir.path().join("a.jpg")).unwrap();
     assert!(listings.recv_timeout(Duration::from_millis(600)).is_err());
 }
