@@ -62,7 +62,7 @@ impl Core {
 
     /// Whether the current folder or the nav cache waits for the decode of
     /// `path`.
-    fn decoding_elsewhere(&self, path: &Path) -> bool {
+    pub(super) fn decoding_elsewhere(&self, path: &Path) -> bool {
         self.decoding.contains(path)
             || self
                 .nav

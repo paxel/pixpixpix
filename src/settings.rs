@@ -11,6 +11,11 @@ use serde::{Deserialize, Serialize};
 /// The neighbours per side the cache may be set to.
 pub const CACHE_PER_SIDE: RangeInclusive<usize> = 1..=20;
 
+/// The sizes of overview thumbnails `+`/`-` step through, in points.
+pub const THUMBNAIL_SIZES: [u32; 6] = [SMALLEST, 128, 160, 200, 256, LARGEST];
+const SMALLEST: u32 = 96;
+const LARGEST: u32 = 320;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -22,6 +27,8 @@ pub struct Settings {
     /// The program videos are opened with by `o`; empty for the system
     /// default.
     pub video_app: String,
+    /// The side of an overview thumbnail in points, from 96 to 320.
+    pub thumbnail_size: u32,
 }
 
 impl Default for Settings {
@@ -30,6 +37,7 @@ impl Default for Settings {
             cache_per_side: 5,
             image_app: String::new(),
             video_app: String::new(),
+            thumbnail_size: 160,
         }
     }
 }
@@ -41,9 +49,21 @@ impl Settings {
             cache_per_side: self
                 .cache_per_side
                 .clamp(*CACHE_PER_SIDE.start(), *CACHE_PER_SIDE.end()),
+            thumbnail_size: self.thumbnail_size.clamp(SMALLEST, LARGEST),
             ..self
         }
     }
+}
+
+/// The thumbnail size one step up from `size`, or down; the largest and the
+/// smallest stay. A size between steps goes to the step it is next to.
+pub fn step_thumbnail_size(size: u32, larger: bool) -> u32 {
+    let next = if larger {
+        THUMBNAIL_SIZES.iter().find(|s| **s > size)
+    } else {
+        THUMBNAIL_SIZES.iter().rev().find(|s| **s < size)
+    };
+    next.copied().unwrap_or(size).clamp(SMALLEST, LARGEST)
 }
 
 /// Where the settings file lives.

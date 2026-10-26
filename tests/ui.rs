@@ -493,7 +493,8 @@ fn dot_in_the_column_shows_dot_folders() {
     h.get_by_label(".git");
 }
 
-/// Whether the band thumb `name` is highlighted for keyboard selection.
+/// Whether the band thumb or overview tile `name` is highlighted for
+/// keyboard selection.
 fn band_selected(h: &Harness<'_, State>, name: &str) -> Option<bool> {
     h.get_by_role_and_label(Role::Button, name)
         .accesskit_node()
@@ -1085,6 +1086,7 @@ fn g_replaces_image_and_band_by_sections_of_named_placeholders() {
 
     h.state_mut().core.handle(Event::ThumbnailDecoded {
         path: PathBuf::from("/p/x/y/c.jpg"),
+        size: 160,
         result: Ok(DecodedImage {
             width: 2,
             height: 1,
@@ -1123,14 +1125,124 @@ fn only_the_tiles_on_screen_are_laid_out_and_decoded() {
         .state()
         .commands
         .iter()
-        .filter(|c| matches!(c, Command::DecodeThumbnail(_)))
+        .filter(|c| matches!(c, Command::DecodeThumbnail { .. }))
         .collect();
     assert_eq!(
         asked,
         (0..4)
-            .map(|i| Command::DecodeThumbnail(PathBuf::from(format!("/p/{i}.jpg"))))
+            .map(|i| Command::DecodeThumbnail {
+                path: PathBuf::from(format!("/p/{i}.jpg")),
+                size: 160,
+            })
             .collect::<Vec<_>>()
             .iter()
             .collect::<Vec<_>>()
     );
+}
+
+/// The overview's selected tile.
+fn selected_tile(h: &Harness<'static, State>) -> Option<usize> {
+    h.state().core.view().overview.as_ref()?.selected
+}
+
+#[test]
+fn arrows_move_a_marked_selection_scrolled_into_view_only_once() {
+    let (mut h, scan) = overview_open();
+    let files: Vec<String> = (0..500).map(|i| format!("/p/{i}.jpg")).collect();
+    overview_section(&mut h, scan.unwrap(), "/p", &files);
+    assert_eq!(band_selected(&h, "0.jpg"), Some(true));
+    for _ in 0..20 {
+        h.key_press(egui::Key::ArrowDown);
+    }
+    h.run();
+    let index = selected_tile(&h).unwrap();
+    assert!(index >= 20, "{index}");
+    let label = format!("{index}.jpg");
+    assert_eq!(band_selected(&h, &label), Some(true));
+    assert!(h.query_by_role_and_label(Role::Button, "0.jpg").is_none());
+
+    // Scrolled away by the wheel, the view stays where the wheel left it.
+    h.hover_at(egui::pos2(400.0, 300.0));
+    h.event(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(0.0, 100_000.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: egui::Modifiers::NONE,
+    });
+    // The wheel scrolls smoothly over many frames.
+    h.run_steps(100);
+    h.get_by_role_and_label(Role::Button, "0.jpg");
+    assert!(h.query_by_role_and_label(Role::Button, &label).is_none());
+}
+
+#[test]
+fn a_click_on_a_tile_shows_its_file() {
+    let (mut h, scan) = overview_open();
+    overview_section(
+        &mut h,
+        scan.unwrap(),
+        "/p",
+        &["/p/a.jpg".into(), "/p/b.jpg".into()],
+    );
+    h.get_by_role_and_label(Role::Button, "b.jpg").click();
+    h.run();
+    assert!(h.state().core.view().overview.is_none());
+    assert!(matches!(
+        &h.state().core.view().screen,
+        Screen::Loading { path } if path == Path::new("/p/b.jpg")
+    ));
+}
+
+#[test]
+fn ctrl_wheel_over_the_overview_resizes_the_thumbnails() {
+    let (mut h, scan) = overview_open();
+    overview_section(&mut h, scan.unwrap(), "/p", &["/p/a.jpg".into()]);
+    h.hover_at(egui::pos2(400.0, 300.0));
+    h.event(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Line,
+        delta: egui::vec2(0.0, 1.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: egui::Modifiers::COMMAND,
+    });
+    h.run();
+    assert_eq!(h.state().core.view().settings.thumbnail_size, 200);
+}
+
+#[test]
+fn video_and_live_photo_tiles_carry_their_marks_and_the_key_line_the_gallery_keys() {
+    let (mut h, scan) = overview_open();
+    overview_section(
+        &mut h,
+        scan.unwrap(),
+        "/p",
+        &[
+            "/p/a.heic".into(),
+            "/p/a.mov".into(),
+            "/p/b.mp4".into(),
+            "/p/c.jpg".into(),
+        ],
+    );
+    h.get_by_role_and_label(Role::Button, "a.heic (live photo)");
+    h.get_by_role_and_label(Role::Button, "b.mp4 (video)");
+    let image = DecodedImage {
+        width: 2,
+        height: 1,
+        rgba: Arc::from(vec![255; 8]),
+    };
+    for (path, result) in [
+        ("/p/b.mp4", Ok(image)),
+        ("/p/c.jpg", Err("broken".to_owned())),
+    ] {
+        h.state_mut().core.handle(Event::ThumbnailDecoded {
+            path: PathBuf::from(path),
+            size: 160,
+            result,
+        });
+    }
+    h.run();
+    h.get_by_role_and_label(Role::Image, "b.mp4");
+    h.get_by_role_and_label(Role::Button, "b.mp4 (video)");
+    h.get_by_role_and_label(Role::Button, "c.jpg (error)");
+    h.get_by_label("thumbnail size");
+    h.get_by_label("close overview");
 }

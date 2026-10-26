@@ -190,7 +190,8 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
         .frame(egui::Frame::NONE.fill(BACKGROUND))
         .show(ui, |ui| {
             if let Some(gallery) = &view.overview {
-                overview::show_overview(ui, gallery, textures, &mut events);
+                let side = view.settings.thumbnail_size;
+                overview::show_overview(ui, gallery, side, textures, &mut events);
                 return;
             }
             let size = ui.max_rect().size();

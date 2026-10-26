@@ -17,7 +17,7 @@ mod overview;
 mod search;
 
 use overview::Gallery;
-pub use overview::{Overview, Section, Tile};
+pub use overview::{Overview, Reveal, Section, Tile};
 use search::Search;
 
 #[derive(Debug, Clone, Copy)]
@@ -211,10 +211,22 @@ pub enum Event {
     OverviewScanned(u64),
     /// The overview shows these tiles of [`Overview::tiles`].
     OverviewVisible(Range<usize>),
-    /// A [`Command::DecodeThumbnail`] finished.
+    /// A [`Command::DecodeThumbnail`] for this size finished.
     ThumbnailDecoded {
         path: PathBuf,
+        size: u32,
         result: Result<DecodedImage, String>,
+    },
+    /// The overview lays out this many tiles per row.
+    OverviewColumns(usize),
+    /// The overview scrolled to [`Overview::reveal`].
+    OverviewRevealed,
+    /// The tile of the overview with this index was clicked.
+    OpenTile(usize),
+    /// The wheel turned with `Ctrl` (`Cmd` on macOS) held over the overview,
+    /// away from the user for `larger`.
+    ThumbnailWheel {
+        larger: bool,
     },
 }
 
@@ -328,9 +340,12 @@ pub enum Command {
     },
     /// The running scan is no longer needed; it reports nothing more.
     CancelScan,
-    /// Decode the file shrunk to a thumbnail, answered by
-    /// [`Event::ThumbnailDecoded`].
-    DecodeThumbnail(PathBuf),
+    /// Decode the file shrunk to a thumbnail of at most `size` pixels a
+    /// side, answered by [`Event::ThumbnailDecoded`].
+    DecodeThumbnail {
+        path: PathBuf,
+        size: u32,
+    },
     /// The result of an earlier [`Command::DecodeThumbnail`] is no longer
     /// needed; it reports nothing once cancelled.
     CancelThumbnail(PathBuf),
@@ -584,11 +599,80 @@ const GLOBAL_KEYS: &[KeyHint] = &[
     },
 ];
 
-/// The keys while the overview is open, before those of every focus area.
-const OVERVIEW_KEYS: &[KeyHint] = &[KeyHint {
-    keys: "G",
-    action: "close overview",
-}];
+/// The keys of the overview's gallery.
+const GALLERY_KEYS: &[KeyHint] = &[
+    KeyHint {
+        keys: "Arrows",
+        action: "select",
+    },
+    KeyHint {
+        keys: "Enter",
+        action: "show",
+    },
+    KeyHint {
+        keys: "+/-",
+        action: "thumbnail size",
+    },
+    KeyHint {
+        keys: "C",
+        action: "copy",
+    },
+    KeyHint {
+        keys: "O",
+        action: "open in another app",
+    },
+    KeyHint {
+        keys: "X",
+        action: "trash",
+    },
+    KeyHint {
+        keys: "G",
+        action: "close overview",
+    },
+];
+
+/// The keys of the dir column while the overview is open.
+const CONTENTS_KEYS: &[KeyHint] = &[
+    KeyHint {
+        keys: "Up/Down",
+        action: "go to folder",
+    },
+    KeyHint {
+        keys: "Left/Esc/Backspace",
+        action: "parent",
+    },
+    KeyHint {
+        keys: "Right/Enter",
+        action: "open",
+    },
+    KeyHint {
+        keys: "G",
+        action: "close overview",
+    },
+    KeyHint {
+        keys: "Tab",
+        action: "gallery",
+    },
+];
+
+/// Gallery keys while the dir column is open.
+const GALLERY_TAB: KeyHint = KeyHint {
+    keys: "Tab",
+    action: "folders",
+};
+
+/// The keys the key line lists while the overview is open.
+fn overview_keys(focus: Focus, column_open: bool) -> Vec<KeyHint> {
+    let mut keys = match focus {
+        Focus::Dirs => CONTENTS_KEYS.to_vec(),
+        Focus::Image | Focus::Band => GALLERY_KEYS.to_vec(),
+    };
+    if focus != Focus::Dirs && column_open {
+        keys.push(GALLERY_TAB);
+    }
+    keys.extend_from_slice(GLOBAL_KEYS);
+    keys
+}
 
 /// The keys while the settings screen is open.
 const SETTINGS_KEYS: &[KeyHint] = &[
@@ -1223,15 +1307,7 @@ impl Core {
                 self.view.settings_error = Some(message);
                 Vec::new()
             }
-            Event::SettingsChanged(settings) => {
-                let settings = settings.clamped();
-                if settings == self.view.settings {
-                    return Vec::new();
-                }
-                let mut commands = self.apply_settings(settings.clone());
-                commands.push(Command::SaveSettings(settings));
-                commands
-            }
+            Event::SettingsChanged(settings) => self.change_settings(settings),
             Event::SettingsSaved(result) => {
                 self.view.settings_error = result.err();
                 Vec::new()
@@ -1295,15 +1371,44 @@ impl Core {
                 Vec::new()
             }
             Event::OverviewVisible(visible) => self.overview_visible(visible),
-            Event::ThumbnailDecoded { path, result } => self.thumbnail_decoded(&path, result),
+            Event::ThumbnailDecoded { path, size, result } => {
+                self.thumbnail_decoded(&path, size, result)
+            }
+            Event::OverviewColumns(columns) => {
+                self.overview_columns(columns);
+                Vec::new()
+            }
+            Event::OverviewRevealed => {
+                self.overview_revealed();
+                Vec::new()
+            }
+            Event::OpenTile(index) => self.open_tile(index),
+            Event::ThumbnailWheel { larger } => self.wheel_thumbnails(larger),
         }
     }
 
     /// Puts `settings` in effect: a changed cache size re-plans the window
-    /// around the current file.
+    /// around the current file, a changed thumbnail size remakes the
+    /// overview's thumbnails.
     fn apply_settings(&mut self, settings: Settings) -> Vec<Command> {
+        let resized = settings.thumbnail_size != self.view.settings.thumbnail_size;
         self.view.settings = settings.clamped();
-        self.refresh()
+        let mut commands = self.refresh();
+        if resized {
+            commands.extend(self.overview_resized());
+        }
+        commands
+    }
+
+    /// Puts changed `settings` in effect and saves them.
+    fn change_settings(&mut self, settings: Settings) -> Vec<Command> {
+        let settings = settings.clamped();
+        if settings == self.view.settings {
+            return Vec::new();
+        }
+        let mut commands = self.apply_settings(settings.clone());
+        commands.push(Command::SaveSettings(settings));
+        commands
     }
 
     /// Whether the dir column decides what the main area and the band show:
@@ -1389,7 +1494,8 @@ impl Core {
             thumb.motion = kind;
         }
         if self.view.overview.is_some() && !self.view.settings_open {
-            self.view.key_line.keys = [OVERVIEW_KEYS, GLOBAL_KEYS].concat();
+            self.view.key_line.keys =
+                overview_keys(self.view.focus, self.view.dir_column.is_some());
         } else if self.view.focus == Focus::Image && !self.view.settings_open {
             let mut keys = focus_keys(Focus::Image, self.view.dir_column.is_some());
             if self.view.inner.is_some() {
@@ -1795,8 +1901,12 @@ impl Core {
 
     /// The folders the nav cache holds while the dir column is open: the
     /// highlighted subfolder, the parent, and the folder just left until it is
-    /// highlighted.
+    /// highlighted; none while the overview is open.
     fn nav_wanted(&self) -> Vec<PathBuf> {
+        // The overview shows no preview.
+        if self.view.overview.is_some() {
+            return Vec::new();
+        }
         let Some(column) = &self.view.dir_column else {
             return Vec::new();
         };
@@ -1990,8 +2100,8 @@ impl Core {
                 vec![Command::SetFullscreen(self.view.fullscreen)]
             }
             (Key::G, false) => self.toggle_overview(),
-            // The overview takes no other keys yet.
-            _ if self.view.overview.is_some() => Vec::new(),
+            _ if self.view.overview.is_some() && key.command => Vec::new(),
+            _ if self.view.overview.is_some() => self.overview_key(key.key),
             (Key::N, false) => self.toggle_column(),
             (Key::B, false) => {
                 self.focus_band();
@@ -2215,11 +2325,24 @@ impl Core {
         }
     }
 
+    /// Makes `dir` the current folder and the dir column's.
+    fn enter(&mut self, dir: PathBuf) -> Vec<Command> {
+        let mut commands = self.switch_folder(dir.clone());
+        self.view.dir_column = Some(DirColumn {
+            dir: dir.clone(),
+            dirs: Vec::new(),
+            highlight: None,
+            error: None,
+        });
+        commands.push(Command::ListDirs(dir));
+        commands
+    }
+
     /// Makes `dir` the current folder, like a start there: all work of the old
     /// folder is cancelled and dropped, and once it is listed its first file
     /// is shown before any neighbour is decoded.
     /// A first image the nav cache holds for `dir` shows at once.
-    fn enter(&mut self, dir: PathBuf) -> Vec<Command> {
+    fn switch_folder(&mut self, dir: PathBuf) -> Vec<Command> {
         // The folder left becomes the parent or a subfolder of the new one, so
         // its first image stays in the nav cache.
         let first = self.files.first().cloned();
@@ -2265,18 +2388,8 @@ impl Core {
         };
         self.view.key_line.notice = None;
         self.view.folder_error = None;
-        self.view.dir_column = Some(DirColumn {
-            dir: dir.clone(),
-            dirs: Vec::new(),
-            highlight: None,
-            error: None,
-        });
         commands.extend(self.refresh());
-        commands.extend([
-            Command::WatchFolder(dir.clone()),
-            Command::ListFolder(dir.clone()),
-            Command::ListDirs(dir),
-        ]);
+        commands.extend([Command::WatchFolder(dir.clone()), Command::ListFolder(dir)]);
         commands
     }
 
@@ -2302,7 +2415,10 @@ impl Core {
                 self.view.zoom.scale = Scale::Exact(1.0);
                 Vec::new()
             }
-            Key::O => self.open_externally(),
+            Key::O => {
+                let path = self.current.clone();
+                self.open_externally(path)
+            }
             Key::L => {
                 self.rotate(Rotation::left);
                 Vec::new()
@@ -2369,8 +2485,9 @@ impl Core {
         vec![command]
     }
 
-    /// A trashed file is gone from the folder for good. A file that could not
-    /// be trashed is back in navigation, and the failure is shown, after any
+    /// A trashed file is gone from the folder and the overview for good. A
+    /// file that could not be trashed is back in navigation, and the failure
+    /// is shown, after any
     /// other of the same `x`.
     fn trashed(&mut self, path: &Path, result: Result<(), String>) -> Vec<Command> {
         self.trashing.remove(path);
@@ -2389,7 +2506,14 @@ impl Core {
         if let Some(files) = &mut self.all_files {
             files.retain(|f| f != path);
         }
-        Vec::new()
+        let mut commands = self.overview_trashed(path);
+        // Trashed from the overview: the image view steps on as well.
+        if self.files.iter().any(|f| f == path)
+            && let (Some(dir), Some(files)) = (self.dir.clone(), self.all_files.clone())
+        {
+            commands.extend(self.folder_listed(&dir, Ok(files)));
+        }
+        commands
     }
 
     /// The current file while it shows as an image and no rotation of it is
@@ -2457,11 +2581,11 @@ impl Core {
         commands
     }
 
-    /// Hands the current file, broken or not, to the app the settings name
-    /// for its kind, or the system default when that is blank.
-    fn open_externally(&mut self) -> Vec<Command> {
+    /// Hands the file, broken or not, to the app the settings name for its
+    /// kind, or the system default when that is blank.
+    fn open_externally(&mut self, path: Option<PathBuf>) -> Vec<Command> {
         self.view.open_error = None;
-        let Some(path) = self.current.clone() else {
+        let Some(path) = path else {
             return Vec::new();
         };
         let settings = &self.view.settings;
@@ -2583,7 +2707,8 @@ impl Core {
         // An animation or a multi-image file says so right after this.
         self.animated.remove(&path);
         self.images.remove(&path);
-        let mut commands = self.search_decoded(&path, &result);
+        let mut commands = self.copy_decoded(&path, &result);
+        commands.extend(self.search_decoded(&path, &result));
         if !self.decoding.remove(&path) {
             self.nav_decoded(path, result);
             return commands;

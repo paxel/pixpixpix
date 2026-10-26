@@ -92,3 +92,25 @@ fn external_apps_are_kept_and_empty_by_default() {
     settings::save(&path, &loaded).unwrap();
     assert_eq!(settings::load(&path), Ok(loaded));
 }
+
+#[test]
+fn thumbnail_size_defaults_to_160_and_is_clamped() {
+    assert_eq!(Settings::default().thumbnail_size, 160);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.toml");
+    std::fs::write(&path, "thumbnail_size = 1000\n").unwrap();
+    assert_eq!(settings::load(&path).unwrap().thumbnail_size, 320);
+    std::fs::write(&path, "thumbnail_size = 10\n").unwrap();
+    assert_eq!(settings::load(&path).unwrap().thumbnail_size, 96);
+}
+
+#[test]
+fn thumbnail_size_steps_through_its_sizes_and_stops_at_the_ends() {
+    assert_eq!(settings::step_thumbnail_size(160, true), 200);
+    assert_eq!(settings::step_thumbnail_size(160, false), 128);
+    assert_eq!(settings::step_thumbnail_size(320, true), 320);
+    assert_eq!(settings::step_thumbnail_size(96, false), 96);
+    // A hand-edited size between steps goes to the step next to it.
+    assert_eq!(settings::step_thumbnail_size(170, true), 200);
+    assert_eq!(settings::step_thumbnail_size(170, false), 160);
+}

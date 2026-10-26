@@ -74,9 +74,6 @@ pub fn decode_file(path: &Path, cancel: &AtomicBool) -> Option<Result<DecodedIma
     decode_first_frame(path, cancel).map(|result| result.map(|first| first.image))
 }
 
-/// The longest side of an overview thumbnail, in pixels.
-pub const THUMBNAIL_SIZE: u32 = 256;
-
 /// Like [`decode_file`], shrunk to at most `max` pixels a side, keeping the
 /// aspect ratio; a smaller image stays as it is.
 pub fn decode_thumbnail(

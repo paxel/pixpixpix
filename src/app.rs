@@ -135,14 +135,14 @@ struct Worker {
     playback: Option<Playback>,
     /// Cancellation token of the running overview scan.
     scan: Option<Arc<AtomicBool>>,
-    /// Cancellation tokens of the thumbnail decodes still running.
-    thumbnails: HashMap<PathBuf, Arc<AtomicBool>>,
+    /// Sizes and cancellation tokens of the thumbnail decodes still running.
+    thumbnails: HashMap<PathBuf, (u32, Arc<AtomicBool>)>,
     /// Hands thumbnail decodes to their threads, started on the first one.
     thumbnailer: Option<Sender<ThumbnailJob>>,
 }
 
-/// One thumbnail to decode and its cancellation token.
-type ThumbnailJob = (PathBuf, Arc<AtomicBool>);
+/// One thumbnail to decode, its size and its cancellation token.
+type ThumbnailJob = (PathBuf, u32, Arc<AtomicBool>);
 
 /// How many threads decode thumbnails.
 const THUMBNAIL_THREADS: usize = 4;
@@ -419,14 +419,15 @@ impl Worker {
                     cancel.store(true, Ordering::Relaxed);
                 }
             }
-            Command::DecodeThumbnail(path) => {
+            Command::DecodeThumbnail { path, size } => {
                 let cancel = Arc::new(AtomicBool::new(false));
-                self.thumbnails.insert(path.clone(), Arc::clone(&cancel));
+                self.thumbnails
+                    .insert(path.clone(), (*size, Arc::clone(&cancel)));
                 // The threads are gone only with the app.
-                let _ = self.thumbnailer().send((path.clone(), cancel));
+                let _ = self.thumbnailer().send((path.clone(), *size, cancel));
             }
             Command::CancelThumbnail(path) => {
-                if let Some(cancel) = self.thumbnails.remove(path) {
+                if let Some((_, cancel)) = self.thumbnails.remove(path) {
                     cancel.store(true, Ordering::Relaxed);
                 }
             }
@@ -476,19 +477,16 @@ impl Worker {
                             Ok(inbox) => inbox.recv(),
                             Err(_) => return,
                         };
-                        let Ok((path, cancel)) = job else {
+                        let Ok((path, size, cancel)) = job else {
                             return;
                         };
-                        let Some(result) = thumbnails::thumbnail(
-                            cache.as_deref(),
-                            &path,
-                            decode::THUMBNAIL_SIZE,
-                            &cancel,
-                        ) else {
+                        let Some(result) =
+                            thumbnails::thumbnail(cache.as_deref(), &path, size, &cancel)
+                        else {
                             continue;
                         };
                         // The app may already be gone; nothing to report to then.
-                        let _ = events.send(Event::ThumbnailDecoded { path, result });
+                        let _ = events.send(Event::ThumbnailDecoded { path, size, result });
                         ctx.request_repaint();
                     }
                 });
@@ -503,7 +501,10 @@ impl Worker {
             Event::Decoded { path, .. } => {
                 self.decodes.remove(path);
             }
-            Event::ThumbnailDecoded { path, .. } => {
+            // A late thumbnail of an earlier size leaves the newer job's token.
+            Event::ThumbnailDecoded { path, size, .. }
+                if self.thumbnails.get(path).is_some_and(|(s, _)| s == size) =>
+            {
                 self.thumbnails.remove(path);
             }
             _ => {}
@@ -580,7 +581,7 @@ impl App {
                 | Command::FindMotion(_)
                 | Command::ScanOverview { .. }
                 | Command::CancelScan
-                | Command::DecodeThumbnail(_)
+                | Command::DecodeThumbnail { .. }
                 | Command::CancelThumbnail(_) => {
                     self.worker.spawn(&command);
                 }
