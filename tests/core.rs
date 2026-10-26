@@ -142,7 +142,8 @@ fn browsing(path: &str, files: &[&str]) -> Core {
         [
             Command::LoadSettings,
             Command::WatchFolder(PathBuf::from("/p")),
-            Command::ListFolder(PathBuf::from("/p"))
+            Command::ListFolder(PathBuf::from("/p")),
+            Command::RegisterLauncher
         ]
     );
     core.handle(Event::FolderListed {
@@ -166,8 +167,28 @@ fn folder_is_listed_and_watched_only_after_the_first_frame() {
             Command::LoadSettings,
             Command::WatchFolder(PathBuf::from("/p")),
             Command::ListFolder(PathBuf::from("/p")),
+            Command::RegisterLauncher,
             Command::FindMotion(PathBuf::from("/p/a.jpg"))
         ]
+    );
+}
+
+#[test]
+fn the_launcher_is_registered_once_after_the_first_frame() {
+    let (mut core, commands) = Core::start(Ok(PathBuf::from("/p/a.jpg")));
+    assert!(!commands.contains(&Command::RegisterLauncher));
+    core.handle(Event::Decoded {
+        path: PathBuf::from("/p/a.jpg"),
+        result: Ok(image()),
+    });
+    assert!(
+        core.handle(Event::FirstFrameShown)
+            .contains(&Command::RegisterLauncher)
+    );
+    assert!(
+        !core
+            .handle(Event::FirstFrameShown)
+            .contains(&Command::RegisterLauncher)
     );
 }
 
@@ -182,7 +203,8 @@ fn a_folder_with_nothing_to_open_is_watched_and_listed_after_the_first_frame() {
         [
             Command::LoadSettings,
             Command::WatchFolder(PathBuf::from("/x")),
-            Command::ListFolder(PathBuf::from("/x"))
+            Command::ListFolder(PathBuf::from("/x")),
+            Command::RegisterLauncher
         ]
     );
 }

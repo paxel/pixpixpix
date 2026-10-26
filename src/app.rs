@@ -17,8 +17,8 @@ use crate::geometry::{self, Geometry};
 use crate::rotate::Rotation;
 use crate::video::{Playback, Report};
 use crate::{
-    annotate, decode, external, folder, metadata, motion, rotate, settings, startup, thumbnails,
-    trash, ui, watch,
+    annotate, decode, external, folder, launcher, metadata, motion, rotate, settings, startup,
+    thumbnails, trash, ui, watch,
 };
 
 pub const APP_ID: &str = "io.github.paxel.pixpixpix";
@@ -289,6 +289,12 @@ impl Worker {
                     };
                     Some(Event::SettingsLoaded(result))
                 });
+            }
+            // Linux only: elsewhere the desktop finds apps without an entry.
+            Command::RegisterLauncher => {
+                if cfg!(target_os = "linux") {
+                    std::thread::spawn(launcher::register);
+                }
             }
             // Written right away, so writes cannot overtake each other; the
             // file is a few bytes.
@@ -668,6 +674,7 @@ impl App {
                 | Command::Search { .. }
                 | Command::CancelSearch
                 | Command::LoadSettings
+                | Command::RegisterLauncher
                 | Command::SaveSettings(_)
                 | Command::OpenExternally { .. }
                 | Command::WriteRotation { .. }

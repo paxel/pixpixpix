@@ -325,6 +325,9 @@ pub enum Command {
     CancelSearch,
     /// Read the settings file, answered by [`Event::SettingsLoaded`].
     LoadSettings,
+    /// Put the launcher entry and the icon where the desktop finds them, for
+    /// the menu and "Open with"; nothing is answered.
+    RegisterLauncher,
     /// Write the settings file, answered by [`Event::SettingsSaved`].
     SaveSettings(Settings),
     /// Open the file in another program, `app` or else the system default,
@@ -2306,6 +2309,7 @@ impl Core {
                 Command::ListFolder(dir.clone()),
             ]);
         }
+        commands.push(Command::RegisterLauncher);
         commands
     }
 

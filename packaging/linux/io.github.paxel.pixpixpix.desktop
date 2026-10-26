@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=pixpixpix
+GenericName=Image Viewer
+Comment=Fast keyboard-first image and video viewer
+Exec=pixpixpix %F
+Icon=pixpixpix
+Terminal=false
+Categories=Graphics;Viewer;
+MimeType=image/jpeg;image/png;image/gif;image/webp;image/bmp;image/tiff;image/heif;image/heic;image/avif;video/mp4;video/x-m4v;video/quicktime;video/x-matroska;video/webm;video/vnd.avi;video/x-msvideo;video/mp2t;video/3gpp;video/x-ms-wmv;video/x-flv;video/mpeg;
+StartupWMClass=io.github.paxel.pixpixpix
+X-Pixpixpix-Managed=true
