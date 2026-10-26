@@ -1700,6 +1700,8 @@ fn metadata_open() -> Harness<'static, State> {
                 label: "Camera",
                 value: "Pixcam".into(),
             }],
+            has_exif: true,
+            has_location: true,
         }),
     });
     h.run();
@@ -1751,6 +1753,33 @@ fn enter_in_the_date_field_writes_a_valid_date() {
         [Command::WriteDate {
             path: PathBuf::from("/p/a.jpg"),
             date: "2021:12:24 18:30:00".into()
+        }]
+    );
+}
+
+#[test]
+fn remove_location_in_the_metadata_view_goes_through_the_save_dialog() {
+    use pixpixpix::metadata::Strip;
+    let mut h = metadata_open();
+    h.get_by_role_and_label(Role::Button, "Remove all EXIF");
+    h.get_by_role_and_label(Role::Button, "Remove location")
+        .click();
+    h.run();
+    h.get_by_label_contains("Remove the location from");
+    for label in ["Overwrite", "Save as new", "Copy to clipboard", "Back"] {
+        h.get_by_role_and_label(Role::Button, label);
+    }
+    assert!(h.query_by_label("Undo edits").is_none());
+    let name = h.get_by_role_and_label(Role::TextInput, "New file").value();
+    assert_eq!(name.as_deref(), Some("a_noloc.jpg"));
+    h.get_by_role_and_label(Role::Button, "Save as new").click();
+    h.run();
+    assert_eq!(
+        h.state().commands,
+        [Command::RemoveMetadata {
+            source: PathBuf::from("/p/a.jpg"),
+            strip: Strip::Location,
+            target: PathBuf::from("/p/a_noloc.jpg"),
         }]
     );
 }

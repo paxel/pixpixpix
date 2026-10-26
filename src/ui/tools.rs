@@ -9,6 +9,7 @@ use crate::core::{
     SaveDialog, Shape, Size, Tool, Toolbar, ToolbarClick, degrees, turned,
 };
 use crate::decode::DecodedImage;
+use crate::metadata::Strip;
 use crate::rotate::Rotation;
 use crate::settings::EXPORT_SIDE;
 
@@ -440,7 +441,18 @@ pub fn show_save_dialog(
                 let (rect, _) = ui.allocate_exact_size(vec2(112.0, 112.0), egui::Sense::hover());
                 panic_cat(ui.painter(), rect);
                 ui.add_space(20.0);
-                let (title, note) = if dialog.export {
+                let (title, note) = if let Some(strip) = dialog.strip {
+                    match strip {
+                        Strip::Location => (
+                            format!("Remove the location from \u{201c}{file}\u{201d}?"),
+                            "The GPS tags go; the pixels and all other metadata stay.",
+                        ),
+                        Strip::AllExif => (
+                            format!("Remove all EXIF from \u{201c}{file}\u{201d}?"),
+                            "The orientation is turned into the pixels first.",
+                        ),
+                    }
+                } else if dialog.export {
                     (
                         format!("Export \u{201c}{file}\u{201d}?"),
                         "The export is a new file, without metadata.",
@@ -538,15 +550,22 @@ pub fn show_save_dialog(
                     let plain =
                         |text| dialog_button(text, INK, PLAIN_FILL, Stroke::new(1.0, PLAIN_EDGE));
                     choose(ui, enabled, plain("Copy to clipboard"), SaveChoice::Copy);
-                    if !dialog.export {
+                    if !dialog.export && dialog.strip.is_none() {
                         choose(ui, enabled, plain("Undo edits"), SaveChoice::Discard);
                     }
-                    choose(ui, enabled, plain("Back to editing"), SaveChoice::Back);
+                    let back = if dialog.strip.is_some() {
+                        "Back"
+                    } else {
+                        "Back to editing"
+                    };
+                    choose(ui, enabled, plain(back), SaveChoice::Back);
                 });
             });
             ui.add_space(10.0);
             let hint = if dialog.busy {
                 "Saving\u{2026}"
+            } else if dialog.strip.is_some() {
+                "Enter: save as new   \u{b7}   Esc: back"
             } else {
                 "Enter: save as new   \u{b7}   Esc: back to editing"
             };

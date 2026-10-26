@@ -1,13 +1,14 @@
-//! Seam 1: the metadata view and the capture date edit, driven by events.
+//! Seam 1: the metadata view, the capture date edit and the removal of the
+//! location or all EXIF, driven by events.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use pixpixpix::core::{
-    Command, Core, DATE_FORMAT_ERROR, Event, Key, KeyPress, MetadataView, Screen,
+    Command, Core, DATE_FORMAT_ERROR, Event, Key, KeyPress, MetadataView, SaveChoice, Screen,
 };
 use pixpixpix::decode::DecodedImage;
-use pixpixpix::metadata::{Field, Metadata};
+use pixpixpix::metadata::{Field, Metadata, Strip};
 
 fn p(name: &str) -> PathBuf {
     PathBuf::from(format!("/p/{name}"))
@@ -52,6 +53,8 @@ fn read(name: &str, captured: Option<&str>) -> Metadata {
         file: vec![field("File", name)],
         captured: captured.map(str::to_owned),
         exif: vec![field("Camera", "Pixcam")],
+        has_exif: true,
+        has_location: true,
     }
 }
 
@@ -78,6 +81,8 @@ fn shown(core: &Core) -> MetadataView {
             exif: Vec::new(),
             error: Some("closed".into()),
             writing: false,
+            can_remove_location: false,
+            can_remove_exif: false,
         })
 }
 
@@ -100,6 +105,8 @@ fn i_toggles_the_metadata_view_and_reads_the_current_file() {
             exif: vec![field("Camera", "Pixcam")],
             error: None,
             writing: false,
+            can_remove_location: true,
+            can_remove_exif: true,
         })
     );
     assert!(key(&mut core, Key::I).is_empty());
@@ -253,4 +260,149 @@ fn the_overview_hides_the_metadata_view() {
     assert_eq!(core.view().metadata, None);
     key(&mut core, Key::G);
     assert!(core.view().metadata.is_some());
+}
+
+#[test]
+fn remove_location_asks_where_the_new_file_goes_and_writes_it() {
+    let mut core = open();
+    assert!(shown(&core).can_remove_location);
+    assert!(
+        core.handle(Event::RemoveMetadata(Strip::Location))
+            .is_empty()
+    );
+    let dialog = core.view().save_dialog.clone().unwrap();
+    assert_eq!(dialog.name, "a_noloc.jpg");
+    assert_eq!(dialog.strip, Some(Strip::Location));
+    assert_eq!(dialog.overwrite_refused, None);
+    assert!(!dialog.export);
+    // Nothing can be removed while the dialog asks.
+    assert!(!shown(&core).can_remove_location);
+    assert_eq!(
+        core.handle(Event::SaveChoice(SaveChoice::SaveAsNew)),
+        [Command::RemoveMetadata {
+            source: p("a.jpg"),
+            strip: Strip::Location,
+            target: p("a_noloc.jpg"),
+        }]
+    );
+    assert!(core.view().save_dialog.as_ref().unwrap().busy);
+    let commands = core.handle(Event::EditsSaved {
+        target: p("a_noloc.jpg"),
+        result: Ok(()),
+    });
+    assert!(commands.is_empty());
+    assert_eq!(core.view().save_dialog, None);
+}
+
+#[test]
+fn removing_all_exif_over_the_file_decodes_and_reads_it_again() {
+    let mut core = open();
+    core.handle(Event::RemoveMetadata(Strip::AllExif));
+    let dialog = core.view().save_dialog.clone().unwrap();
+    assert_eq!(dialog.name, "a_noexif.jpg");
+    assert_eq!(dialog.strip, Some(Strip::AllExif));
+    assert_eq!(
+        core.handle(Event::SaveChoice(SaveChoice::Overwrite)),
+        [Command::RemoveMetadata {
+            source: p("a.jpg"),
+            strip: Strip::AllExif,
+            target: p("a.jpg"),
+        }]
+    );
+    let commands = core.handle(Event::EditsSaved {
+        target: p("a.jpg"),
+        result: Ok(()),
+    });
+    // The orientation may have gone into the pixels.
+    assert!(commands.contains(&Command::Decode(p("a.jpg"))));
+    assert!(commands.contains(&Command::ReadMetadata(p("a.jpg"))));
+    assert_eq!(core.view().save_dialog, None);
+}
+
+#[test]
+fn a_taken_name_is_numbered() {
+    let mut core = open();
+    core.handle(Event::FolderListed {
+        dir: PathBuf::from("/p"),
+        result: Ok(vec![p("a.jpg"), p("a_noloc.jpg"), p("b.jpg")]),
+    });
+    core.handle(Event::RemoveMetadata(Strip::Location));
+    assert_eq!(
+        core.view().save_dialog.as_ref().unwrap().name,
+        "a_noloc2.jpg"
+    );
+}
+
+#[test]
+fn copy_puts_only_the_pixels_on_the_clipboard() {
+    let mut core = open();
+    core.handle(Event::RemoveMetadata(Strip::Location));
+    assert_eq!(
+        core.handle(Event::SaveChoice(SaveChoice::Copy)),
+        [Command::CopyPixels(image())]
+    );
+    core.handle(Event::Copied(Ok(())));
+    assert_eq!(core.view().save_dialog, None);
+}
+
+#[test]
+fn a_failed_removal_stays_in_the_dialog_and_esc_leaves_it() {
+    let mut core = open();
+    core.handle(Event::RemoveMetadata(Strip::AllExif));
+    core.handle(Event::SaveChoice(SaveChoice::SaveAsNew));
+    let message = "Cannot save a_noexif.jpg: its orientation must be turned into the pixels first";
+    core.handle(Event::EditsSaved {
+        target: p("a_noexif.jpg"),
+        result: Err(message.into()),
+    });
+    let dialog = core.view().save_dialog.clone().unwrap();
+    assert_eq!(dialog.error.as_deref(), Some(message));
+    assert!(!dialog.busy);
+    assert!(key(&mut core, Key::Escape).is_empty());
+    assert_eq!(core.view().save_dialog, None);
+    assert!(core.view().metadata.is_some());
+}
+
+#[test]
+fn nothing_to_remove_offers_no_removal() {
+    let mut core = browsing();
+    key(&mut core, Key::I);
+    core.handle(Event::MetadataRead {
+        path: p("a.jpg"),
+        result: Ok(Metadata {
+            has_exif: false,
+            has_location: false,
+            ..read("a.jpg", None)
+        }),
+    });
+    assert!(!shown(&core).can_remove_location);
+    assert!(!shown(&core).can_remove_exif);
+    core.handle(Event::RemoveMetadata(Strip::Location));
+    core.handle(Event::RemoveMetadata(Strip::AllExif));
+    assert_eq!(core.view().save_dialog, None);
+}
+
+#[test]
+fn a_file_without_gps_offers_only_removing_all_exif() {
+    let mut core = browsing();
+    key(&mut core, Key::I);
+    core.handle(Event::MetadataRead {
+        path: p("a.jpg"),
+        result: Ok(Metadata {
+            has_location: false,
+            ..read("a.jpg", None)
+        }),
+    });
+    assert!(!shown(&core).can_remove_location);
+    assert!(shown(&core).can_remove_exif);
+}
+
+#[test]
+fn nothing_is_removed_while_the_date_is_written() {
+    let mut core = open();
+    core.handle(Event::DateEdited("2021-12-24 18:30:00".into()));
+    core.handle(Event::DateEntered);
+    assert!(!shown(&core).can_remove_exif);
+    core.handle(Event::RemoveMetadata(Strip::AllExif));
+    assert_eq!(core.view().save_dialog, None);
 }

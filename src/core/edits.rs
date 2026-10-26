@@ -9,6 +9,7 @@ use std::time::Duration;
 use super::{Command, Core, Event, Key, Points, Screen, Zoom};
 use crate::decode::DecodedImage;
 use crate::folder;
+use crate::metadata::Strip;
 use crate::rotate::Rotation;
 use crate::settings::{EXPORT_SIDE, Settings};
 
@@ -616,6 +617,9 @@ pub struct SaveDialog {
     pub export: bool,
     /// The edits are of a video frame: "Overwrite" is not offered at all.
     pub frame: bool,
+    /// The dialog is about removing metadata from the file, which leaves the
+    /// edits alone and can only be left.
+    pub strip: Option<Strip>,
 }
 
 /// A choice in the save dialog.
@@ -662,6 +666,15 @@ pub(super) struct Dialog {
     export: Option<ExportJob>,
     /// About a video frame.
     frame: bool,
+    /// Asking where the file without some of its metadata goes.
+    strip: Option<StripJob>,
+}
+
+/// A removal of metadata the save dialog asks about.
+#[derive(Debug, Clone)]
+struct StripJob {
+    path: PathBuf,
+    strip: Strip,
 }
 
 /// An export the save dialog asks about.
@@ -828,7 +841,7 @@ impl Core {
             && self
                 .dialog
                 .as_ref()
-                .is_some_and(|d| d.export.is_some() && d.busy.is_none())
+                .is_some_and(|d| (d.export.is_some() || d.strip.is_some()) && d.busy.is_none())
         {
             self.dialog = None;
         }
@@ -907,19 +920,40 @@ impl Core {
         };
         self.view.settings_open = false;
         self.dialog = Some(Dialog {
-            name: self.new_name(&path),
+            name: self.new_name(&path, "_edit"),
             overwrite_refused: self.overwrite_refused(&path),
             error: None,
             busy: None,
             export: None,
             frame: folder::is_video(&path),
+            strip: None,
         });
     }
 
-    /// `<name>_edit.<ext>` next to `path`, or `_edit2`, `_edit3`… when that is
-    /// taken. A format that cannot be written becomes PNG. A video frame is
-    /// `<name>_<HH-MM-SS.mmm>.png` at its position, or `_2`, `_3`… after it.
-    fn new_name(&self, path: &Path) -> String {
+    /// Asks where the file at `path` without what `strip` removes goes,
+    /// named `<name>_noloc.<ext>` or `<name>_noexif.<ext>`.
+    pub(super) fn open_strip(&mut self, path: PathBuf, strip: Strip) {
+        let suffix = match strip {
+            Strip::Location => "_noloc",
+            Strip::AllExif => "_noexif",
+        };
+        self.view.settings_open = false;
+        self.dialog = Some(Dialog {
+            name: self.new_name(&path, suffix),
+            overwrite_refused: self.overwrite_refused(&path),
+            error: None,
+            busy: None,
+            export: None,
+            frame: false,
+            strip: Some(StripJob { path, strip }),
+        });
+    }
+
+    /// `<name><suffix>.<ext>` next to `path`, or `<suffix>2`, `<suffix>3`…
+    /// when that is taken. A format that cannot be written becomes PNG. A
+    /// video frame is `<name>_<HH-MM-SS.mmm>.png` at its position, or `_2`,
+    /// `_3`… after it.
+    fn new_name(&self, path: &Path, suffix: &str) -> String {
         let stem = path
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
@@ -937,7 +971,7 @@ impl Core {
                 Some(e) => e.to_string_lossy().into_owned(),
                 None => "png".to_owned(),
             };
-            (format!("{stem}_edit"), extension, "")
+            (format!("{stem}{suffix}"), extension, "")
         };
         let taken = |name: &str| {
             let candidate = path.with_file_name(name);
@@ -980,6 +1014,9 @@ impl Core {
         };
         if let Some(job) = dialog.export.clone() {
             return self.choose_export(choice, job);
+        }
+        if let Some(job) = dialog.strip.clone() {
+            return self.choose_strip(choice, job);
         }
         let (Some(edits), Screen::Image { path, image }) = (&self.edits, &self.screen) else {
             return self.finish();
@@ -1085,6 +1122,55 @@ impl Core {
         }
     }
 
+    /// Acts on a choice of the save dialog about removing metadata: the
+    /// file is written over or as a new one, or only its pixels are copied;
+    /// the edits stay.
+    fn choose_strip(&mut self, choice: SaveChoice, job: StripJob) -> Vec<Command> {
+        let (Some(dialog), Screen::Image { path, image }) = (self.dialog.as_mut(), &self.screen)
+        else {
+            return Vec::new();
+        };
+        if *path != job.path {
+            self.dialog = None;
+            return Vec::new();
+        }
+        match choice {
+            SaveChoice::Back | SaveChoice::Discard => {
+                self.dialog = None;
+                self.parked = None;
+                Vec::new()
+            }
+            SaveChoice::Overwrite if dialog.overwrite_refused.is_some() => Vec::new(),
+            SaveChoice::Overwrite | SaveChoice::SaveAsNew => {
+                let target = if choice == SaveChoice::Overwrite {
+                    job.path.clone()
+                } else {
+                    let Some(target) = new_target(&job.path, dialog) else {
+                        return Vec::new();
+                    };
+                    target
+                };
+                dialog.error = None;
+                dialog.busy = Some(Busy::Saving(target.clone()));
+                if target == job.path {
+                    self.writing = Some(job.path.clone());
+                }
+                vec![Command::RemoveMetadata {
+                    source: job.path,
+                    strip: job.strip,
+                    target,
+                }]
+            }
+            SaveChoice::Copy => {
+                let image = image.clone();
+                dialog.error = None;
+                dialog.busy = Some(Busy::Copying);
+                self.view.copy_error = None;
+                vec![Command::CopyPixels(image)]
+            }
+        }
+    }
+
     /// The edits are dealt with: they go, and the action the dialog
     /// interrupted goes on.
     fn finish(&mut self) -> Vec<Command> {
@@ -1106,9 +1192,10 @@ impl Core {
         }
     }
 
-    /// A [`Command::SaveEdits`] or [`Command::Export`] finished: the edits are
-    /// saved, or the dialog says why not. A file written over is decoded
-    /// again.
+    /// A [`Command::SaveEdits`], [`Command::Export`] or
+    /// [`Command::RemoveMetadata`] finished: the edits are saved, or the
+    /// dialog says why not. A file written over is decoded again; without
+    /// its metadata it is read again too.
     pub(super) fn edits_saved(
         &mut self,
         target: PathBuf,
@@ -1125,6 +1212,17 @@ impl Core {
         let overwritten = self.writing.as_ref() == Some(&target);
         match result {
             Ok(()) if dialog.export.is_some() => self.exported(),
+            Ok(()) if dialog.strip.is_some() => {
+                let mut commands = if overwritten {
+                    let mut commands = self.rotation_written(target.clone(), Ok(()));
+                    commands.extend(self.reread_info(target));
+                    commands
+                } else {
+                    Vec::new()
+                };
+                commands.extend(self.exported());
+                commands
+            }
             Ok(()) => {
                 let mut commands = if overwritten {
                     self.rotation_written(target, Ok(()))
@@ -1155,7 +1253,7 @@ impl Core {
         };
         dialog.busy = None;
         match result {
-            Ok(()) if dialog.export.is_some() => self.exported(),
+            Ok(()) if dialog.export.is_some() || dialog.strip.is_some() => self.exported(),
             Ok(()) => self.finish(),
             Err(message) => {
                 dialog.error = Some(message.clone());
@@ -1260,6 +1358,7 @@ impl Core {
             busy: None,
             frame: folder::is_video(&path),
             export: Some(ExportJob { path, area, export }),
+            strip: None,
         });
         let settings = &mut self.view.settings;
         if (settings.export_width, settings.export_height) == (width, height) {
@@ -1571,7 +1670,9 @@ impl Core {
             self.exporting.drag = None;
         }
         if self.dialog.as_ref().is_some_and(|d| {
-            d.busy.is_none() && d.export.as_ref().is_some_and(|j| current != Some(&j.path))
+            d.busy.is_none()
+                && (d.export.as_ref().is_some_and(|j| current != Some(&j.path))
+                    || d.strip.as_ref().is_some_and(|j| current != Some(&j.path)))
         }) {
             self.dialog = None;
         }
@@ -1619,6 +1720,7 @@ impl Core {
             busy: d.busy.is_some(),
             export: d.export.is_some(),
             frame: d.frame,
+            strip: d.strip.as_ref().map(|j| j.strip),
         });
         let exporting = self.toolbar_open && self.toolbar.tool == Tool::Export && !previewing;
         self.view.export = exporting.then(|| ExportView {

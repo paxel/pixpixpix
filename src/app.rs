@@ -154,6 +154,8 @@ enum CopyJob {
     Shown(PathBuf, DecodedImage, Rotation, Vec<Shape>),
     /// The pixels of an export, without a file.
     Export(DecodedImage, Rotation, Vec<Shape>, Region, Export),
+    /// Only these pixels, without a file.
+    Pixels(DecodedImage),
 }
 
 /// Why there is no settings file to read or write.
@@ -504,6 +506,25 @@ impl Worker {
                     Some(Event::DateWritten { path, result })
                 });
             }
+            Command::RemoveMetadata {
+                source,
+                strip,
+                target,
+            } => {
+                let (source, strip, target) = (source.clone(), *strip, target.clone());
+                self.run(move || {
+                    let result = metadata::strip(&source, strip, &target);
+                    Some(Event::EditsSaved { target, result })
+                });
+            }
+            Command::CopyPixels(image) => {
+                if self.copier().send(CopyJob::Pixels(image.clone())).is_err() {
+                    // The app may already be gone; nothing to report to then.
+                    let _ = self.events.send(Event::Copied(Err(
+                        "Cannot copy: the clipboard stopped".to_owned(),
+                    )));
+                }
+            }
             Command::SetFullscreen(_) | Command::Quit | Command::KeepOpen => {}
         }
     }
@@ -528,6 +549,7 @@ impl Worker {
                             annotate::exported(&image, rotation, &shapes, area, &export)
                                 .and_then(|image| clipboard.copy_pixels(&image))
                         }
+                        CopyJob::Pixels(image) => clipboard.copy_pixels(&image),
                     };
                     // The app may already be gone; nothing to report to then.
                     let _ = events.send(Event::Copied(result));
@@ -670,7 +692,9 @@ impl App {
                 | Command::DecodeThumbnail { .. }
                 | Command::CancelThumbnail(_)
                 | Command::ReadMetadata(_)
-                | Command::WriteDate { .. } => {
+                | Command::WriteDate { .. }
+                | Command::RemoveMetadata { .. }
+                | Command::CopyPixels(_) => {
                     self.worker.spawn(&command);
                 }
             }

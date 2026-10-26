@@ -13,6 +13,7 @@ use crate::core::{
 };
 use crate::decode::DecodedImage;
 use crate::folder;
+use crate::metadata::Strip;
 use crate::rotate::Rotation;
 use crate::settings::{self, Settings};
 
@@ -512,7 +513,8 @@ fn show_dir_column(ui: &mut egui::Ui, column: &DirColumn, focused: bool) {
 }
 
 /// The metadata of the current file, read-only but for the capture date,
-/// whose field reports every change and `Return`.
+/// whose field reports every change and `Return`, with the buttons that
+/// remove the location or all EXIF.
 fn show_metadata(ui: &mut egui::Ui, metadata: &MetadataView, events: &mut Vec<Event>) {
     ui.label(RichText::new("Metadata").color(TEXT).strong().size(15.0));
     ui.add_space(4.0);
@@ -560,6 +562,25 @@ fn show_metadata(ui: &mut egui::Ui, metadata: &MetadataView, events: &mut Vec<Ev
                 row(ui, field.label, &field.value);
             }
         });
+    if !metadata.reading {
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            for (label, enabled, strip) in [
+                (
+                    "Remove location",
+                    metadata.can_remove_location,
+                    Strip::Location,
+                ),
+                ("Remove all EXIF", metadata.can_remove_exif, Strip::AllExif),
+            ] {
+                let color = if enabled { TEXT } else { DIM_TEXT };
+                let button = egui::Button::new(RichText::new(label).color(color));
+                if ui.add_enabled(enabled, button).clicked() {
+                    events.push(Event::RemoveMetadata(strip));
+                }
+            }
+        });
+    }
     if let Some(error) = &metadata.error {
         ui.add_space(4.0);
         ui.label(RichText::new(error).color(ERROR_TEXT));

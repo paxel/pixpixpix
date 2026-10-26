@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use crate::decode::{DecodedImage, Frame};
 use crate::folder::{self, Found};
-use crate::metadata::Metadata;
+use crate::metadata::{Metadata, Strip};
 use crate::rotate::Rotation;
 use crate::settings::Settings;
 use crate::startup::NoFile;
@@ -266,7 +266,8 @@ pub enum Event {
     TextEdited(String),
     /// Typing the text being placed is done.
     TextDone,
-    /// A [`Command::SaveEdits`] or [`Command::Export`] finished.
+    /// A [`Command::SaveEdits`], [`Command::Export`] or
+    /// [`Command::RemoveMetadata`] finished.
     EditsSaved {
         target: PathBuf,
         result: Result<(), String>,
@@ -285,6 +286,9 @@ pub enum Event {
         path: PathBuf,
         result: Result<(), String>,
     },
+    /// "Remove location" or "Remove all EXIF" of the metadata view was
+    /// clicked.
+    RemoveMetadata(Strip),
 }
 
 /// A step through a video.
@@ -451,6 +455,17 @@ pub enum Command {
         path: PathBuf,
         date: String,
     },
+    /// Write the file `source` without what `strip` removes to `target`:
+    /// over `source` itself, or as a new file that must not exist yet;
+    /// answered by [`Event::EditsSaved`].
+    RemoveMetadata {
+        source: PathBuf,
+        strip: Strip,
+        target: PathBuf,
+    },
+    /// Put only these pixels on the clipboard, without the file; answered
+    /// by [`Event::Copied`].
+    CopyPixels(DecodedImage),
     SetFullscreen(bool),
     Quit,
 }
@@ -1650,6 +1665,10 @@ impl Core {
             }
             Event::DateEntered => self.date_entered(),
             Event::DateWritten { path, result } => self.date_written(path, result),
+            Event::RemoveMetadata(strip) => {
+                self.remove_metadata(strip);
+                Vec::new()
+            }
         }
     }
 

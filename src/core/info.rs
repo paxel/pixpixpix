@@ -3,7 +3,8 @@
 use std::path::PathBuf;
 
 use super::{Command, Core, Screen};
-use crate::metadata::{self, Field, Metadata};
+use crate::folder;
+use crate::metadata::{self, Field, Metadata, Strip};
 
 /// What the metadata view shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,6 +23,10 @@ pub struct MetadataView {
     pub error: Option<String>,
     /// The date is being written.
     pub writing: bool,
+    /// "Remove location" can be clicked: the image shown has GPS tags.
+    pub can_remove_location: bool,
+    /// "Remove all EXIF" can be clicked: the image shown has EXIF.
+    pub can_remove_exif: bool,
 }
 
 /// What the typed date must look like.
@@ -129,6 +134,50 @@ impl Core {
         }
     }
 
+    /// The file `strip` can be removed from now: the image shown, read, with
+    /// what `strip` removes, and neither it nor its date being written nor a
+    /// dialog open.
+    fn strippable(&self, strip: Strip) -> Option<PathBuf> {
+        let info = self.info.as_ref().filter(|i| !i.writing)?;
+        let Some(Ok(read)) = &info.read else {
+            return None;
+        };
+        let Screen::Image { path, .. } = &self.screen else {
+            return None;
+        };
+        let has = match strip {
+            Strip::Location => read.has_location,
+            Strip::AllExif => read.has_exif,
+        };
+        let free = self.dialog.is_none() && self.writing.as_ref() != Some(path);
+        (has && free
+            && info.path.as_ref() == Some(path)
+            && self.current.as_ref() == Some(path)
+            && !folder::is_video(path))
+        .then(|| path.clone())
+    }
+
+    /// "Remove location" or "Remove all EXIF": the save dialog asks where
+    /// the file goes.
+    pub(super) fn remove_metadata(&mut self, strip: Strip) {
+        if let Some(path) = self.strippable(strip) {
+            self.open_strip(path, strip);
+        }
+    }
+
+    /// Reads the metadata of `path` again if the view shows it.
+    pub(super) fn reread_info(&self, path: PathBuf) -> Vec<Command> {
+        let shown = self
+            .info
+            .as_ref()
+            .is_some_and(|i| i.path == Some(path.clone()));
+        if shown {
+            vec![Command::ReadMetadata(path)]
+        } else {
+            Vec::new()
+        }
+    }
+
     /// Puts the metadata view into the view; the overview hides it.
     pub(super) fn publish_info(&mut self) {
         let info = self.info.as_ref().filter(|_| self.view.overview.is_none());
@@ -144,6 +193,8 @@ impl Core {
                 });
             }
             let failed = info.read.as_ref().and_then(|r| r.as_ref().err());
+            let can_remove_location = self.strippable(Strip::Location).is_some();
+            let can_remove_exif = self.strippable(Strip::AllExif).is_some();
             MetadataView {
                 reading: info.path.is_some() && info.read.is_none(),
                 file,
@@ -154,6 +205,8 @@ impl Core {
                 exif: read.map(|r| r.exif.clone()).unwrap_or_default(),
                 error: info.error.clone().or_else(|| failed.cloned()),
                 writing: info.writing,
+                can_remove_location,
+                can_remove_exif,
             }
         });
     }

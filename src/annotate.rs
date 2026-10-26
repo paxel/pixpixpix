@@ -333,7 +333,7 @@ fn encode(image: &DecodedImage, format: ImageFormat) -> Result<Vec<u8>, String> 
 
 /// Writes a new file at `target` through a temporary file next to it, with
 /// the permissions of `source`, failing if `target` appeared meanwhile.
-fn create(source: &Path, target: &Path, bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn create(source: &Path, target: &Path, bytes: &[u8]) -> Result<(), String> {
     let dir = target
         .parent()
         .ok_or("the file has no folder to be written to")?;

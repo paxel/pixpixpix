@@ -103,6 +103,16 @@ fn rotated(path: &Path, rotation: Rotation) -> Result<Vec<u8>, String> {
     }
 }
 
+/// The file `bytes` in `format` with its EXIF orientation turned into the
+/// pixels: a JPEG losslessly, its orientation reset to upright, other
+/// formats re-encoded without metadata.
+pub(crate) fn upright(bytes: &[u8], format: ImageFormat) -> Result<Vec<u8>, String> {
+    match format {
+        ImageFormat::Jpeg => rotate_jpeg(bytes, Rotation::None),
+        _ => reencode(bytes, format, Rotation::None),
+    }
+}
+
 /// The JPEG turned losslessly, its EXIF orientation reset to upright.
 fn rotate_jpeg(bytes: &[u8], rotation: Rotation) -> Result<Vec<u8>, String> {
     let library = TURBOJPEG
