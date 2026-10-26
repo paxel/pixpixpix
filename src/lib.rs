@@ -22,6 +22,7 @@ pub mod external;
 pub mod folder;
 pub mod geometry;
 pub mod heif;
+pub mod metadata;
 pub mod motion;
 pub mod mpv;
 pub mod multi;

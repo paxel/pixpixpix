@@ -91,6 +91,7 @@ fn s_opens_and_closes_the_settings_screen() {
             "Enter",
             "C",
             "O",
+            "I",
             "X",
             "P",
             "G",

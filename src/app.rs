@@ -17,8 +17,8 @@ use crate::geometry::{self, Geometry};
 use crate::rotate::Rotation;
 use crate::video::{Playback, Report};
 use crate::{
-    annotate, decode, external, folder, motion, rotate, settings, startup, thumbnails, trash, ui,
-    watch,
+    annotate, decode, external, folder, metadata, motion, rotate, settings, startup, thumbnails,
+    trash, ui, watch,
 };
 
 pub const APP_ID: &str = "io.github.paxel.pixpixpix";
@@ -490,6 +490,20 @@ impl Worker {
                     cancel.store(true, Ordering::Relaxed);
                 }
             }
+            Command::ReadMetadata(path) => {
+                let path = path.clone();
+                self.run(move || {
+                    let result = metadata::read(&path);
+                    Some(Event::MetadataRead { path, result })
+                });
+            }
+            Command::WriteDate { path, date } => {
+                let (path, date) = (path.clone(), date.clone());
+                self.run(move || {
+                    let result = metadata::write_date(&path, &date);
+                    Some(Event::DateWritten { path, result })
+                });
+            }
             Command::SetFullscreen(_) | Command::Quit | Command::KeepOpen => {}
         }
     }
@@ -654,7 +668,9 @@ impl App {
                 | Command::ScanOverview { .. }
                 | Command::CancelScan
                 | Command::DecodeThumbnail { .. }
-                | Command::CancelThumbnail(_) => {
+                | Command::CancelThumbnail(_)
+                | Command::ReadMetadata(_)
+                | Command::WriteDate { .. } => {
                     self.worker.spawn(&command);
                 }
             }

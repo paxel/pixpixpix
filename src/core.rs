@@ -9,11 +9,13 @@ use std::time::{Duration, Instant};
 
 use crate::decode::{DecodedImage, Frame};
 use crate::folder::{self, Found};
+use crate::metadata::Metadata;
 use crate::rotate::Rotation;
 use crate::settings::Settings;
 use crate::startup::NoFile;
 
 mod edits;
+mod info;
 mod overview;
 mod search;
 
@@ -23,6 +25,9 @@ pub use edits::{
     turned, unturned,
 };
 use edits::{Dialog, Edits, Exporting};
+
+use info::Info;
+pub use info::{DATE_FORMAT_ERROR, MetadataView};
 
 use overview::Gallery;
 pub use overview::{Overview, Reveal, Section, Tile};
@@ -66,6 +71,7 @@ pub enum Key {
     G,
     P,
     Z,
+    I,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -265,6 +271,20 @@ pub enum Event {
         target: PathBuf,
         result: Result<(), String>,
     },
+    /// A [`Command::ReadMetadata`] finished.
+    MetadataRead {
+        path: PathBuf,
+        result: Result<Metadata, String>,
+    },
+    /// The capture date field of the metadata view was edited.
+    DateEdited(String),
+    /// `Return` was pressed in the capture date field.
+    DateEntered,
+    /// A [`Command::WriteDate`] finished.
+    DateWritten {
+        path: PathBuf,
+        result: Result<(), String>,
+    },
 }
 
 /// A step through a video.
@@ -423,6 +443,14 @@ pub enum Command {
     /// The result of an earlier [`Command::DecodeThumbnail`] is no longer
     /// needed; it reports nothing once cancelled.
     CancelThumbnail(PathBuf),
+    /// Read the metadata of the file, answered by [`Event::MetadataRead`].
+    ReadMetadata(PathBuf),
+    /// Set the capture date of the file to `date`, as EXIF stores it, in
+    /// place; answered by [`Event::DateWritten`].
+    WriteDate {
+        path: PathBuf,
+        date: String,
+    },
     SetFullscreen(bool),
     Quit,
 }
@@ -524,6 +552,10 @@ const IMAGE_VIEW_KEYS: &[KeyHint] = &[
     KeyHint {
         keys: "O",
         action: "open in another app",
+    },
+    KeyHint {
+        keys: "I",
+        action: "info",
     },
     KeyHint {
         keys: "X",
@@ -1078,6 +1110,8 @@ pub struct View {
     pub crop: Option<Region>,
     /// While the export tool is chosen: how and what it exports.
     pub export: Option<ExportView>,
+    /// While the metadata view is open: the metadata of the current file.
+    pub metadata: Option<MetadataView>,
 }
 
 pub struct Core {
@@ -1164,6 +1198,8 @@ pub struct Core {
     /// The event the save dialog interrupted, handled once the edits are
     /// dealt with.
     parked: Option<Event>,
+    /// The metadata view, while it is open.
+    info: Option<Info>,
 }
 
 /// The video of the main area.
@@ -1382,6 +1418,7 @@ impl Core {
                 save_dialog: None,
                 crop: None,
                 export: None,
+                metadata: None,
             },
             screen,
             band: Vec::new(),
@@ -1419,6 +1456,7 @@ impl Core {
             exporting: Exporting::new(),
             dialog: None,
             parked: None,
+            info: None,
         };
         (core, commands)
     }
@@ -1448,6 +1486,7 @@ impl Core {
         commands.extend(self.sync_inner());
         commands.extend(self.sync_motion());
         commands.extend(self.sync_video());
+        commands.extend(self.sync_info());
         self.publish();
         commands
     }
@@ -1601,6 +1640,16 @@ impl Core {
                 Vec::new()
             }
             Event::EditsSaved { target, result } => self.edits_saved(target, result),
+            Event::MetadataRead { path, result } => {
+                self.metadata_read(path, result);
+                Vec::new()
+            }
+            Event::DateEdited(typed) => {
+                self.date_edited(typed);
+                Vec::new()
+            }
+            Event::DateEntered => self.date_entered(),
+            Event::DateWritten { path, result } => self.date_written(path, result),
         }
     }
 
@@ -1745,6 +1794,7 @@ impl Core {
             self.view.key_line.keys = SAVE_DIALOG_KEYS.to_vec();
         }
         self.publish_edits(previewing);
+        self.publish_info();
         self.publish_band_highlight();
     }
 
@@ -2680,6 +2730,10 @@ impl Core {
             Key::Enter => self.write_rotation(),
             Key::X => self.trash(),
             Key::C => self.copy(),
+            Key::I => {
+                self.toggle_info();
+                Vec::new()
+            }
             Key::Space => self.toggle_play(),
             Key::M => self.toggle_mute(),
             Key::P => {

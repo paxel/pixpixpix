@@ -8,8 +8,8 @@ use std::sync::Arc;
 use egui::{Color32, ColorImage, RichText, TextureHandle, TextureOptions};
 
 use crate::core::{
-    DirColumn, EditsView, Event, ExportView, Focus, InnerImages, Key, KeyPress, MotionKind, Notice,
-    Points, Region, Screen, Thumb, Video, VideoStep, View, Zoom, unturned,
+    DirColumn, EditsView, Event, ExportView, Focus, InnerImages, Key, KeyPress, MetadataView,
+    MotionKind, Notice, Points, Region, Screen, Thumb, Video, VideoStep, View, Zoom, unturned,
 };
 use crate::decode::DecodedImage;
 use crate::folder;
@@ -38,6 +38,10 @@ const HIGHLIGHT_TEXT: Color32 = Color32::from_rgb(0x12, 0x12, 0x14);
 const HIGHLIGHT_UNFOCUSED: Color32 = Color32::from_rgb(0x3a, 0x3a, 0x40);
 /// Width of the dir column.
 const DIR_COLUMN_WIDTH: f32 = 220.0;
+/// Width of the metadata view.
+const METADATA_WIDTH: f32 = 300.0;
+/// The label of the capture date field.
+const CAPTURED_LABEL: &str = "Captured";
 /// Height of the band's thumbnails.
 const THUMB_HEIGHT: f32 = 64.0;
 /// Below the error of a file that failed to decode.
@@ -157,6 +161,7 @@ fn map_key(key: egui::Key) -> Option<Key> {
         egui::Key::G => Key::G,
         egui::Key::P => Key::P,
         egui::Key::Z => Key::Z,
+        egui::Key::I => Key::I,
         _ => return None,
     })
 }
@@ -210,6 +215,13 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
             .show(ui, |ui| {
                 show_dir_column(ui, column, view.focus == Focus::Dirs)
             });
+    }
+    if let Some(metadata) = &view.metadata {
+        egui::Panel::right("metadata")
+            .resizable(false)
+            .exact_size(METADATA_WIDTH)
+            .frame(egui::Frame::NONE.fill(BACKGROUND).inner_margin(6.0))
+            .show(ui, |ui| show_metadata(ui, metadata, &mut events));
     }
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE.fill(BACKGROUND))
@@ -497,6 +509,61 @@ fn show_dir_column(ui: &mut egui::Ui, column: &DirColumn, focused: bool) {
                 }
             }
         });
+}
+
+/// The metadata of the current file, read-only but for the capture date,
+/// whose field reports every change and `Return`.
+fn show_metadata(ui: &mut egui::Ui, metadata: &MetadataView, events: &mut Vec<Event>) {
+    ui.label(RichText::new("Metadata").color(TEXT).strong().size(15.0));
+    ui.add_space(4.0);
+    if metadata.reading {
+        ui.label(RichText::new("Reading…").color(DIM_TEXT));
+    }
+    let row = |ui: &mut egui::Ui, label: &str, value: &str| {
+        ui.label(RichText::new(label).color(DIM_TEXT));
+        ui.label(RichText::new(value).color(TEXT));
+        ui.end_row();
+    };
+    egui::Grid::new("metadata_fields")
+        .num_columns(2)
+        .spacing(egui::vec2(12.0, 4.0))
+        .show(ui, |ui| {
+            for field in &metadata.file {
+                row(ui, field.label, &field.value);
+            }
+            if metadata.reading {
+                return;
+            }
+            let label = ui.label(RichText::new(CAPTURED_LABEL).color(DIM_TEXT));
+            match &metadata.date {
+                Some(date) => {
+                    let mut typed = date.clone();
+                    let field = ui
+                        .add_enabled(
+                            !metadata.writing,
+                            egui::TextEdit::singleline(&mut typed).desired_width(150.0),
+                        )
+                        .labelled_by(label.id);
+                    if typed != *date {
+                        events.push(Event::DateEdited(typed));
+                    }
+                    if field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        events.push(Event::DateEntered);
+                    }
+                }
+                None => {
+                    ui.label(RichText::new("no capture date").color(TEXT));
+                }
+            }
+            ui.end_row();
+            for field in &metadata.exif {
+                row(ui, field.label, &field.value);
+            }
+        });
+    if let Some(error) = &metadata.error {
+        ui.add_space(4.0);
+        ui.label(RichText::new(error).color(ERROR_TEXT));
+    }
 }
 
 /// The settings screen over the dimmed window; a changed value is reported

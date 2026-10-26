@@ -1675,3 +1675,82 @@ fn export_opens_the_save_dialog_with_the_size_in_the_name() {
         .collect();
     assert_eq!(targets, [PathBuf::from("/p/a_512x512.png")]);
 }
+
+/// The metadata view open on a.jpg, its capture date read.
+fn metadata_open() -> Harness<'static, State> {
+    use pixpixpix::metadata::{Field, Metadata};
+    let mut h = harness(browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]));
+    h.run();
+    h.key_press(egui::Key::I);
+    h.run();
+    assert!(
+        h.state()
+            .commands
+            .contains(&Command::ReadMetadata(PathBuf::from("/p/a.jpg")))
+    );
+    h.state_mut().core.handle(Event::MetadataRead {
+        path: PathBuf::from("/p/a.jpg"),
+        result: Ok(Metadata {
+            file: vec![Field {
+                label: "File",
+                value: "a.jpg".into(),
+            }],
+            captured: Some("2019-06-07 08:09:10".into()),
+            exif: vec![Field {
+                label: "Camera",
+                value: "Pixcam".into(),
+            }],
+        }),
+    });
+    h.run();
+    h.state_mut().commands.clear();
+    h
+}
+
+#[test]
+fn i_shows_the_metadata_with_the_capture_date_in_a_field() {
+    let mut h = metadata_open();
+    h.get_by_label("Metadata");
+    h.get_by_label("Pixcam");
+    h.get_by_label("2 × 1");
+    let date = h.get_by_role_and_label(Role::TextInput, "Captured").value();
+    assert_eq!(date.as_deref(), Some("2019-06-07 08:09:10"));
+    h.key_press(egui::Key::I);
+    h.run();
+    assert!(h.query_by_label("Metadata").is_none());
+}
+
+#[test]
+fn keys_typed_into_the_date_field_stay_there_and_enter_checks_the_date() {
+    let mut h = metadata_open();
+    h.get_by_role_and_label(Role::TextInput, "Captured").focus();
+    h.run();
+    h.get_by_role_and_label(Role::TextInput, "Captured")
+        .type_text("x");
+    h.run();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    // Neither trashed nor written: the date is no date.
+    assert_eq!(h.state().commands, []);
+    h.get_by_label("Enter the date as YYYY-MM-DD HH:MM:SS");
+}
+
+#[test]
+fn enter_in_the_date_field_writes_a_valid_date() {
+    let mut h = metadata_open();
+    h.state_mut()
+        .core
+        .handle(Event::DateEdited("2021-12-24 18:30:00".into()));
+    h.run();
+    h.get_by_role_and_label(Role::TextInput, "Captured").focus();
+    h.run();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    assert_eq!(
+        h.state().commands,
+        [Command::WriteDate {
+            path: PathBuf::from("/p/a.jpg"),
+            date: "2021:12:24 18:30:00".into()
+        }]
+    );
+}
