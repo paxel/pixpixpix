@@ -74,6 +74,32 @@ pub fn decode_file(path: &Path, cancel: &AtomicBool) -> Option<Result<DecodedIma
     decode_first_frame(path, cancel).map(|result| result.map(|first| first.image))
 }
 
+/// The longest side of an overview thumbnail, in pixels.
+pub const THUMBNAIL_SIZE: u32 = 256;
+
+/// Like [`decode_file`], shrunk to at most `max` pixels a side, keeping the
+/// aspect ratio; a smaller image stays as it is.
+pub fn decode_thumbnail(
+    path: &Path,
+    max: u32,
+    cancel: &AtomicBool,
+) -> Option<Result<DecodedImage, String>> {
+    Some(decode_file(path, cancel)?.map(|image| shrink(image, max)))
+}
+
+/// `image` shrunk to fit `max` pixels a side.
+fn shrink(image: DecodedImage, max: u32) -> DecodedImage {
+    if image.width <= max && image.height <= max {
+        return image;
+    }
+    match image::RgbaImage::from_raw(image.width, image.height, image.rgba.to_vec()) {
+        Some(pixels) => {
+            DecodedImage::from_dynamic(DynamicImage::ImageRgba8(pixels).thumbnail(max, max))
+        }
+        None => image,
+    }
+}
+
 /// Like [`decode_file`], telling an animation and a multi-image file apart;
 /// finding out reads only the file's headers. A video gives its first frame
 /// through libmpv, loaded on the first one.

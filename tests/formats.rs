@@ -588,3 +588,117 @@ fn a_cancelled_inner_decode_reports_nothing() {
 fn mpo_files_are_listed() {
     assert!(folder::is_image(Path::new("stereo.MPO")));
 }
+
+/// Scans below `root` with a token that is never set; each folder found
+/// relative to `root` with its file names.
+fn scan(root: &Path, dots: bool) -> Vec<(String, Vec<String>)> {
+    let mut found = Vec::new();
+    let finished = folder::scan(root, dots, &AtomicBool::new(false), |dir, files| {
+        let dir = dir
+            .strip_prefix(root)
+            .map(|d| d.display().to_string())
+            .unwrap_or_default();
+        found.push((dir, files.iter().map(|f| folder::file_name(f)).collect()));
+    });
+    assert!(finished);
+    found
+}
+
+#[test]
+fn scan_goes_depth_first_in_natural_order_own_files_first() {
+    let root = tempfile::tempdir().unwrap();
+    tree(
+        root.path(),
+        &[
+            "top10.jpg",
+            "top2.jpg",
+            "a10/x.jpg",
+            "a2/b/y.jpg",
+            "a2/z.png",
+            "e/",
+            "f/f2/w.jpg",
+            "f/notes.txt",
+        ],
+    )
+    .unwrap();
+    let names = |list: &[&str]| list.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+    assert_eq!(
+        scan(root.path(), false),
+        [
+            (String::new(), names(&["top2.jpg", "top10.jpg"])),
+            ("a2".into(), names(&["z.png"])),
+            ("a2/b".into(), names(&["y.jpg"])),
+            ("a10".into(), names(&["x.jpg"])),
+            ("f/f2".into(), names(&["w.jpg"])),
+        ]
+    );
+}
+
+#[test]
+fn scan_skips_dot_entries_unless_asked() {
+    let root = tempfile::tempdir().unwrap();
+    tree(root.path(), &[".cache/x.jpg", ".h.jpg", "a.jpg"]).unwrap();
+    let dirs = |dots| -> Vec<(String, usize)> {
+        scan(root.path(), dots)
+            .into_iter()
+            .map(|(dir, files)| (dir, files.len()))
+            .collect()
+    };
+    assert_eq!(dirs(false), [(String::new(), 1)]);
+    assert_eq!(dirs(true), [(String::new(), 2), (".cache".into(), 1)]);
+}
+
+#[cfg(unix)]
+#[test]
+fn scan_does_not_follow_symlinked_folders() {
+    let root = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    tree(elsewhere.path(), &["x.jpg"]).unwrap();
+    tree(root.path(), &["a/y.jpg"]).unwrap();
+    std::os::unix::fs::symlink(elsewhere.path(), root.path().join("linked")).unwrap();
+    let dirs: Vec<String> = scan(root.path(), false)
+        .into_iter()
+        .map(|(d, _)| d)
+        .collect();
+    assert_eq!(dirs, ["a"]);
+}
+
+#[test]
+fn cancelled_scan_reports_nothing() {
+    let root = tempfile::tempdir().unwrap();
+    tree(root.path(), &["a.jpg"]).unwrap();
+    let mut called = false;
+    let finished = folder::scan(root.path(), false, &AtomicBool::new(true), |_, _| {
+        called = true;
+    });
+    assert!(!finished);
+    assert!(!called);
+}
+
+#[test]
+fn a_thumbnail_is_shrunk_to_the_size_keeping_the_aspect_ratio() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("wide.png");
+    image::RgbaImage::from_pixel(600, 300, image::Rgba([255, 0, 0, 255]))
+        .save(&path)
+        .unwrap();
+    let thumbnail = decode::decode_thumbnail(&path, 256, &AtomicBool::new(false))
+        .unwrap()
+        .unwrap();
+    assert_eq!((thumbnail.width, thumbnail.height), (256, 128));
+    assert!(is_red(pixel(&thumbnail, 100, 60)));
+}
+
+#[test]
+fn a_small_thumbnail_keeps_its_size() {
+    let thumbnail = decode::decode_thumbnail(&fixture("sample.png"), 256, &AtomicBool::new(false))
+        .unwrap()
+        .unwrap();
+    assert_eq!((thumbnail.width, thumbnail.height), (4, 2));
+}
+
+#[test]
+fn a_broken_file_has_no_thumbnail() {
+    let result = decode::decode_thumbnail(&fixture("broken.jpg"), 256, &AtomicBool::new(false));
+    assert!(matches!(result, Some(Err(_))));
+}

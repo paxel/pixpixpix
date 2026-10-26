@@ -1041,3 +1041,96 @@ fn live_and_motion_photos_are_marked_and_space_plays_their_video() {
     h.get_by_label("Motion Photo");
     assert!(h.query_by_label("Live Photo").is_none());
 }
+
+/// [`browsing`] in a harness with the overview opened by `g`; the number of
+/// its scan.
+fn overview_open() -> (Harness<'static, State>, Option<u64>) {
+    let mut h = harness(browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]));
+    h.run();
+    h.state_mut().commands.clear();
+    h.key_press(egui::Key::G);
+    h.run();
+    let scan = h.state().commands.iter().find_map(|c| match c {
+        Command::ScanOverview { scan, .. } => Some(*scan),
+        _ => None,
+    });
+    (h, scan)
+}
+
+fn overview_section(h: &mut Harness<'static, State>, scan: u64, dir: &str, files: &[String]) {
+    let commands = h.state_mut().core.handle(Event::OverviewSection {
+        scan,
+        dir: PathBuf::from(dir),
+        files: files.iter().map(PathBuf::from).collect(),
+    });
+    h.state_mut().commands.extend(commands);
+    h.run();
+}
+
+#[test]
+fn g_replaces_image_and_band_by_sections_of_named_placeholders() {
+    let (mut h, scan) = overview_open();
+    let scan = scan.unwrap();
+    h.get_by_label("Scanning…");
+    assert!(h.query_by_role_and_label(Role::Image, "a.jpg").is_none());
+    assert!(h.query_by_role_and_label(Role::Button, "b.jpg").is_none());
+    h.get_by_label("close overview");
+    overview_section(&mut h, scan, "/p", &["/p/a.jpg".into(), "/p/b.mp4".into()]);
+    overview_section(&mut h, scan, "/p/x/y", &["/p/x/y/c.jpg".into()]);
+    h.get_by_label("x/y");
+    h.get_by_role_and_label(Role::Label, "a.jpg");
+    h.get_by_role_and_label(Role::Label, "b.mp4");
+    h.get_by_role_and_label(Role::Label, "c.jpg");
+    assert!(h.query_by_role(Role::Image).is_none());
+
+    h.state_mut().core.handle(Event::ThumbnailDecoded {
+        path: PathBuf::from("/p/x/y/c.jpg"),
+        result: Ok(DecodedImage {
+            width: 2,
+            height: 1,
+            rgba: Arc::from(vec![255; 8]),
+        }),
+    });
+    h.run();
+    h.get_by_role_and_label(Role::Image, "c.jpg");
+
+    h.key_press(egui::Key::G);
+    h.run();
+    assert!(h.query_by_label("x/y").is_none());
+    h.get_by_role_and_label(Role::Image, "a.jpg");
+}
+
+#[test]
+fn only_the_tiles_on_screen_are_laid_out_and_decoded() {
+    let (mut h, scan) = overview_open();
+    let scan = scan.unwrap();
+    let files: Vec<String> = (0..500).map(|i| format!("/p/{i}.jpg")).collect();
+    overview_section(&mut h, scan, "/p", &files);
+    h.get_by_role_and_label(Role::Label, "0.jpg");
+    assert!(h.query_by_role_and_label(Role::Label, "499.jpg").is_none());
+    let visible = h
+        .state()
+        .core
+        .view()
+        .overview
+        .as_ref()
+        .unwrap()
+        .visible
+        .clone();
+    assert_eq!(visible.start, 0);
+    assert!(visible.end > 4 && visible.end < 100, "{visible:?}");
+    let asked: Vec<&Command> = h
+        .state()
+        .commands
+        .iter()
+        .filter(|c| matches!(c, Command::DecodeThumbnail(_)))
+        .collect();
+    assert_eq!(
+        asked,
+        (0..4)
+            .map(|i| Command::DecodeThumbnail(PathBuf::from(format!("/p/{i}.jpg"))))
+            .collect::<Vec<_>>()
+            .iter()
+            .collect::<Vec<_>>()
+    );
+}

@@ -224,6 +224,32 @@ pub fn search_media(dir: &Path, dots: bool, cancel: &AtomicBool) -> Option<Optio
     Some(None)
 }
 
+/// Walks `root` and the folders below it depth-first in natural order, a
+/// folder's own files before its subfolders, calling `found` with every
+/// folder that has media files and those files in natural order. Dot files
+/// and dot folders are skipped unless `dots` is set, symlinked folders are not
+/// followed and unreadable ones are passed over. False once `cancel` is set.
+pub fn scan(
+    root: &Path,
+    dots: bool,
+    cancel: &AtomicBool,
+    mut found: impl FnMut(PathBuf, Vec<PathBuf>),
+) -> bool {
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        if cancel.load(atomic::Ordering::Relaxed) {
+            return false;
+        }
+        if let Ok(files) = list_media(&dir, dots)
+            && !files.is_empty()
+        {
+            found(dir.clone(), files);
+        }
+        stack.extend(real_subfolders(&dir, dots).into_iter().rev());
+    }
+    true
+}
+
 /// The subfolders of `dir` that are no symlinks, in natural order; none when
 /// it cannot be read.
 fn real_subfolders(dir: &Path, dots: bool) -> Vec<PathBuf> {

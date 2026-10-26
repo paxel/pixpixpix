@@ -5,9 +5,9 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crate::clipboard::Clipboard;
@@ -44,6 +44,9 @@ pub fn run() -> ExitCode {
         settings_path: settings::default_path(),
         copier: None,
         playback: None,
+        scan: None,
+        thumbnails: HashMap::new(),
+        thumbnailer: None,
     };
     for command in &commands {
         worker.spawn(command);
@@ -128,7 +131,19 @@ struct Worker {
     copier: Option<Sender<CopyJob>>,
     /// The video playing or paused; dropping it stops it.
     playback: Option<Playback>,
+    /// Cancellation token of the running overview scan.
+    scan: Option<Arc<AtomicBool>>,
+    /// Cancellation tokens of the thumbnail decodes still running.
+    thumbnails: HashMap<PathBuf, Arc<AtomicBool>>,
+    /// Hands thumbnail decodes to their threads, started on the first one.
+    thumbnailer: Option<Sender<ThumbnailJob>>,
 }
+
+/// One thumbnail to decode and its cancellation token.
+type ThumbnailJob = (PathBuf, Arc<AtomicBool>);
+
+/// How many threads decode thumbnails.
+const THUMBNAIL_THREADS: usize = 4;
 
 /// One `c`: the file and its pixels as shown.
 type CopyJob = (PathBuf, DecodedImage, Rotation);
@@ -374,6 +389,45 @@ impl Worker {
                     found.map(|_| Event::MotionPhoto(path))
                 });
             }
+            Command::ScanOverview { scan, root, dots } => {
+                let cancel = Arc::new(AtomicBool::new(false));
+                if let Some(old) = self.scan.replace(Arc::clone(&cancel)) {
+                    old.store(true, Ordering::Relaxed);
+                }
+                let (scan, root, dots) = (*scan, root.clone(), *dots);
+                let events = self.events.clone();
+                let ctx = self.ctx.clone();
+                // Each folder is reported as soon as it is found.
+                std::thread::spawn(move || {
+                    let send = |event| {
+                        // The app may already be gone; nothing to report to then.
+                        let _ = events.send(event);
+                        ctx.request_repaint();
+                    };
+                    let finished = folder::scan(&root, dots, &cancel, |dir, files| {
+                        send(Event::OverviewSection { scan, dir, files });
+                    });
+                    if finished {
+                        send(Event::OverviewScanned(scan));
+                    }
+                });
+            }
+            Command::CancelScan => {
+                if let Some(cancel) = self.scan.take() {
+                    cancel.store(true, Ordering::Relaxed);
+                }
+            }
+            Command::DecodeThumbnail(path) => {
+                let cancel = Arc::new(AtomicBool::new(false));
+                self.thumbnails.insert(path.clone(), Arc::clone(&cancel));
+                // The threads are gone only with the app.
+                let _ = self.thumbnailer().send((path.clone(), cancel));
+            }
+            Command::CancelThumbnail(path) => {
+                if let Some(cancel) = self.thumbnails.remove(path) {
+                    cancel.store(true, Ordering::Relaxed);
+                }
+            }
             Command::SetFullscreen(_) | Command::Quit => {}
         }
     }
@@ -399,10 +453,52 @@ impl Worker {
         })
     }
 
-    /// Forgets the token of a decode that reported back.
+    /// The thumbnail threads, started on the first thumbnail. However fast
+    /// the overview scrolls, no more than these decode at once; a job
+    /// cancelled while waiting is skipped.
+    fn thumbnailer(&mut self) -> &Sender<ThumbnailJob> {
+        self.thumbnailer.get_or_insert_with(|| {
+            let (jobs, inbox) = channel::<ThumbnailJob>();
+            let inbox = Arc::new(Mutex::new(inbox));
+            for _ in 0..THUMBNAIL_THREADS {
+                let inbox = Arc::clone(&inbox);
+                let events = self.events.clone();
+                let ctx = self.ctx.clone();
+                std::thread::spawn(move || {
+                    loop {
+                        // The lock is held only while waiting for a job.
+                        let job = match inbox.lock() {
+                            Ok(inbox) => inbox.recv(),
+                            Err(_) => return,
+                        };
+                        let Ok((path, cancel)) = job else {
+                            return;
+                        };
+                        let Some(result) =
+                            decode::decode_thumbnail(&path, decode::THUMBNAIL_SIZE, &cancel)
+                        else {
+                            continue;
+                        };
+                        // The app may already be gone; nothing to report to then.
+                        let _ = events.send(Event::ThumbnailDecoded { path, result });
+                        ctx.request_repaint();
+                    }
+                });
+            }
+            jobs
+        })
+    }
+
+    /// Forgets the token of a decode or thumbnail that reported back.
     fn finished(&mut self, event: &Event) {
-        if let Event::Decoded { path, .. } = event {
-            self.decodes.remove(path);
+        match event {
+            Event::Decoded { path, .. } => {
+                self.decodes.remove(path);
+            }
+            Event::ThumbnailDecoded { path, .. } => {
+                self.thumbnails.remove(path);
+            }
+            _ => {}
         }
     }
 
@@ -473,7 +569,11 @@ impl App {
                 | Command::MuteVideo(_)
                 | Command::SeekVideo(_)
                 | Command::StopVideo
-                | Command::FindMotion(_) => {
+                | Command::FindMotion(_)
+                | Command::ScanOverview { .. }
+                | Command::CancelScan
+                | Command::DecodeThumbnail(_)
+                | Command::CancelThumbnail(_) => {
                     self.worker.spawn(&command);
                 }
             }

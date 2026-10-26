@@ -16,6 +16,8 @@ use crate::folder;
 use crate::rotate::Rotation;
 use crate::settings::{self, Settings};
 
+mod overview;
+
 const BACKGROUND: Color32 = Color32::from_rgb(0x12, 0x12, 0x14);
 const TEXT: Color32 = Color32::from_rgb(0xe8, 0xe8, 0xea);
 const ERROR_TEXT: Color32 = Color32::from_rgb(0xff, 0xb4, 0xa8);
@@ -146,6 +148,7 @@ fn map_key(key: egui::Key) -> Option<Key> {
         egui::Key::C => Key::C,
         egui::Key::Space => Key::Space,
         egui::Key::M => Key::M,
+        egui::Key::G => Key::G,
         _ => return None,
     })
 }
@@ -165,7 +168,7 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
         .show(ui, |ui| {
             show_key_line(ui, view);
         });
-    if !view.band.is_empty() {
+    if !view.band.is_empty() && view.overview.is_none() {
         egui::Panel::bottom("band")
             .resizable(false)
             .show_separator_line(false)
@@ -186,6 +189,10 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE.fill(BACKGROUND))
         .show(ui, |ui| {
+            if let Some(gallery) = &view.overview {
+                overview::show_overview(ui, gallery, textures, &mut events);
+                return;
+            }
             let size = ui.max_rect().size();
             let viewport = Points {
                 x: size.x,
@@ -231,10 +238,12 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
     events
 }
 
-/// Whether `path` is drawn by `view`, so its texture is still needed.
+/// Whether `path` is drawn by `view`, so its texture is still needed. While
+/// the overview is open every texture may be; the thumbnails the core drops
+/// go with their pixels.
 fn shown(view: &View, path: &Path) -> bool {
     let current = matches!(&view.screen, Screen::Image { path: p, .. } if p == path);
-    current || view.band.iter().any(|t| t.path == path)
+    current || view.overview.is_some() || view.band.iter().any(|t| t.path == path)
 }
 
 /// The cached files as small thumbs, broken ones as a marked tile, animated

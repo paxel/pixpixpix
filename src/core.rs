@@ -3,6 +3,7 @@
 //! work through [`Command`]s. It does no I/O itself.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -12,8 +13,11 @@ use crate::rotate::Rotation;
 use crate::settings::Settings;
 use crate::startup::NoFile;
 
+mod overview;
 mod search;
 
+use overview::Gallery;
+pub use overview::{Overview, Section, Tile};
 use search::Search;
 
 #[derive(Debug, Clone, Copy)]
@@ -51,6 +55,7 @@ pub enum Key {
     C,
     Space,
     M,
+    G,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -195,6 +200,22 @@ pub enum Event {
     /// The file a [`Command::FindMotion`] looked at is a Motion Photo; other
     /// files are not reported.
     MotionPhoto(PathBuf),
+    /// The [`Command::ScanOverview`] numbered `scan` found a folder with
+    /// media files; `files` are in natural order.
+    OverviewSection {
+        scan: u64,
+        dir: PathBuf,
+        files: Vec<PathBuf>,
+    },
+    /// The [`Command::ScanOverview`] with this number found every folder.
+    OverviewScanned(u64),
+    /// The overview shows these tiles of [`Overview::tiles`].
+    OverviewVisible(Range<usize>),
+    /// A [`Command::DecodeThumbnail`] finished.
+    ThumbnailDecoded {
+        path: PathBuf,
+        result: Result<DecodedImage, String>,
+    },
 }
 
 /// A step through a video.
@@ -295,6 +316,24 @@ pub enum Command {
     /// Find out whether the JPEG is a Motion Photo, answered by
     /// [`Event::MotionPhoto`] if it is.
     FindMotion(PathBuf),
+    /// Scan `root` and the folders below it depth-first in natural order, a
+    /// folder's own media files before its subfolders, dot entries only with
+    /// `dots`, symlinked folders not followed, replacing any scan so far;
+    /// answered by an [`Event::OverviewSection`] for each folder with media
+    /// files as it is found, then [`Event::OverviewScanned`].
+    ScanOverview {
+        scan: u64,
+        root: PathBuf,
+        dots: bool,
+    },
+    /// The running scan is no longer needed; it reports nothing more.
+    CancelScan,
+    /// Decode the file shrunk to a thumbnail, answered by
+    /// [`Event::ThumbnailDecoded`].
+    DecodeThumbnail(PathBuf),
+    /// The result of an earlier [`Command::DecodeThumbnail`] is no longer
+    /// needed; it reports nothing once cancelled.
+    CancelThumbnail(PathBuf),
     SetFullscreen(bool),
     Quit,
 }
@@ -402,6 +441,10 @@ const IMAGE_VIEW_KEYS: &[KeyHint] = &[
         action: "trash",
     },
     KeyHint {
+        keys: "G",
+        action: "overview",
+    },
+    KeyHint {
         keys: "N",
         action: "folders",
     },
@@ -481,6 +524,10 @@ const DIR_COLUMN_KEYS: &[KeyHint] = &[
         action: "find images",
     },
     KeyHint {
+        keys: "G",
+        action: "overview",
+    },
+    KeyHint {
         keys: "N",
         action: "close",
     },
@@ -536,6 +583,12 @@ const GLOBAL_KEYS: &[KeyHint] = &[
         action: "quit",
     },
 ];
+
+/// The keys while the overview is open, before those of every focus area.
+const OVERVIEW_KEYS: &[KeyHint] = &[KeyHint {
+    keys: "G",
+    action: "close overview",
+}];
 
 /// The keys while the settings screen is open.
 const SETTINGS_KEYS: &[KeyHint] = &[
@@ -795,6 +848,8 @@ pub struct View {
     pub video: Option<Video>,
     /// While the main area shows a Live Photo or Motion Photo.
     pub motion: Option<MotionKind>,
+    /// While the overview is open; it replaces the main area and the band.
+    pub overview: Option<Overview>,
 }
 
 pub struct Core {
@@ -866,6 +921,8 @@ pub struct Core {
     probed: BTreeSet<PathBuf>,
     /// The cached files found to be Motion Photos.
     motion_photos: BTreeSet<PathBuf>,
+    /// The scan and thumbnails of the overview.
+    gallery: Gallery,
 }
 
 /// The video of the main area.
@@ -1076,6 +1133,7 @@ impl Core {
                 inner: None,
                 video: None,
                 motion: None,
+                overview: None,
             },
             screen,
             band: Vec::new(),
@@ -1106,6 +1164,7 @@ impl Core {
             live: BTreeMap::new(),
             probed: BTreeSet::new(),
             motion_photos: BTreeSet::new(),
+            gallery: Gallery::default(),
         };
         (core, commands)
     }
@@ -1230,6 +1289,13 @@ impl Core {
                 }
                 Vec::new()
             }
+            Event::OverviewSection { scan, dir, files } => self.overview_section(scan, &dir, files),
+            Event::OverviewScanned(scan) => {
+                self.overview_scanned(scan);
+                Vec::new()
+            }
+            Event::OverviewVisible(visible) => self.overview_visible(visible),
+            Event::ThumbnailDecoded { path, result } => self.thumbnail_decoded(&path, result),
         }
     }
 
@@ -1322,7 +1388,9 @@ impl Core {
         for (thumb, kind) in self.view.band.iter_mut().zip(kinds) {
             thumb.motion = kind;
         }
-        if self.view.focus == Focus::Image && !self.view.settings_open {
+        if self.view.overview.is_some() && !self.view.settings_open {
+            self.view.key_line.keys = [OVERVIEW_KEYS, GLOBAL_KEYS].concat();
+        } else if self.view.focus == Focus::Image && !self.view.settings_open {
             let mut keys = focus_keys(Focus::Image, self.view.dir_column.is_some());
             if self.view.inner.is_some() {
                 keys.insert(1, INNER_KEYS);
@@ -1921,6 +1989,9 @@ impl Core {
                 self.view.fullscreen = !self.view.fullscreen;
                 vec![Command::SetFullscreen(self.view.fullscreen)]
             }
+            (Key::G, false) => self.toggle_overview(),
+            // The overview takes no other keys yet.
+            _ if self.view.overview.is_some() => Vec::new(),
             (Key::N, false) => self.toggle_column(),
             (Key::B, false) => {
                 self.focus_band();
