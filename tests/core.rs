@@ -282,6 +282,7 @@ fn key_line_lists_the_image_view_keys() {
             "L/R",
             "Enter",
             "O",
+            "X",
             "N",
             "B",
             "Tab",

@@ -130,6 +130,7 @@ fn map_key(key: egui::Key) -> Option<Key> {
         egui::Key::S => Key::S,
         egui::Key::O => Key::O,
         egui::Key::L => Key::L,
+        egui::Key::X => Key::X,
         _ => return None,
     })
 }
@@ -398,6 +399,9 @@ fn show_key_line(ui: &mut egui::Ui, view: &View) {
             ui.label(RichText::new(error).color(ERROR_TEXT));
         }
         if let Some(error) = &view.rotation_error {
+            ui.label(RichText::new(error).color(ERROR_TEXT));
+        }
+        if let Some(error) = &view.trash_error {
             ui.label(RichText::new(error).color(ERROR_TEXT));
         }
     });

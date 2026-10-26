@@ -46,6 +46,7 @@ pub enum Key {
     S,
     O,
     L,
+    X,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,6 +139,11 @@ pub enum Event {
         path: PathBuf,
         result: Result<(), String>,
     },
+    /// A [`Command::Trash`] finished.
+    Trashed {
+        path: PathBuf,
+        result: Result<(), String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -180,6 +186,8 @@ pub enum Command {
         path: PathBuf,
         rotation: Rotation,
     },
+    /// Move the file to the system trash, answered by [`Event::Trashed`].
+    Trash(PathBuf),
     SetFullscreen(bool),
     Quit,
 }
@@ -275,6 +283,10 @@ const IMAGE_VIEW_KEYS: &[KeyHint] = &[
     KeyHint {
         keys: "O",
         action: "open in another app",
+    },
+    KeyHint {
+        keys: "X",
+        action: "trash",
     },
     KeyHint {
         keys: "N",
@@ -578,6 +590,8 @@ pub struct View {
     pub rotation: Rotation,
     /// Why the last rotation could not be written.
     pub rotation_error: Option<String>,
+    /// Why the last file could not be moved to the trash.
+    pub trash_error: Option<String>,
 }
 
 pub struct Core {
@@ -627,6 +641,9 @@ pub struct Core {
     rotation: Rotation,
     /// The file whose rotation is being written, until it is decoded again.
     writing: Option<PathBuf>,
+    /// Files sent to the trash and not reported back yet; listings leave them
+    /// out, so a listing taken before the trash cannot bring them back.
+    trashing: BTreeSet<PathBuf>,
 }
 
 /// What the nav cache knows of a folder.
@@ -734,6 +751,7 @@ impl Core {
                 open_error: None,
                 rotation: Rotation::None,
                 rotation_error: None,
+                trash_error: None,
             },
             screen,
             band: Vec::new(),
@@ -754,6 +772,7 @@ impl Core {
             band_highlight: None,
             rotation: Rotation::None,
             writing: None,
+            trashing: BTreeSet::new(),
         };
         (core, commands)
     }
@@ -826,6 +845,7 @@ impl Core {
                 Vec::new()
             }
             Event::RotationWritten { path, result } => self.rotation_written(path, result),
+            Event::Trashed { path, result } => self.trashed(&path, result),
         }
     }
 
@@ -997,8 +1017,8 @@ impl Core {
 
     /// A folder that cannot be read is reported and leaves the files as they
     /// were; the current image stays, a folder just entered shows the error.
-    /// Dot files are dropped unless shown. A current file that vanished from
-    /// the folder gives way to the
+    /// Dot files are dropped unless shown, files on their way to the trash
+    /// always. A current file that vanished from the folder gives way to the
     /// file after it, or the last one; with no files left the folder's
     /// emptiness is shown until a file appears.
     fn folder_listed(&mut self, dir: &Path, result: Result<Vec<PathBuf>, String>) -> Vec<Command> {
@@ -1022,7 +1042,7 @@ impl Core {
         self.all_files = Some(files.clone());
         let files: Vec<PathBuf> = files
             .into_iter()
-            .filter(|f| self.dots || !folder::is_dot(f))
+            .filter(|f| (self.dots || !folder::is_dot(f)) && !self.trashing.contains(f))
             .collect();
         let vanished = self
             .current
@@ -1387,8 +1407,57 @@ impl Core {
                 Vec::new()
             }
             Key::Enter => self.write_rotation(),
+            Key::X => self.trash(),
             _ => Vec::new(),
         }
+    }
+
+    /// Sends the current file, broken or not, to the trash and shows the next
+    /// one, or the previous one after the last, at once. A folder left without
+    /// files shows so and opens the dir column, focused. Nothing to trash
+    /// before the folder is listed.
+    fn trash(&mut self) -> Vec<Command> {
+        let (Some(path), Some(dir), Some(listing)) = (
+            self.current.clone(),
+            self.dir.clone(),
+            self.all_files.clone(),
+        ) else {
+            return Vec::new();
+        };
+        if !self.files.contains(&path) {
+            return Vec::new();
+        }
+        self.view.trash_error = None;
+        self.trashing.insert(path.clone());
+        let mut commands = vec![Command::Trash(path)];
+        // The listing without the file steps on as if the watcher reported it.
+        commands.extend(self.folder_listed(&dir, Ok(listing)));
+        if self.current.is_none() {
+            if self.view.dir_column.is_some() {
+                self.set_focus(Focus::Dirs);
+            } else {
+                commands.extend(self.toggle_column());
+            }
+        }
+        commands
+    }
+
+    /// A trashed file is gone from the folder for good. A file that could not
+    /// be trashed is back in navigation, and the failure is shown.
+    fn trashed(&mut self, path: &Path, result: Result<(), String>) -> Vec<Command> {
+        self.trashing.remove(path);
+        if let Err(message) = result {
+            let commands = match (self.dir.clone(), self.all_files.clone()) {
+                (Some(dir), Some(files)) => self.folder_listed(&dir, Ok(files)),
+                _ => Vec::new(),
+            };
+            self.view.trash_error = Some(message);
+            return commands;
+        }
+        if let Some(files) = &mut self.all_files {
+            files.retain(|f| f != path);
+        }
+        Vec::new()
     }
 
     /// The current file while it shows as an image and no rotation of it is
@@ -1560,6 +1629,7 @@ impl Core {
     fn go_to(&mut self, path: PathBuf) -> Vec<Command> {
         self.current = Some(path.clone());
         self.view.open_error = None;
+        self.view.trash_error = None;
         let mut commands = Vec::new();
         self.screen = match self.cache.get(&path) {
             Some(result) => screen(&path, result.clone()),

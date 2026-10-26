@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use crate::core::{Command, Core, Event, Screen};
 use crate::geometry::{self, Geometry};
-use crate::{decode, external, folder, rotate, settings, startup, ui, watch};
+use crate::{decode, external, folder, rotate, settings, startup, trash, ui, watch};
 
 pub const APP_ID: &str = "io.github.paxel.pixpixpix";
 
@@ -230,6 +230,13 @@ impl Worker {
                     Some(Event::RotationWritten { path, result })
                 });
             }
+            Command::Trash(path) => {
+                let path = path.clone();
+                self.run(move || {
+                    let result = trash::move_to_trash(&path);
+                    Some(Event::Trashed { path, result })
+                });
+            }
             Command::SetFullscreen(_) | Command::Quit => {}
         }
     }
@@ -286,7 +293,8 @@ impl App {
                 | Command::LoadSettings
                 | Command::SaveSettings(_)
                 | Command::OpenExternally { .. }
-                | Command::WriteRotation { .. } => {
+                | Command::WriteRotation { .. }
+                | Command::Trash(_) => {
                     self.worker.spawn(&command);
                 }
             }

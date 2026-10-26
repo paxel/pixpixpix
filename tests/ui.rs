@@ -724,3 +724,23 @@ fn enter_writes_the_rotation_and_a_failure_shows_in_the_key_line() {
     h.run();
     h.get_by_label("Cannot rotate wide.jpg: no libturbojpeg");
 }
+
+#[test]
+fn x_reaches_the_core_and_a_failure_shows_in_the_key_line() {
+    let mut h = harness(browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]));
+    h.run();
+    h.get_by_label("X");
+    h.get_by_label("trash");
+    h.key_press(egui::Key::X);
+    h.run();
+    assert_eq!(
+        h.state().commands.first(),
+        Some(&Command::Trash(PathBuf::from("/p/a.jpg")))
+    );
+    h.state_mut().core.handle(Event::Trashed {
+        path: PathBuf::from("/p/a.jpg"),
+        result: Err("Cannot trash a.jpg: Permission denied".into()),
+    });
+    h.run();
+    h.get_by_label("Cannot trash a.jpg: Permission denied");
+}
