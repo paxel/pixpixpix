@@ -387,7 +387,7 @@ fn rgba_image(image: &DecodedImage) -> Result<RgbaImage, String> {
 
 /// `image` encoded as `export` asks, without metadata: within its size
 /// limit by lowering the JPEG quality or raising the PNG compression; WebP is
-/// written lossless only.
+/// written lossless only, without a limit.
 pub fn encode_export(image: &DecodedImage, export: &Export) -> Result<Vec<u8>, String> {
     let rgba = rgba_image(image)?;
     let limit = export.limit_kb.unwrap_or(0);
@@ -459,13 +459,7 @@ pub fn encode_export(image: &DecodedImage, export: &Export) -> Result<Vec<u8>, S
                     ExtendedColorType::Rgba8,
                 )
                 .map_err(|e| e.to_string())?;
-            if fits(&out) {
-                Ok(out)
-            } else {
-                Err(format!(
-                    "WebP is written lossless and does not fit in {limit} KB"
-                ))
-            }
+            Ok(out)
         }
     }
 }

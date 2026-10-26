@@ -519,7 +519,7 @@ impl Toolbar {
 pub enum ExportFormat {
     Jpeg,
     Png,
-    /// Written lossless only, so a size limit cannot lower its quality.
+    /// Written lossless only, so it has no size limit.
     WebP,
 }
 
@@ -554,7 +554,7 @@ pub struct Export {
     /// area is stretched to them.
     pub locked: bool,
     pub format: ExportFormat,
-    /// The largest file allowed, in KB of 1024 bytes.
+    /// The largest file allowed, in KB of 1024 bytes; not for WebP.
     pub limit_kb: Option<u32>,
 }
 

@@ -119,13 +119,16 @@ fn show_export_choices(ui: &mut egui::Ui, view: &ExportView, events: &mut Vec<Ev
         EXPORT_SIDE,
         ToolbarClick::ExportHeight,
     );
-    number(
-        ui,
-        "Max KB",
-        export.limit_kb.unwrap_or(0),
-        0..=u32::MAX,
-        |kb| ToolbarClick::ExportLimit(Some(kb)),
-    );
+    // WebP is written lossless only: a limit could not lower its quality.
+    if export.format != ExportFormat::WebP {
+        number(
+            ui,
+            "Max KB",
+            export.limit_kb.unwrap_or(0),
+            0..=u32::MAX,
+            |kb| ToolbarClick::ExportLimit(Some(kb)),
+        );
+    }
     ui.add_space(12.0);
     let lock = egui::Button::selectable(export.locked, text("Lock ratio"));
     if ui
@@ -141,9 +144,6 @@ fn show_export_choices(ui: &mut egui::Ui, view: &ExportView, events: &mut Vec<Ev
         if ui.add(button).clicked() {
             events.push(Event::Toolbar(ToolbarClick::ExportFormat(format)));
         }
-    }
-    if export.format == ExportFormat::WebP {
-        ui.label(RichText::new("lossless: a limit cannot lower its quality").color(DIM_TEXT));
     }
     ui.add_space(12.0);
     if ui

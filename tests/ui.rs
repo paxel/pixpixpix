@@ -1666,7 +1666,10 @@ fn the_export_tool_shows_its_choices_instead_of_the_palette() {
     assert_eq!(lock(&h), Some(Toggled::False));
     h.get_by_role_and_label(Role::Button, "WebP").click();
     h.run();
-    h.get_by_label_contains("lossless");
+    assert!(
+        h.query_by_role_and_label(Role::SpinButton, "Max KB")
+            .is_none()
+    );
     let export = h.state().core.view().export.unwrap().export;
     assert_eq!(
         (export.width, export.height, export.limit_kb),

@@ -205,18 +205,21 @@ fn a_jpeg_size_limit_is_met_by_lowering_the_quality() {
 }
 
 #[test]
-fn png_and_webp_limits_are_only_checked() {
+fn png_limits_are_only_checked() {
     let image = noise(128, 128);
-    for format in [ExportFormat::Png, ExportFormat::WebP] {
-        let generous = export(128, 128, format, Some(1024));
-        assert!(
-            annotate::encode_export(&image, &generous).is_ok(),
-            "{format:?}"
-        );
-        let error =
-            annotate::encode_export(&image, &export(128, 128, format, Some(1))).unwrap_err();
-        assert!(error.contains("does not fit in 1 KB"), "{error}");
-    }
+    let generous = export(128, 128, ExportFormat::Png, Some(1024));
+    assert!(annotate::encode_export(&image, &generous).is_ok());
+    let error =
+        annotate::encode_export(&image, &export(128, 128, ExportFormat::Png, Some(1))).unwrap_err();
+    assert!(error.contains("does not fit in 1 KB"), "{error}");
+}
+
+#[test]
+fn webp_has_no_size_limit() {
+    let image = noise(128, 128);
+    assert!(
+        annotate::encode_export(&image, &export(128, 128, ExportFormat::WebP, Some(1))).is_ok()
+    );
 }
 
 /// Whether `needle` occurs in `bytes`.
