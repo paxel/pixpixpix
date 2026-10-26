@@ -14,8 +14,8 @@
     reason = "calls into libmpv, a C library loaded at runtime"
 )]
 
-use std::ffi::{CStr, CString, c_char, c_int, c_void};
-use std::path::Path;
+use std::ffi::{CStr, CString, OsStr, c_char, c_int, c_void};
+use std::path::{Path, PathBuf};
 use std::ptr;
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
@@ -25,7 +25,8 @@ use libloading::Library;
 
 use crate::decode::DecodedImage;
 
-/// Where the library is looked for, in this order.
+/// Where the library is looked for, in this order, after the one bundled in
+/// `pixpixpix.app` on macOS.
 pub const LIBRARY_NAMES: &[&str] = if cfg!(target_os = "macos") {
     &[
         "libmpv.2.dylib",
@@ -35,6 +36,33 @@ pub const LIBRARY_NAMES: &[&str] = if cfg!(target_os = "macos") {
 } else {
     &["libmpv.so.2", "libmpv.so.1"]
 };
+
+/// The library in `pixpixpix.app`, as the release packs it.
+const BUNDLED: &str = "libmpv.2.dylib";
+
+/// Where libmpv is looked for, in this order: on macOS the one bundled in the
+/// app first, then [`LIBRARY_NAMES`].
+pub fn library_paths() -> Vec<PathBuf> {
+    let bundled = if cfg!(target_os = "macos") {
+        std::env::current_exe().ok().and_then(|exe| bundled(&exe))
+    } else {
+        None
+    };
+    bundled
+        .into_iter()
+        .chain(LIBRARY_NAMES.iter().map(PathBuf::from))
+        .collect()
+}
+
+/// The libmpv of an app bundle for its executable `exe`:
+/// `Contents/MacOS/<exe>` finds `Contents/Frameworks/libmpv.2.dylib`. The
+/// executable is resolved first, as the cask's `pixpixpix` and `pix3`
+/// commands are links into the app. None when `exe` does not exist.
+pub fn bundled(exe: &Path) -> Option<PathBuf> {
+    let exe = std::fs::canonicalize(exe).ok()?;
+    let contents = exe.parent()?.parent()?;
+    Some(contents.join("Frameworks").join(BUNDLED))
+}
 
 /// `mpv_event`.
 #[repr(C)]
@@ -156,7 +184,7 @@ pub struct Mpv {
 }
 
 /// Loads the first of `names` that exists. The error is meant for the user.
-pub fn load(names: &[&str]) -> Result<Mpv, String> {
+pub fn load<P: AsRef<OsStr>>(names: &[P]) -> Result<Mpv, String> {
     let mut reason = String::new();
     for name in names {
         // SAFETY: libmpv runs no initialisation code with preconditions when

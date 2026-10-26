@@ -18,7 +18,7 @@ use crate::{folder, motion};
 static MPV: OnceLock<Result<Mpv, String>> = OnceLock::new();
 
 fn mpv() -> Result<&'static Mpv, String> {
-    MPV.get_or_init(|| mpv::load(mpv::LIBRARY_NAMES))
+    MPV.get_or_init(|| mpv::load(&mpv::library_paths()))
         .as_ref()
         .map_err(Clone::clone)
 }

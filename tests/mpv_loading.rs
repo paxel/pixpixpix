@@ -50,3 +50,22 @@ fn a_missing_libmpv_says_so_with_the_reason() {
         "{error}"
     );
 }
+
+#[test]
+fn the_bundled_libmpv_is_found_beside_the_app_executable_through_a_command_link() {
+    let dir = tempfile::tempdir().unwrap();
+    let macos = dir.path().join("pixpixpix.app/Contents/MacOS");
+    std::fs::create_dir_all(&macos).unwrap();
+    let exe = macos.join("pix3");
+    std::fs::write(&exe, b"").unwrap();
+    // As the cask links the commands into Homebrew's bin.
+    let bin = dir.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    std::os::unix::fs::symlink(&exe, bin.join("pix3")).unwrap();
+    let frameworks = std::fs::canonicalize(dir.path())
+        .unwrap()
+        .join("pixpixpix.app/Contents/Frameworks/libmpv.2.dylib");
+    assert_eq!(mpv::bundled(&bin.join("pix3")), Some(frameworks.clone()));
+    assert_eq!(mpv::bundled(&exe), Some(frameworks));
+    assert_eq!(mpv::bundled(&dir.path().join("missing")), None);
+}

@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- pack.sh fills in the version. Every type is Alternate: Finder lists pixpixpix
+     in "Open with", it never becomes the default app. -->
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>pixpixpix</string>
+  <key>CFBundleDisplayName</key><string>pixpixpix</string>
+  <key>CFBundleIdentifier</key><string>io.github.paxel.pixpixpix</string>
+  <key>CFBundleVersion</key><string>{{VERSION}}</string>
+  <key>CFBundleShortVersionString</key><string>{{VERSION}}</string>
+  <key>CFBundleExecutable</key><string>pixpixpix</string>
+  <key>CFBundleIconFile</key><string>pixpixpix</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+  <key>LSMinimumSystemVersion</key><string>11.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key><string>Image</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>public.jpeg</string>
+        <string>public.png</string>
+        <string>com.compuserve.gif</string>
+        <string>org.webmproject.webp</string>
+        <string>com.microsoft.bmp</string>
+        <string>public.tiff</string>
+        <string>public.mpo-image</string>
+        <string>public.heic</string>
+        <string>public.heif</string>
+        <string>public.avif</string>
+      </array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key><string>Video</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>public.mpeg-4</string>
+        <string>com.apple.quicktime-movie</string>
+        <string>com.apple.m4v-video</string>
+        <string>org.matroska.mkv</string>
+        <string>org.webmproject.webm</string>
+        <string>public.avi</string>
+        <string>public.avchd-mpeg-2-transport-stream</string>
+        <string>public.3gpp</string>
+        <string>com.microsoft.windows-media-wmv</string>
+        <string>com.adobe.flash.video</string>
+        <string>public.mpeg</string>
+      </array>
+    </dict>
+  </array>
+  <!-- The types macOS does not declare itself (AVIF only since macOS 13):
+       without a declaration Finder knows no type to offer pixpixpix for. -->
+  <key>UTImportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key><string>public.avif</string>
+      <key>UTTypeDescription</key><string>AVIF image</string>
+      <key>UTTypeConformsTo</key><array><string>public.image</string></array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key><array><string>avif</string></array>
+        <key>public.mime-type</key><array><string>image/avif</string></array>
+      </dict>
+    </dict>
+    <dict>
+      <key>UTTypeIdentifier</key><string>public.mpo-image</string>
+      <key>UTTypeDescription</key><string>MPO image</string>
+      <key>UTTypeConformsTo</key><array><string>public.image</string></array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key><array><string>mpo</string></array>
+        <key>public.mime-type</key><array><string>image/mpo</string></array>
+      </dict>
+    </dict>
+    <dict>
+      <key>UTTypeIdentifier</key><string>org.matroska.mkv</string>
+      <key>UTTypeDescription</key><string>Matroska video</string>
+      <key>UTTypeConformsTo</key><array><string>public.movie</string></array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key><array><string>mkv</string></array>
+        <key>public.mime-type</key><array><string>video/x-matroska</string></array>
+      </dict>
+    </dict>
+    <dict>
+      <key>UTTypeIdentifier</key><string>org.webmproject.webm</string>
+      <key>UTTypeDescription</key><string>WebM video</string>
+      <key>UTTypeConformsTo</key><array><string>public.movie</string></array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key><array><string>webm</string></array>
+        <key>public.mime-type</key><array><string>video/webm</string></array>
+      </dict>
+    </dict>
+    <dict>
+      <key>UTTypeIdentifier</key><string>com.microsoft.windows-media-wmv</string>
+      <key>UTTypeDescription</key><string>Windows Media video</string>
+      <key>UTTypeConformsTo</key><array><string>public.movie</string></array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key><array><string>wmv</string></array>
+        <key>public.mime-type</key><array><string>video/x-ms-wmv</string></array>
+      </dict>
+    </dict>
+    <dict>
+      <key>UTTypeIdentifier</key><string>com.adobe.flash.video</string>
+      <key>UTTypeDescription</key><string>Flash video</string>
+      <key>UTTypeConformsTo</key><array><string>public.movie</string></array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key><array><string>flv</string></array>
+        <key>public.mime-type</key><array><string>video/x-flv</string></array>
+      </dict>
+    </dict>
+  </array>
+</dict>
+</plist>

@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{self, AtomicBool};
 
 /// Extensions of the image formats pixpixpix opens, lower case.
-const IMAGE_EXTENSIONS: &[&str] = &[
+pub const IMAGE_EXTENSIONS: &[&str] = &[
     "jpg", "jpeg", "jpe", "png", "gif", "webp", "bmp", "tif", "tiff", "mpo",
 ];
 
@@ -18,7 +18,7 @@ pub fn is_image(path: &Path) -> bool {
 }
 
 /// Extensions of HEIF and AVIF, the formats libheif decodes, lower case.
-const HEIF_EXTENSIONS: &[&str] = &["heic", "heif", "hif", "avif"];
+pub const HEIF_EXTENSIONS: &[&str] = &["heic", "heif", "hif", "avif"];
 
 /// True when the file name has an extension of HEIF or AVIF.
 pub fn is_heif(path: &Path) -> bool {
@@ -26,7 +26,7 @@ pub fn is_heif(path: &Path) -> bool {
 }
 
 /// Extensions of the video formats, lower case.
-const VIDEO_EXTENSIONS: &[&str] = &[
+pub const VIDEO_EXTENSIONS: &[&str] = &[
     "mp4", "mov", "m4v", "mkv", "webm", "avi", "mts", "m2ts", "3gp", "wmv", "flv", "mpg",
 ];
 

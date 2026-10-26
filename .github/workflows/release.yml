@@ -4,12 +4,15 @@
 #   build    - per target a flat tar.gz with pixpixpix, pix3, LICENSE, README.md
 #              and CHANGELOG.md: linux-x86_64, linux-aarch64 (built natively on
 #              the arm runner) and macos-arm64; the Linux ones also carry the
-#              launcher entry, the icons and install-icon.sh for the formula
+#              launcher entry, the icons and install-icon.sh for the formula;
+#              macOS also packs pixpixpix.app with libmpv bundled, zipped for
+#              the cask (packaging/macos/pack.sh)
 #   release  - GitHub Release, notes = the CHANGELOG section for the tag
-#   tap      - renders the Linux formula with the tarballs' checksums and pushes
-#              it to paxel/homebrew-tap as Formula/pixpixpix.rb (CHANNEL_PAT)
+#   tap      - renders the Linux formula and the macOS cask with the artifacts'
+#              checksums and pushes them to paxel/homebrew-tap as
+#              Formula/pixpixpix.rb and Casks/pixpixpix.rb (CHANNEL_PAT)
 #
-# The macOS cask and Flatpak jobs (#34, #35) hang off `release` once they exist.
+# The Flatpak job (#35) hangs off `release` once it exists.
 name: Release
 
 on:
@@ -75,6 +78,11 @@ jobs:
               assets/icon/icon_256.png assets/icon/icon.svg bundle/
           fi
           tar -C bundle -czf "dist/pixpixpix-${ver}-${{ matrix.platform }}.tar.gz" .
+      - name: pixpixpix.app (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install mpv dylibbundler librsvg
+          packaging/macos/pack.sh "${GITHUB_REF_NAME#v}" target/release dist
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ matrix.platform }}
@@ -118,7 +126,7 @@ jobs:
 
   # Only after the Release exists: the formula points at its assets.
   tap:
-    name: Homebrew tap (Linux formula)
+    name: Homebrew tap (Linux formula, macOS cask)
     needs: release
     runs-on: ubuntu-latest
     steps:
@@ -127,8 +135,10 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - name: Render the formula with the tarballs' checksums
-        run: packaging/render-formula.sh "${GITHUB_REF_NAME#v}" dist out
+      - name: Render the formula and the cask with the artifacts' checksums
+        run: |
+          packaging/render-formula.sh "${GITHUB_REF_NAME#v}" dist out
+          packaging/render-cask.sh "${GITHUB_REF_NAME#v}" dist out
       - name: Push to the tap (a rerun with nothing new pushes nothing)
         env:
           GH_TOKEN: ${{ secrets.CHANNEL_PAT }}
@@ -137,11 +147,12 @@ jobs:
           git config --global user.name "pixpixpix-release-bot"
           git config --global user.email "taum@tuta.io"
           git clone "https://x-access-token:${GH_TOKEN}@github.com/paxel/homebrew-tap.git" tap
-          mkdir -p tap/Formula
+          mkdir -p tap/Formula tap/Casks
           cp out/pixpixpix.rb tap/Formula/pixpixpix.rb
-          git -C tap add Formula/pixpixpix.rb
+          cp out/pixpixpix-cask.rb tap/Casks/pixpixpix.rb
+          git -C tap add Formula/pixpixpix.rb Casks/pixpixpix.rb
           if git -C tap diff --cached --quiet; then
-            echo "Formula/pixpixpix.rb is already current"
+            echo "Formula/pixpixpix.rb and Casks/pixpixpix.rb are already current"
           else
             git -C tap commit -m "pixpixpix $ver"
             git -C tap push
