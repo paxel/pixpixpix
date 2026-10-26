@@ -1428,3 +1428,95 @@ fn leaving_the_image_with_edits_shows_the_save_dialog() {
     h.run();
     assert!(!h.state().commands.contains(&Command::Quit));
 }
+
+fn choose_tool(h: &mut Harness<'static, State>, name: &str) {
+    h.get_by_role_and_label(Role::Button, name).click();
+    h.run();
+}
+
+#[test]
+fn every_drawing_tool_has_its_button() {
+    use pixpixpix::core::Tool;
+    let mut h = harness(big_browsing());
+    h.run();
+    h.key_press(egui::Key::P);
+    h.run();
+    for tool in Tool::ALL {
+        choose_tool(&mut h, tool.name());
+        assert_eq!(h.state().core.view().toolbar.unwrap().tool, tool);
+    }
+}
+
+#[test]
+fn text_is_typed_where_clicked_and_enter_ends_it_without_saving() {
+    use pixpixpix::core::Shape;
+    let mut h = harness(big_browsing());
+    h.run();
+    h.key_press(egui::Key::P);
+    h.run();
+    choose_tool(&mut h, "Text");
+    h.hover_at(egui::pos2(300.0, 250.0));
+    h.run();
+    // Pressed and released in place: a click.
+    h.drag_at(egui::pos2(300.0, 250.0));
+    h.run();
+    h.drop_at(egui::pos2(300.0, 250.0));
+    h.run();
+    h.run();
+    h.get_by_role(Role::TextInput).type_text("hi");
+    h.run();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    h.run();
+    let edits = h.state().core.view().edits.clone().unwrap();
+    assert!(
+        matches!(&edits.shapes[..], [Shape::Text { text, .. }] if text == "hi"),
+        "{edits:?}"
+    );
+    assert_eq!(edits.drawing, None);
+    assert_eq!(h.state().core.view().save_dialog, None);
+    assert!(h.query_by_role(Role::TextInput).is_none());
+}
+
+#[test]
+fn a_crop_shows_only_the_part_kept_once_another_tool_is_chosen() {
+    let mut h = harness(big_browsing());
+    h.run();
+    h.key_press(egui::Key::P);
+    h.run();
+    choose_tool(&mut h, "Crop");
+    drag_over(&mut h, egui::pos2(300.0, 250.0), egui::pos2(500.0, 300.0));
+    assert_eq!(shape_count(&h), 1);
+    assert_eq!(h.state().core.view().crop, None);
+    choose_tool(&mut h, "Pen");
+    assert!(h.state().core.view().crop.is_some());
+    h.get_by_role_and_label(Role::Image, "a.jpg");
+}
+
+#[test]
+fn box_tools_and_the_pen_draw_with_a_drag() {
+    use pixpixpix::core::Shape;
+    let mut h = harness(big_browsing());
+    h.run();
+    h.key_press(egui::Key::P);
+    h.run();
+    for name in ["Rectangle", "Ellipse", "Pen", "Highlighter", "Pixelate"] {
+        choose_tool(&mut h, name);
+        drag_over(&mut h, egui::pos2(300.0, 250.0), egui::pos2(500.0, 300.0));
+        h.run();
+    }
+    let shapes = h.state().core.view().edits.clone().unwrap().shapes;
+    assert!(
+        matches!(
+            &shapes[..],
+            [
+                Shape::Rectangle { .. },
+                Shape::Ellipse { .. },
+                Shape::Pen { .. },
+                Shape::Highlighter { .. },
+                Shape::Pixelate { .. },
+            ]
+        ),
+        "{shapes:?}"
+    );
+}

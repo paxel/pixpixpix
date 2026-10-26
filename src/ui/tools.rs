@@ -5,8 +5,10 @@ use egui::{Color32, RichText, Stroke, vec2};
 
 use super::{DIM_TEXT, HIGHLIGHT, TEXT};
 use crate::core::{
-    Color, EditsView, Event, SaveChoice, SaveDialog, Size, Tool, Toolbar, ToolbarClick, turned,
+    Color, EditsView, Event, HANDLE_REACH, Mark, Region, SaveChoice, SaveDialog, Shape, Size, Tool,
+    Toolbar, ToolbarClick, degrees, turned,
 };
+use crate::decode::DecodedImage;
 use crate::rotate::Rotation;
 
 /// The undo and redo keys as the toolbar names them.
@@ -29,7 +31,8 @@ pub fn color32(color: Color) -> Color32 {
     Color32::from_rgb(r, g, b)
 }
 
-/// One row: the tools, the palette, the sizes, undo, redo and settings.
+/// One row, wrapped in a narrow window: the tools, the palette, the sizes,
+/// undo, redo and settings.
 pub fn show_toolbar(
     ui: &mut egui::Ui,
     toolbar: Toolbar,
@@ -37,7 +40,7 @@ pub fn show_toolbar(
     events: &mut Vec<Event>,
 ) {
     let text = |s: &str| RichText::new(s).color(TEXT);
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         for tool in Tool::ALL {
             let button = egui::Button::selectable(toolbar.tool == tool, text(tool.name()));
             if ui.add(button).clicked() {
@@ -97,36 +100,225 @@ fn swatch(ui: &mut egui::Ui, color: Color, chosen: bool) -> egui::Response {
     response
 }
 
-/// Draws the edits over the image of `width` × `height` pixels drawn turned
-/// by `rotation` into `full`.
-pub fn paint_edits(
-    painter: &egui::Painter,
-    edits: &EditsView,
-    (width, height): (u32, u32),
-    rotation: Rotation,
-    full: egui::Rect,
-) {
-    let (w, h) = (width as f32, height as f32);
-    if w <= 0.0 || h <= 0.0 {
+/// An image as drawn: the part `region` of it, turned by `rotation`, into
+/// `rect`.
+pub struct Placed<'a> {
+    pub image: &'a DecodedImage,
+    pub region: Region,
+    pub rotation: Rotation,
+    pub rect: egui::Rect,
+}
+
+impl Placed<'_> {
+    /// Where the image point `(x, y)` shows.
+    fn to_screen(&self, x: f32, y: f32) -> egui::Pos2 {
+        let region = self.region;
+        let (u, v) = turned(
+            self.rotation,
+            (x - region.left) / region.width(),
+            (y - region.top) / region.height(),
+        );
+        egui::pos2(
+            self.rect.min.x + u * self.rect.width(),
+            self.rect.min.y + v * self.rect.height(),
+        )
+    }
+
+    /// Points on screen per image pixel.
+    fn scale(&self) -> f32 {
+        let width = if self.rotation.sideways() {
+            self.region.height()
+        } else {
+            self.region.width()
+        };
+        self.rect.width() / width
+    }
+
+    /// The screen box of the image box `region`.
+    fn box_of(&self, region: Region) -> egui::Rect {
+        egui::Rect::from_two_pos(
+            self.to_screen(region.left, region.top),
+            self.to_screen(region.right, region.bottom),
+        )
+    }
+}
+
+fn color_of([r, g, b, a]: [u8; 4]) -> Color32 {
+    Color32::from_rgba_unmultiplied(r, g, b, a)
+}
+
+/// Draws the edits over the image as [`crate::annotate::render`] draws them
+/// into the file: first the pixelations, then the other shapes in order; text
+/// being typed shows in its field instead. While cropping, the part kept is
+/// framed with its handles.
+pub fn paint_edits(painter: &egui::Painter, edits: &EditsView, placed: &Placed<'_>) {
+    let region = placed.region;
+    if region.width() <= 0.0 || region.height() <= 0.0 {
         return;
     }
-    let to_screen = |x: f32, y: f32| {
-        let (u, v) = turned(rotation, x / w, y / h);
-        egui::pos2(
-            full.min.x + u * full.width(),
-            full.min.y + v * full.height(),
-        )
+    let shapes = || edits.shapes.iter().chain(&edits.drawing);
+    for block in shapes().flat_map(|s| s.blocks(placed.image)) {
+        let (left, top) = (block.left as f32, block.top as f32);
+        let rect = placed.box_of(Region {
+            left,
+            top,
+            right: left + block.width as f32,
+            bottom: top + block.height as f32,
+        });
+        let [r, g, b] = block.rgb;
+        painter.rect_filled(rect, 0.0, Color32::from_rgb(r, g, b));
+    }
+    let scale = placed.scale();
+    for shape in edits.shapes.iter() {
+        paint_shape(painter, shape, placed, scale);
+    }
+    if let Some(shape) = &edits.drawing
+        && !matches!(shape, Shape::Text { .. })
+    {
+        paint_shape(painter, shape, placed, scale);
+    }
+    if let Some(crop) = edits.cropping {
+        paint_crop(painter, placed.box_of(crop));
+    }
+}
+
+/// Draws one shape other than a pixelation and a crop.
+fn paint_shape(painter: &egui::Painter, shape: &Shape, placed: &Placed<'_>, scale: f32) {
+    let (width, height) = (placed.image.width, placed.image.height);
+    let screen = |points: &[crate::core::ImagePoint]| -> Vec<egui::Pos2> {
+        points.iter().map(|p| placed.to_screen(p.x, p.y)).collect()
     };
-    for shape in edits.shapes.iter().chain(&edits.drawing) {
-        let Some(outline) = shape.outline(width, height) else {
-            continue;
-        };
-        let fill = color32(outline.color);
-        for polygon in outline.polygons {
-            let points = polygon.iter().map(|p| to_screen(p.x, p.y)).collect();
-            painter.add(egui::Shape::convex_polygon(points, fill, Stroke::NONE));
+    match shape.mark(width, height) {
+        Some(Mark::Fill { rgba, polygons }) => {
+            for polygon in polygons {
+                painter.add(egui::Shape::convex_polygon(
+                    screen(&polygon),
+                    color_of(rgba),
+                    Stroke::NONE,
+                ));
+            }
+        }
+        Some(Mark::Line {
+            rgba,
+            width,
+            points,
+            closed,
+        }) => {
+            let stroke = Stroke::new(width * scale, color_of(rgba));
+            let points = screen(&points);
+            if closed {
+                painter.add(egui::Shape::closed_line(points, stroke));
+            } else {
+                // Round ends and joins, as in the file.
+                for point in &points {
+                    painter.circle_filled(*point, stroke.width / 2.0, stroke.color);
+                }
+                painter.add(egui::Shape::line(points, stroke));
+            }
+        }
+        None => {}
+    }
+    if let Shape::Text {
+        at,
+        text,
+        color,
+        size,
+        turn,
+    } = shape
+    {
+        let font = egui::FontId::proportional(size.text_height(width, height) * scale);
+        let galley = painter.layout_no_wrap(text.clone(), font, color32(*color));
+        let angle = (degrees(placed.rotation) - degrees(*turn)).to_radians();
+        let at = placed.to_screen(at.x, at.y);
+        painter.add(egui::epaint::TextShape::new(at, galley, color32(*color)).with_angle(angle));
+    }
+}
+
+/// The crop box `rect`: the rest dimmed, a frame and its handles.
+fn paint_crop(painter: &egui::Painter, rect: egui::Rect) {
+    let clip = painter.clip_rect();
+    let dim = Color32::from_black_alpha(140);
+    for outside in [
+        egui::Rect::from_x_y_ranges(clip.x_range(), clip.min.y..=rect.min.y),
+        egui::Rect::from_x_y_ranges(clip.x_range(), rect.max.y..=clip.max.y),
+        egui::Rect::from_x_y_ranges(clip.min.x..=rect.min.x, rect.y_range()),
+        egui::Rect::from_x_y_ranges(rect.max.x..=clip.max.x, rect.y_range()),
+    ] {
+        if outside.is_positive() {
+            painter.rect_filled(outside, 0.0, dim);
         }
     }
+    painter.rect_stroke(
+        rect,
+        0.0,
+        Stroke::new(1.5, Color32::WHITE),
+        egui::StrokeKind::Middle,
+    );
+    for x in [rect.min.x, rect.center().x, rect.max.x] {
+        for y in [rect.min.y, rect.center().y, rect.max.y] {
+            if (x, y) == (rect.center().x, rect.center().y) {
+                continue;
+            }
+            let handle =
+                egui::Rect::from_center_size(egui::pos2(x, y), egui::Vec2::splat(HANDLE_REACH));
+            painter.rect_filled(handle, 0.0, Color32::WHITE);
+            painter.rect_stroke(
+                handle,
+                0.0,
+                Stroke::new(1.0, Color32::BLACK),
+                egui::StrokeKind::Inside,
+            );
+        }
+    }
+}
+
+/// The field text is typed into where it was placed, in its size and
+/// colour; `Enter`, `Esc` or a click elsewhere end it. Keys typed into it
+/// stay with it, since the field keeps them from [`super::input_events`].
+pub fn show_text_field(
+    ctx: &egui::Context,
+    edits: &EditsView,
+    placed: &Placed<'_>,
+    events: &mut Vec<Event>,
+) {
+    let Some(Shape::Text {
+        at,
+        text,
+        color,
+        size,
+        ..
+    }) = &edits.drawing
+    else {
+        return;
+    };
+    let (width, height) = (placed.image.width, placed.image.height);
+    let font = egui::FontId::proportional(size.text_height(width, height) * placed.scale());
+    egui::Area::new(egui::Id::new("text-tool"))
+        .fixed_pos(placed.to_screen(at.x, at.y))
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            let mut typed = text.clone();
+            let shown = ui
+                .painter()
+                .layout_no_wrap(typed.clone(), font.clone(), color32(*color));
+            let field = ui.add(
+                egui::TextEdit::singleline(&mut typed)
+                    .font(font.clone())
+                    .text_color(color32(*color))
+                    .frame(egui::Frame::NONE)
+                    .margin(egui::Margin::ZERO)
+                    .desired_width(shown.size().x + font.size)
+                    .hint_text("Text"),
+            );
+            if typed != *text {
+                events.push(Event::TextEdited(typed));
+            }
+            if field.lost_focus() {
+                events.push(Event::TextDone);
+            } else if !field.has_focus() && ui.memory(|m| m.focused().is_none()) {
+                field.request_focus();
+            }
+        });
 }
 
 const SAVE_FILL: Color32 = Color32::from_rgb(0xbf, 0xe6, 0xb4);
@@ -183,7 +375,7 @@ pub fn show_save_dialog(
                     ui.add_space(6.0);
                     ui.label(
                         RichText::new(
-                            "The arrows are only on screen so far. Undo drops them for good.",
+                            "The edits are only on screen so far. Undo drops them for good.",
                         )
                         .size(14.0)
                         .color(SUBTLE_INK),

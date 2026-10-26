@@ -18,8 +18,8 @@ mod overview;
 mod search;
 
 pub use edits::{
-    Color, EditsView, ImagePoint, Outline, SaveChoice, SaveDialog, Shape, Size, Tool, Toolbar,
-    ToolbarClick, turned, unturned,
+    Block, Color, EditsView, HANDLE_REACH, ImagePoint, Mark, Region, SaveChoice, SaveDialog, Shape,
+    Size, Tool, Toolbar, ToolbarClick, cropped, degrees, turned, unturned,
 };
 use edits::{Dialog, Edits};
 
@@ -253,6 +253,10 @@ pub enum Event {
     SaveChoice(SaveChoice),
     /// The name "Save as new" writes was edited.
     SaveName(String),
+    /// The text being placed was edited.
+    TextEdited(String),
+    /// Typing the text being placed is done.
+    TextDone,
     /// A [`Command::SaveEdits`] finished.
     EditsSaved {
         target: PathBuf,
@@ -918,7 +922,18 @@ impl Zoom {
         rotation: Rotation,
         viewport: Points,
     ) -> Placement {
-        let size = shown_size(image, rotation);
+        self.region_placement(Region::whole(image.width, image.height), rotation, viewport)
+    }
+
+    /// Where the part `region` of an image is drawn turned by `rotation`
+    /// when only that part is shown.
+    pub fn region_placement(
+        &self,
+        region: Region,
+        rotation: Rotation,
+        viewport: Points,
+    ) -> Placement {
+        let size = shown_size(region, rotation);
         let scale = self.factor(size, viewport);
         let width = size.x * scale;
         let height = size.y * scale;
@@ -943,9 +958,9 @@ impl Zoom {
     }
 }
 
-/// The size of `image` in pixels as shown turned by `rotation`.
-fn shown_size(image: &DecodedImage, rotation: Rotation) -> Points {
-    let (width, height) = (image.width as f32, image.height as f32);
+/// The size of `region` in pixels as shown turned by `rotation`.
+fn shown_size(region: Region, rotation: Rotation) -> Points {
+    let (width, height) = (region.width(), region.height());
     if rotation.sideways() {
         Points {
             x: height,
@@ -1033,6 +1048,9 @@ pub struct View {
     /// While the save dialog asks what becomes of the edits; it gets every
     /// key then.
     pub save_dialog: Option<SaveDialog>,
+    /// The part of the image shown after a crop; zoom and position are of
+    /// this part.
+    pub crop: Option<Region>,
 }
 
 pub struct Core {
@@ -1331,6 +1349,7 @@ impl Core {
                 toolbar: None,
                 edits: None,
                 save_dialog: None,
+                crop: None,
             },
             screen,
             band: Vec::new(),
@@ -1533,6 +1552,14 @@ impl Core {
             Event::SaveChoice(_) => Vec::new(),
             Event::SaveName(name) => {
                 self.rename(name);
+                Vec::new()
+            }
+            Event::TextEdited(text) => {
+                self.text_edited(text);
+                Vec::new()
+            }
+            Event::TextDone => {
+                self.commit_text();
                 Vec::new()
             }
             Event::EditsSaved { target, result } => self.edits_saved(target, result),
@@ -2797,8 +2824,13 @@ impl Core {
             return None;
         };
         let viewport = self.view.viewport;
-        let sized = image.width > 0 && image.height > 0 && viewport.x > 0.0 && viewport.y > 0.0;
-        sized.then(|| shown_size(image, self.view.rotation))
+        let region = self
+            .view
+            .crop
+            .unwrap_or(Region::whole(image.width, image.height));
+        let sized =
+            region.width() > 0.0 && region.height() > 0.0 && viewport.x > 0.0 && viewport.y > 0.0;
+        sized.then(|| shown_size(region, self.view.rotation))
     }
 
     /// Multiplies the scale by `factor`, keeping the image point under

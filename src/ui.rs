@@ -9,7 +9,7 @@ use egui::{Color32, ColorImage, RichText, TextureHandle, TextureOptions};
 
 use crate::core::{
     DirColumn, EditsView, Event, Focus, InnerImages, Key, KeyPress, MotionKind, Notice, Points,
-    Screen, Thumb, Video, VideoStep, View, Zoom,
+    Region, Screen, Thumb, Video, VideoStep, View, Zoom, unturned,
 };
 use crate::decode::DecodedImage;
 use crate::folder;
@@ -231,6 +231,7 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
                         clickable: view.video.is_some(),
                         drawing: view.toolbar.is_some(),
                         edits: view.edits.as_ref(),
+                        crop: view.crop,
                     };
                     show_image(ui, &shown, view.zoom, textures, &mut events);
                     if let Some(video) = &view.video {
@@ -576,6 +577,8 @@ struct Shown<'a> {
     drawing: bool,
     /// The edits drawn over it.
     edits: Option<&'a EditsView>,
+    /// The part of it shown after a crop.
+    crop: Option<Region>,
 }
 
 /// Draws the visible part of the image, turned, as the core places it, and
@@ -589,7 +592,13 @@ fn show_image(
     events: &mut Vec<Event>,
 ) {
     let area = ui.max_rect();
-    let response = ui.interact(area, ui.id().with("image"), egui::Sense::drag());
+    // A click draws too, to place text.
+    let sense = if shown.drawing {
+        egui::Sense::click_and_drag()
+    } else {
+        egui::Sense::drag()
+    };
+    let response = ui.interact(area, ui.id().with("image"), sense);
     let from_area = |pos: egui::Pos2| Points {
         x: pos.x - area.min.x,
         y: pos.y - area.min.y,
@@ -609,6 +618,12 @@ fn show_image(
             events.push(Event::DrawMove(from_area(pos)));
         }
         if response.drag_stopped() {
+            events.push(Event::DrawEnd);
+        }
+        if response.clicked()
+            && let Some(pos) = response.interact_pointer_pos()
+        {
+            events.push(Event::DrawStart(from_area(pos)));
             events.push(Event::DrawEnd);
         }
     } else {
@@ -640,7 +655,9 @@ fn show_image(
         x: area.width(),
         y: area.height(),
     };
-    let placed = zoom.placement(shown.image, shown.rotation, viewport);
+    let (width, height) = (shown.image.width, shown.image.height);
+    let region = shown.crop.unwrap_or(Region::whole(width, height));
+    let placed = zoom.region_placement(region, shown.rotation, viewport);
     let full = egui::Rect::from_min_size(
         egui::pos2(area.min.x + placed.left, area.min.y + placed.top),
         egui::vec2(placed.width, placed.height),
@@ -662,7 +679,7 @@ fn show_image(
         let v = (corner.y - full.min.y) / full.height();
         mesh.vertices.push(egui::epaint::Vertex {
             pos: corner,
-            uv: texture_point(shown.rotation, u, v),
+            uv: texture_point(shown.rotation, u, v, region, (width, height)),
             color: Color32::WHITE,
         });
     }
@@ -670,8 +687,14 @@ fn show_image(
     mesh.add_triangle(0, 2, 3);
     ui.painter().add(mesh);
     if let Some(edits) = shown.edits {
-        let size = (shown.image.width, shown.image.height);
-        tools::paint_edits(&ui.painter_at(area), edits, size, shown.rotation, full);
+        let placed = tools::Placed {
+            image: shown.image,
+            region,
+            rotation: shown.rotation,
+            rect: full,
+        };
+        tools::paint_edits(&ui.painter_at(visible), edits, &placed);
+        tools::show_text_field(ui.ctx(), edits, &placed, events);
     }
     let name = folder::file_name(shown.path);
     let sense = if shown.clickable {
@@ -787,15 +810,21 @@ fn show_motion(ui: &mut egui::Ui, kind: MotionKind) {
     );
 }
 
-/// The texture point shown at `(u, v)` of an image turned by `rotation`, all
-/// as fractions of width and height.
-fn texture_point(rotation: Rotation, u: f32, v: f32) -> egui::Pos2 {
-    match rotation {
-        Rotation::None => egui::pos2(u, v),
-        Rotation::Right => egui::pos2(v, 1.0 - u),
-        Rotation::Half => egui::pos2(1.0 - u, 1.0 - v),
-        Rotation::Left => egui::pos2(1.0 - v, u),
-    }
+/// The texture point shown at `(u, v)` of the part `region` of an image of
+/// `width` × `height` pixels turned by `rotation`; `(u, v)` and the point are
+/// fractions of width and height.
+fn texture_point(
+    rotation: Rotation,
+    u: f32,
+    v: f32,
+    region: Region,
+    (width, height): (u32, u32),
+) -> egui::Pos2 {
+    let (x, y) = unturned(rotation, u, v);
+    egui::pos2(
+        (region.left + x * region.width()) / width as f32,
+        (region.top + y * region.height()) / height as f32,
+    )
 }
 
 /// The largest size with the image's aspect ratio that fits `area`, never

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use pixpixpix::annotate;
-use pixpixpix::core::{Color, ImagePoint, Shape, Size};
+use pixpixpix::core::{Color, ImagePoint, Region, Shape, Size};
 use pixpixpix::decode::{self, DecodedImage};
 use pixpixpix::rotate::Rotation;
 
@@ -153,7 +153,14 @@ fn overwrite_replaces_the_file_with_the_edited_image() {
         color: Color::Black,
         size: Size::Large,
     };
-    annotate::save(&path, &image, Rotation::None, &[shape], &path).unwrap();
+    annotate::save(
+        &path,
+        &image,
+        Rotation::None,
+        std::slice::from_ref(&shape),
+        &path,
+    )
+    .unwrap();
     let written = decoded(&path).unwrap();
     assert_eq!((written.width, written.height), (image.width, image.height));
     assert_eq!(written, annotate::render(&image, &[shape]).unwrap());
@@ -172,4 +179,195 @@ fn overwrite_refuses_files_that_would_lose_something() {
         assert!(result.is_err(), "{name}");
         assert_eq!(fs::read(&path).unwrap(), before, "{name}");
     }
+}
+
+fn point(x: f32, y: f32) -> ImagePoint {
+    ImagePoint { x, y }
+}
+
+/// A 200x100 image whose every pixel differs from its neighbours.
+fn gradient() -> DecodedImage {
+    let mut rgba = Vec::new();
+    for y in 0..100u32 {
+        for x in 0..200u32 {
+            rgba.extend([x as u8, (y * 2) as u8, ((x + y) * 3 % 256) as u8, 0xff]);
+        }
+    }
+    DecodedImage {
+        width: 200,
+        height: 100,
+        rgba: Arc::from(rgba),
+    }
+}
+
+fn is_white(pixel: [u8; 4]) -> bool {
+    pixel == WHITE
+}
+
+/// Whether any pixel within `xs` × `ys` is not white.
+fn marked(image: &DecodedImage, xs: std::ops::Range<u32>, ys: std::ops::Range<u32>) -> bool {
+    ys.flat_map(|y| xs.clone().map(move |x| (x, y)))
+        .any(|(x, y)| !is_white(pixel(image, x, y)))
+}
+
+#[test]
+fn pixelate_fills_blocks_of_one_colour_that_hide_the_pixels() {
+    let image = gradient();
+    let shape = Shape::Pixelate {
+        from: point(20.0, 10.0),
+        to: point(80.0, 50.0),
+        size: Size::Medium,
+    };
+    let block = Size::Medium.block(200, 100);
+    assert!(block >= 4);
+    let edited = annotate::render(&image, std::slice::from_ref(&shape)).unwrap();
+    // Every block is one colour, which no longer shows the gradient.
+    let blocks = shape.blocks(&image);
+    assert!(blocks.len() > 4);
+    for b in &blocks {
+        let first = pixel(&edited, b.left, b.top);
+        for y in b.top..b.top + b.height {
+            for x in b.left..b.left + b.width {
+                assert_eq!(pixel(&edited, x, y), first, "{x} {y}");
+            }
+        }
+        assert_eq!(first[..3], b.rgb);
+    }
+    let changed = (10..50)
+        .flat_map(|y| (20..80).map(move |x| (x, y)))
+        .filter(|&(x, y)| pixel(&edited, x, y) != pixel(&image, x, y))
+        .count();
+    assert!(changed > 60 * 40 * 9 / 10, "{changed}");
+    // Outside the box nothing changed.
+    assert_eq!(pixel(&edited, 19, 30), pixel(&image, 19, 30));
+    assert_eq!(pixel(&edited, 50, 50), pixel(&image, 50, 50));
+}
+
+#[test]
+fn the_saved_pixelation_hides_the_area() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("a_edit.png");
+    let shape = Shape::Pixelate {
+        from: point(0.0, 0.0),
+        to: point(200.0, 100.0),
+        size: Size::Large,
+    };
+    let image = gradient();
+    annotate::save(
+        &dir.path().join("a.png"),
+        &image,
+        Rotation::None,
+        &[shape],
+        &target,
+    )
+    .unwrap();
+    let written = decoded(&target).unwrap();
+    // Neighbours within a block are alike; in the original they differ.
+    assert_eq!(pixel(&written, 0, 0), pixel(&written, 1, 1));
+    assert_ne!(pixel(&image, 0, 0), pixel(&image, 1, 1));
+}
+
+#[test]
+fn the_highlighter_lays_a_see_through_colour() {
+    let edited = annotate::render(
+        &white(200, 100),
+        &[Shape::Highlighter {
+            from: point(10.0, 10.0),
+            to: point(100.0, 50.0),
+            color: Color::Red,
+        }],
+    )
+    .unwrap();
+    let [r, g, b, a] = pixel(&edited, 50, 30);
+    // Between white and the red of the palette.
+    assert_eq!(a, 0xff);
+    assert!(r > RED[0] && g > RED[1] && g < 0xff && b > RED[2] && b < 0xff);
+    assert_eq!(pixel(&edited, 150, 30), WHITE);
+}
+
+#[test]
+fn outlines_and_the_pen_draw_lines_only() {
+    let shapes = [
+        Shape::Rectangle {
+            from: point(10.0, 10.0),
+            to: point(90.0, 90.0),
+            color: Color::Red,
+            size: Size::Large,
+        },
+        Shape::Ellipse {
+            from: point(110.0, 10.0),
+            to: point(190.0, 90.0),
+            color: Color::Red,
+            size: Size::Large,
+        },
+        Shape::Pen {
+            points: vec![point(10.0, 95.0), point(190.0, 95.0)],
+            color: Color::Red,
+            size: Size::Large,
+        },
+    ];
+    let edited = annotate::render(&white(200, 100), &shapes).unwrap();
+    // On the rectangle's sides, the ellipse's left and top, the pen line.
+    for (x, y) in [
+        (10, 50),
+        (50, 10),
+        (90, 50),
+        (110, 50),
+        (150, 10),
+        (100, 95),
+    ] {
+        assert_eq!(pixel(&edited, x, y), RED, "{x} {y}");
+    }
+    // Inside the outlines and in the ellipse's box corner.
+    for (x, y) in [(50, 50), (150, 50), (113, 13)] {
+        assert_eq!(pixel(&edited, x, y), WHITE, "{x} {y}");
+    }
+}
+
+#[test]
+fn text_is_drawn_from_its_corner() {
+    let text = |turn| Shape::Text {
+        at: point(50.0, 60.0),
+        text: "HH".to_owned(),
+        color: Color::Black,
+        size: Size::Large,
+        turn,
+    };
+    let edited = annotate::render(&white(400, 200), &[text(Rotation::None)]).unwrap();
+    // 24 pixels to the em: the letters right of and below the corner.
+    assert!(marked(&edited, 50..80, 60..84));
+    assert!(!marked(&edited, 0..400, 0..60));
+    assert!(!marked(&edited, 0..50, 0..200));
+    assert!(!marked(&edited, 90..400, 0..200));
+    // Placed on the image turned right, it runs upwards from the corner.
+    let edited = annotate::render(&white(400, 200), &[text(Rotation::Right)]).unwrap();
+    assert!(marked(&edited, 50..74, 30..60));
+    assert!(!marked(&edited, 0..50, 0..200));
+    assert!(!marked(&edited, 0..400, 61..200));
+}
+
+#[test]
+fn the_crop_is_applied_after_the_shapes_and_before_the_turn() {
+    let crop = Shape::Crop(Region {
+        left: 20.0,
+        top: 10.0,
+        right: 120.0,
+        bottom: 60.0,
+    });
+    let edited = annotate::render(&white(200, 100), &[arrow(), crop.clone()]).unwrap();
+    assert_eq!((edited.width, edited.height), (100, 50));
+    // The arrow at y = 50 shows 40 pixels down.
+    assert_eq!(pixel(&edited, 30, 40), RED);
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("a_edit.png");
+    annotate::save(
+        &dir.path().join("a.png"),
+        &white(200, 100),
+        Rotation::Right,
+        &[arrow(), crop],
+        &target,
+    )
+    .unwrap();
+    let written = decoded(&target).unwrap();
+    assert_eq!((written.width, written.height), (50, 100));
 }
