@@ -2441,3 +2441,26 @@ fn t_shows_the_trash_and_enter_a_file_of_it_large() {
     h.run();
     h.get_by_role_and_label(Role::Image, "cat.jpg");
 }
+
+#[test]
+fn a_click_on_an_arrow_of_the_move_hint_moves_the_picture() {
+    let (mut core, _) = Core::start(Ok(PathBuf::from("/p/big.jpg")));
+    core.handle(Event::Decoded {
+        path: PathBuf::from("/p/big.jpg"),
+        result: Ok(DecodedImage {
+            width: 1000,
+            height: 1000,
+            rgba: Arc::from(vec![255; 1000 * 1000 * 4]),
+        }),
+    });
+    let mut h = harness(core);
+    h.run();
+    h.key_press(egui::Key::Num1);
+    h.run();
+    // The right end of the hint is `Down`.
+    let rect = h.get_by_label("Shift+Left/Right/Up/Down").rect();
+    click_at(&mut h, egui::pos2(rect.max.x - 3.0, rect.center().y));
+    let zoom = h.state().core.view().zoom;
+    assert!(zoom.center_y > 0.5, "{zoom:?}");
+    assert!((zoom.center_x - 0.5).abs() < 1e-4, "{zoom:?}");
+}

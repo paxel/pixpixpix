@@ -257,3 +257,72 @@ fn zoomed_placement_puts_the_centre_point_in_the_middle() {
         }
     );
 }
+
+fn shift(core: &mut Core, key: Key) {
+    core.handle(Event::Key(KeyPress {
+        shift: true,
+        ..KeyPress::plain(key)
+    }));
+}
+
+fn twice_the_size() -> Core {
+    let mut core = shown();
+    press(&mut core, Key::Num1);
+    core.handle(Event::Wheel {
+        delta: 200.0 * std::f32::consts::LN_2,
+        pointer: Points::default(),
+    });
+    core
+}
+
+#[test]
+fn shift_arrows_move_the_zoomed_picture_a_tenth_of_the_window() {
+    let mut core = twice_the_size();
+    // 800 × 400 points in a 200 × 200 window: a tenth is 20 points.
+    shift(&mut core, Key::Right);
+    assert_center(&core, 0.525, 0.5);
+    shift(&mut core, Key::Down);
+    assert_center(&core, 0.525, 0.55);
+    shift(&mut core, Key::Left);
+    shift(&mut core, Key::Up);
+    assert_center(&core, 0.5, 0.5);
+}
+
+#[test]
+fn shift_arrows_stop_at_the_picture_edges() {
+    let mut core = twice_the_size();
+    for _ in 0..100 {
+        shift(&mut core, Key::Left);
+        shift(&mut core, Key::Up);
+    }
+    assert_center(&core, 0.0, 0.0);
+}
+
+#[test]
+fn shift_arrows_change_nothing_at_fit_size() {
+    let mut core = browsing(&["a.jpg", "b.jpg"]);
+    decoded(&mut core, "b.jpg");
+    for key in [Key::Left, Key::Right, Key::Up, Key::Down] {
+        shift(&mut core, key);
+    }
+    assert_eq!(core.view().zoom.scale, Scale::Fit);
+    assert_center(&core, 0.5, 0.5);
+    assert!(matches!(&core.view().screen, Screen::Image { path, .. } if *path == p("a.jpg")));
+}
+
+#[test]
+fn the_move_hint_shows_only_while_the_picture_is_larger_than_the_window() {
+    let hint = |core: &Core| {
+        core.view()
+            .key_line
+            .keys
+            .iter()
+            .any(|k| k.keys == "Shift+Left/Right/Up/Down" && k.action == "move")
+    };
+    let mut core = shown();
+    assert!(!hint(&core));
+    press(&mut core, Key::Num1);
+    assert!(hint(&core));
+    press(&mut core, Key::Num0);
+    assert!(!hint(&core));
+}

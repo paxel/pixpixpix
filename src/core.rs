@@ -855,6 +855,12 @@ const UNDO_TRASH_KEY: KeyHint = KeyHint {
     action: "undo trash",
 };
 
+/// While the picture is larger than the window.
+const MOVE_KEY: KeyHint = KeyHint {
+    keys: "Shift+Left/Right/Up/Down",
+    action: "move",
+};
+
 /// Last in every key line whose keys `?` reaches.
 const HIDE_HINTS_KEY: KeyHint = KeyHint {
     keys: "?",
@@ -2127,6 +2133,11 @@ impl Core {
             {
                 keys.insert(at.saturating_add(1), UNDO_TRASH_KEY);
             }
+            if self.movable()
+                && let Some(at) = keys.iter().position(|k| k.keys == "+/-")
+            {
+                keys.insert(at.saturating_add(1), MOVE_KEY);
+            }
             if self.toolbar_open
                 && let Some(at) = keys.iter().position(|k| k.keys == "P")
             {
@@ -2724,6 +2735,15 @@ impl Core {
                 } else {
                     self.undo();
                 }
+                Vec::new()
+            }
+            (Key::Left | Key::Right | Key::Up | Key::Down, false)
+                if self.view.focus == Focus::Image && key.shift && !key.alt && self.movable() =>
+            {
+                self.move_picture(key.key);
+                Vec::new()
+            }
+            (Key::Up | Key::Down, false) if self.view.focus == Focus::Image && key.shift => {
                 Vec::new()
             }
             (Key::Left | Key::Right, _)
@@ -3499,6 +3519,33 @@ impl Core {
             center_x: (x + shift(size.x, pointer.x)).clamp(0.0, 1.0),
             center_y: (y + shift(size.y, pointer.y)).clamp(0.0, 1.0),
         };
+    }
+
+    /// Whether the picture shown, not a video, is larger than the window, so
+    /// that it can be moved.
+    fn movable(&self) -> bool {
+        let Some(size) = self.zoomable() else {
+            return false;
+        };
+        let viewport = self.view.viewport;
+        let scale = self.view.zoom.factor(size, viewport);
+        self.view.video.is_none()
+            && matches!(self.view.zoom.scale, Scale::Exact(_))
+            && (size.x * scale > viewport.x || size.y * scale > viewport.y)
+    }
+
+    /// `Shift`+`key`: shows the part of the picture a tenth of the window
+    /// further in the arrow's direction.
+    fn move_picture(&mut self, key: Key) {
+        let viewport = self.view.viewport;
+        let (x, y) = (viewport.x / 10.0, viewport.y / 10.0);
+        let delta = match key {
+            Key::Left => Points { x, y: 0.0 },
+            Key::Right => Points { x: -x, y: 0.0 },
+            Key::Up => Points { x: 0.0, y },
+            _ => Points { x: 0.0, y: -y },
+        };
+        self.pan(delta);
     }
 
     /// Moves the image with the pointer; a fitted image does not move.
