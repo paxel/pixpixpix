@@ -338,3 +338,18 @@ fn resuming_drops_a_waiting_frame_step() {
     assert_eq!(seeked(&mut core, "a.mp4"), []);
     assert_eq!(playing_now(&core), Some(true));
 }
+
+#[test]
+fn a_jump_that_paused_on_the_last_frame_shows_the_video_paused() {
+    let mut core = playing();
+    arrow(&mut core, true, shift);
+    assert_eq!(playing_now(&core), Some(true));
+    core.handle(Event::VideoPaused(p("a.mp4")));
+    seeked(&mut core, "a.mp4");
+    assert_eq!(playing_now(&core), Some(false));
+    assert_eq!(current(&core), Some(p("a.mp4")));
+    // Another video's pause changes nothing.
+    let mut core = playing();
+    core.handle(Event::VideoPaused(p("c.mkv")));
+    assert_eq!(playing_now(&core), Some(true));
+}

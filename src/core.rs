@@ -218,6 +218,8 @@ pub enum Event {
     /// The [`Command::SeekVideo`] running on the video at the path drew its
     /// frame, or failed.
     VideoSeeked(PathBuf),
+    /// A jump past the end paused the video at the path on its last frame.
+    VideoPaused(PathBuf),
     /// The file a [`Command::FindMotion`] looked at is a Motion Photo; other
     /// files are not reported.
     MotionPhoto(PathBuf),
@@ -1634,6 +1636,16 @@ impl Core {
             Event::VideoFailed { path, message } => self.video_stopped(&path, Some(message)),
             Event::StepVideo(step) => self.step_video(step),
             Event::VideoSeeked(path) => self.video_seeked(&path),
+            Event::VideoPaused(path) => {
+                if let Some(video) = self
+                    .video
+                    .as_mut()
+                    .filter(|v| v.started && v.source == path)
+                {
+                    video.playing = false;
+                }
+                Vec::new()
+            }
             Event::MotionPhoto(path) => {
                 if self.probed.contains(&path) {
                     self.motion_photos.insert(path);

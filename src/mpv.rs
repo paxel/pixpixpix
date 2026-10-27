@@ -111,6 +111,8 @@ const END_FILE_REASON_EOF: c_int = 0;
 const END_FILE_REASON_ERROR: c_int = 4;
 /// `MPV_FORMAT_STRING`.
 const FORMAT_STRING: c_int = 1;
+/// `MPV_FORMAT_FLAG`.
+const FORMAT_FLAG: c_int = 3;
 /// `MPV_FORMAT_INT64`.
 const FORMAT_INT64: c_int = 4;
 /// `MPV_FORMAT_DOUBLE`.
@@ -143,6 +145,12 @@ const COMMAND_ID: u64 = 3;
 const POSITION_ID: u64 = 4;
 /// The `reply_userdata` of the observed rotation the file asks for.
 const ROTATION_ID: u64 = 5;
+/// The `reply_userdata` of the observed frame rate the file states.
+const FPS_ID: u64 = 7;
+/// The `reply_userdata` of the observed flag of the end being reached.
+const END_ID: u64 = 8;
+/// The `reply_userdata` of the observed length of the file.
+const DURATION_ID: u64 = 9;
 /// The `reply_userdata` of the observed track list, read for the codec of
 /// the video track.
 const CODEC_ID: u64 = 6;
@@ -279,6 +287,14 @@ pub enum PlayerEvent {
     Height(Option<u32>),
     /// The playback position changed; absent while unknown.
     Position(Option<Duration>),
+    /// The length of the file changed; absent while unknown.
+    Duration(Option<Duration>),
+    /// How long a frame shows, from the frame rate the file states; absent
+    /// while unknown.
+    FrameLength(Option<Duration>),
+    /// Playback reached the end and stays there, paused on the last frame, or
+    /// left it again; only with `keep-open`.
+    EndReached(bool),
     /// The codec of the video track, as `h264`.
     Codec(String),
     /// The file asks for its picture to be turned clockwise by these
@@ -358,6 +374,24 @@ impl Mpv {
                 POSITION_ID,
                 c"time-pos".as_ptr(),
                 FORMAT_DOUBLE,
+            ))?;
+            self.check((self.observe)(
+                handle,
+                FPS_ID,
+                c"container-fps".as_ptr(),
+                FORMAT_DOUBLE,
+            ))?;
+            self.check((self.observe)(
+                handle,
+                DURATION_ID,
+                c"duration".as_ptr(),
+                FORMAT_DOUBLE,
+            ))?;
+            self.check((self.observe)(
+                handle,
+                END_ID,
+                c"eof-reached".as_ptr(),
+                FORMAT_FLAG,
             ))?;
             self.check((self.observe)(
                 handle,
@@ -474,13 +508,38 @@ impl Player {
                     Some(PlayerEvent::CommandFailed(self.mpv.message(event.error)))
                 }
                 EVENT_PROPERTY_CHANGE
-                    if !event.data.is_null() && event.reply_userdata == POSITION_ID =>
+                    if !event.data.is_null()
+                        && matches!(event.reply_userdata, POSITION_ID | DURATION_ID) =>
                 {
                     let property = &*event.data.cast::<EventProperty>();
-                    let position = (property.format == FORMAT_DOUBLE && !property.data.is_null())
+                    let time = (property.format == FORMAT_DOUBLE && !property.data.is_null())
                         .then(|| *property.data.cast::<f64>())
                         .and_then(|seconds| Duration::try_from_secs_f64(seconds).ok());
-                    Some(PlayerEvent::Position(position))
+                    Some(if event.reply_userdata == POSITION_ID {
+                        PlayerEvent::Position(time)
+                    } else {
+                        PlayerEvent::Duration(time)
+                    })
+                }
+                EVENT_PROPERTY_CHANGE
+                    if !event.data.is_null() && event.reply_userdata == FPS_ID =>
+                {
+                    let property = &*event.data.cast::<EventProperty>();
+                    let length = (property.format == FORMAT_DOUBLE && !property.data.is_null())
+                        .then(|| *property.data.cast::<f64>())
+                        .filter(|fps| *fps > 0.0)
+                        .and_then(|fps| Duration::try_from_secs_f64(fps.recip()).ok());
+                    Some(PlayerEvent::FrameLength(length))
+                }
+                EVENT_PROPERTY_CHANGE
+                    if !event.data.is_null() && event.reply_userdata == END_ID =>
+                {
+                    let property = &*event.data.cast::<EventProperty>();
+                    // A flag is a C int.
+                    let reached = property.format == FORMAT_FLAG
+                        && !property.data.is_null()
+                        && *property.data.cast::<c_int>() != 0;
+                    Some(PlayerEvent::EndReached(reached))
                 }
                 EVENT_PROPERTY_CHANGE
                     if !event.data.is_null() && event.reply_userdata == CODEC_ID =>

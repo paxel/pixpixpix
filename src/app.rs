@@ -427,6 +427,7 @@ impl Worker {
                         },
                         Report::Ended => Event::VideoEnded(path),
                         Report::Seeked => Event::VideoSeeked(path),
+                        Report::Paused => Event::VideoPaused(path),
                         Report::Failed(message) => Event::VideoFailed { path, message },
                     };
                     // The app may already be gone; nothing to report to then.

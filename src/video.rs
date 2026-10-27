@@ -62,6 +62,9 @@ impl Size {
             PlayerEvent::Codec(codec) => self.codec = Some(codec.clone()),
             PlayerEvent::Ended(_)
             | PlayerEvent::Position(_)
+            | PlayerEvent::FrameLength(_)
+            | PlayerEvent::Duration(_)
+            | PlayerEvent::EndReached(_)
             | PlayerEvent::Restarted
             | PlayerEvent::CommandFailed(_)
             | PlayerEvent::Other => {}
@@ -166,6 +169,8 @@ pub enum Report {
     Ended,
     /// The seek asked for drew its frame, or failed.
     Seeked,
+    /// A jump past the end paused the video on its last frame.
+    Paused,
     /// The video cannot be played, with mpv's message or why mpv is missing.
     Failed(String),
 }
@@ -413,6 +418,7 @@ const FRAME: u8 = 0;
 const ENDED: u8 = 1;
 const SEEKED: u8 = 2;
 const FAILED: u8 = 3;
+const PAUSED: u8 = 4;
 
 fn encode_report(report: &Report) -> Vec<u8> {
     match report {
@@ -421,6 +427,7 @@ fn encode_report(report: &Report) -> Vec<u8> {
             .image(image),
         Report::Ended => Writer::new(ENDED).done(),
         Report::Seeked => Writer::new(SEEKED).done(),
+        Report::Paused => Writer::new(PAUSED).done(),
         Report::Failed(message) => Writer::new(FAILED).rest(message.as_bytes()),
     }
 }
@@ -434,6 +441,7 @@ fn decode_report(message: &[u8]) -> Option<Report> {
         }
         ENDED => Report::Ended,
         SEEKED => Report::Seeked,
+        PAUSED => Report::Paused,
         FAILED => Report::Failed(String::from_utf8_lossy(reader.rest()).into_owned()),
         _ => return None,
     })
@@ -462,6 +470,9 @@ fn play(
         ("mute", flag(muted)),
         // As in `grab_here`.
         ("video-rotate", "no"),
+        // A jump past the end stays on the last frame; the end of playing
+        // through is told by `eof-reached`.
+        ("keep-open", "yes"),
     ];
     // Declared before the player, so the copy goes once the player is gone.
     let clip = if folder::is_video(path) {
@@ -474,16 +485,25 @@ fn play(
     let mut size = Size::default();
     // The playback position as last reported.
     let mut position = Duration::ZERO;
+    // Where the seeks go from, and how far they may.
+    let mut timing = Timing::default();
     let mut ready = false;
     // A frame was drawn, so the file is loaded and can be seeked.
     let mut drawn = false;
     // A seek asked before that.
     let mut early = None;
     let mut seeking = None;
-    // Starts a seek; one that cannot start is done at once.
-    let seek = |step| match start_seek(&player, step) {
-        Ok(awaiting) => Some(awaiting),
-        Err(_) => {
+    let mut paused = paused;
+    // Seeked, and not played on since: reaching the end then stays there,
+    // paused.
+    let mut jumped = false;
+    // Paused on the last frame after a jump past it.
+    let mut at_end = false;
+    // Starts a seek; one that cannot start or has nowhere to go is done at
+    // once.
+    let seek = |step, timing: Timing, at_end| match start_seek(&player, step, timing, at_end) {
+        Ok(Some(seek)) => Some(seek),
+        Ok(None) | Err(_) => {
             report(Report::Seeked);
             None
         }
@@ -494,9 +514,24 @@ fn play(
         for ask in asked {
             match ask {
                 Ask::Wake | Ask::Start { .. } => {}
-                Ask::Pause(paused) => player.set(c"pause", c_flag(paused))?,
+                Ask::Pause(false) if at_end => {
+                    // Playing on from the last frame plays from the start.
+                    player.command(&[c"seek", c"0", c"absolute+exact"])?;
+                    player.set(c"pause", c"no")?;
+                    (paused, jumped) = (false, false);
+                }
+                Ask::Pause(pause) => {
+                    player.set(c"pause", c_flag(pause))?;
+                    paused = pause;
+                    // Playing on to the end is no jump.
+                    jumped &= pause;
+                }
                 Ask::Mute(muted) => player.set(c"mute", c_flag(muted))?,
-                Ask::Seek(step) if drawn => seeking = seek(step),
+                Ask::Seek(step) if drawn => {
+                    jumped = true;
+                    paused |= matches!(step, VideoStep::Frames(_));
+                    seeking = seek(step, Timing { position, ..timing }, at_end);
+                }
                 Ask::Seek(step) => early = Some(step),
                 Ask::Stop => return Ok(()),
             }
@@ -504,20 +539,37 @@ fn play(
         while let Some(event) = player.next_event() {
             match event {
                 // Only the sound played: the picture could not be decoded.
-                PlayerEvent::Ended(None) if !drawn => return Err(size.failure(None)),
+                PlayerEvent::Ended(None) | PlayerEvent::EndReached(true) if !drawn => {
+                    return Err(size.failure(None));
+                }
                 PlayerEvent::Ended(None) => {
                     report(Report::Ended);
                     return Ok(());
                 }
                 PlayerEvent::Ended(Some(message)) => return Err(size.failure(Some(message))),
-                PlayerEvent::Restarted if seeking == Some(Awaiting::Restart) => {
-                    seeking = Some(Awaiting::Frame);
+                PlayerEvent::EndReached(true) if jumped => {
+                    (at_end, paused) = (true, true);
+                    player.set(c"pause", c"yes")?;
+                    report(Report::Paused);
+                }
+                PlayerEvent::EndReached(true) => {
+                    report(Report::Ended);
+                    return Ok(());
+                }
+                PlayerEvent::EndReached(false) => at_end = false,
+                PlayerEvent::Restarted
+                    if let Some(seek) = seeking.as_mut()
+                        && seek.awaiting == Awaiting::Restart =>
+                {
+                    seek.awaiting = Awaiting::Frame;
                 }
                 PlayerEvent::CommandFailed(_) if seeking.is_some() => {
                     seeking = None;
                     report(Report::Seeked);
                 }
                 PlayerEvent::Position(Some(at)) => position = at,
+                PlayerEvent::FrameLength(length) => timing.frame = length,
+                PlayerEvent::Duration(length) => timing.length = length,
                 event => size.update(&event),
             }
         }
@@ -526,12 +578,21 @@ fn play(
             ready = false;
             drawn = true;
             report(Report::Frame(size.render(&player, target)?, position));
-            if seeking == Some(Awaiting::Frame) {
+            if let Some(seek) = seeking.filter(|s| s.awaiting == Awaiting::Frame) {
                 seeking = None;
+                if seek.to_end && !paused {
+                    player.set(c"pause", c"yes")?;
+                    paused = true;
+                    report(Report::Paused);
+                }
                 report(Report::Seeked);
+            } else if seeking.is_none() && !paused {
+                jumped = false;
             }
             if let Some(step) = early.take() {
-                seeking = seek(step);
+                jumped = true;
+                paused |= matches!(step, VideoStep::Frames(_));
+                seeking = seek(step, Timing { position, ..timing }, at_end);
             }
         }
     }
@@ -544,24 +605,79 @@ fn clip_dir() -> PathBuf {
         .map_or_else(std::env::temp_dir, |dirs| dirs.cache_dir().to_path_buf())
 }
 
-/// Asks mpv for the seek, returning what it waits for: a frame step forward
-/// only plays on, everything else restarts playback elsewhere.
-fn start_seek(player: &Player, step: VideoStep) -> Result<Awaiting, String> {
-    match step {
+/// How long a frame shows when the file does not say.
+const FRAME_LENGTH: Duration = Duration::from_millis(33);
+
+/// Where a seek starts and how far it may go.
+#[derive(Clone, Copy, Default)]
+struct Timing {
+    /// The position of the frame shown.
+    position: Duration,
+    /// How long a frame shows, once the file states it.
+    frame: Option<Duration>,
+    /// The length of the file, once known.
+    length: Option<Duration>,
+}
+
+/// A seek running.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Seek {
+    awaiting: Awaiting,
+    /// It lands on the last frame, where the video pauses.
+    to_end: bool,
+}
+
+/// Asks mpv for the seek, returning what it waits for, or `None` when there
+/// is nowhere to go. Every seek is exact, showing the first frame at or after
+/// its time, and stays between the first and the last frame: a frame step
+/// aims just before the frame after or before the shown one, and pauses.
+fn start_seek(
+    player: &Player,
+    step: VideoStep,
+    timing: Timing,
+    at_end: bool,
+) -> Result<Option<Seek>, String> {
+    let frame = timing.frame.unwrap_or(FRAME_LENGTH);
+    let last = timing.length.map(|length| length.saturating_sub(frame));
+    let early = Duration::from_millis(1);
+    let target = match step {
+        VideoStep::Frames(frames) => {
+            player.set(c"pause", c"yes")?;
+            if frames > 0 {
+                if at_end {
+                    return Ok(None);
+                }
+                timing.position.saturating_add(frame).saturating_sub(early)
+            } else if timing.position.is_zero() {
+                return Ok(None);
+            } else {
+                timing.position.saturating_sub(frame).saturating_sub(early)
+            }
+        }
         VideoStep::Seconds(seconds) => {
-            let seconds = CString::new(seconds.to_string()).map_err(|e| e.to_string())?;
-            player.command(&[c"seek", &seconds, c"relative+exact"])?;
-            Ok(Awaiting::Restart)
+            let by = Duration::from_secs(u64::from(seconds.unsigned_abs()));
+            if seconds < 0 {
+                timing.position.saturating_sub(by)
+            } else {
+                timing.position.saturating_add(by)
+            }
         }
-        VideoStep::Frames(frames) if frames > 0 => {
-            player.command(&[c"frame-step"])?;
-            Ok(Awaiting::Frame)
+    };
+    let (target, to_end) = match last {
+        Some(last) if target >= last => {
+            if timing.position >= last && matches!(step, VideoStep::Frames(1..)) {
+                return Ok(None);
+            }
+            (last, true)
         }
-        VideoStep::Frames(_) => {
-            player.command(&[c"frame-back-step"])?;
-            Ok(Awaiting::Restart)
-        }
-    }
+        _ => (target, false),
+    };
+    let target = CString::new(format!("{:.6}", target.as_secs_f64())).map_err(|e| e.to_string())?;
+    player.command(&[c"seek", &target, c"absolute+exact"])?;
+    Ok(Some(Seek {
+        awaiting: Awaiting::Restart,
+        to_end,
+    }))
 }
 
 fn flag(on: bool) -> &'static str {

@@ -8,6 +8,8 @@ use std::process::Command;
 use std::sync::mpsc::{Receiver, channel};
 use std::time::{Duration, Instant};
 
+use pixpixpix::core::VideoStep;
+use pixpixpix::decode::DecodedImage;
 use pixpixpix::helper;
 use pixpixpix::video::{Playback, Report};
 
@@ -140,4 +142,131 @@ fn a_video_whose_codec_fails_names_the_codec_when_played() {
             || message.starts_with("Videos need libmpv"),
         "{message}"
     );
+}
+
+/// The playback, its reports and its first frame.
+type Paused = (Playback, Receiver<Report>, DecodedImage);
+
+/// Plays `name` paused through the real helper; `None` without libmpv.
+fn paused(name: &str) -> Result<Option<Paused>, String> {
+    let (sender, reports) = channel();
+    let playback = Playback::start_with(real_helper(), fixture(name), true, true, move |report| {
+        // The test may be over already.
+        let _ = sender.send(report);
+    });
+    match reports.recv_timeout(WAIT) {
+        Ok(Report::Frame(image, _)) => Ok(Some((playback, reports, image))),
+        Ok(Report::Failed(message)) if message.starts_with("Videos need libmpv") => Ok(None),
+        other => Err(format!("{other:?}")),
+    }
+}
+
+/// Seeks by `step` and returns the last frame drawn and its position once
+/// the seek is done, or the report that ended it.
+fn step(
+    playback: &Playback,
+    reports: &Receiver<Report>,
+    step: VideoStep,
+) -> Result<(DecodedImage, Duration), Report> {
+    playback.seek(step);
+    let mut last = None;
+    loop {
+        match reports.recv_timeout(WAIT) {
+            Ok(Report::Frame(image, position)) => last = Some((image, position)),
+            Ok(Report::Seeked) => return last.ok_or(Report::Seeked),
+            Ok(other) => return Err(other),
+            Err(_) => return Err(Report::Failed("timed out".to_owned())),
+        }
+    }
+}
+
+#[test]
+fn frame_steps_forward_and_back_alternate_between_two_frames() {
+    let Some((playback, reports, first)) = paused("clip.mp4").unwrap() else {
+        return;
+    };
+    let (second, at) = step(&playback, &reports, VideoStep::Frames(1)).unwrap();
+    assert_ne!(second, first);
+    assert_eq!(at, Duration::from_millis(100));
+    for _ in 0..3 {
+        let (back, at) = step(&playback, &reports, VideoStep::Frames(-1)).unwrap();
+        assert_eq!(back, first);
+        assert_eq!(at, Duration::ZERO);
+        let (forward, at) = step(&playback, &reports, VideoStep::Frames(1)).unwrap();
+        assert_eq!(forward, second);
+        assert_eq!(at, Duration::from_millis(100));
+    }
+}
+
+#[test]
+fn a_frame_step_back_goes_back_exactly_one_frame() {
+    let Some((playback, reports, _)) = paused("clip.mp4").unwrap() else {
+        return;
+    };
+    for _ in 0..5 {
+        step(&playback, &reports, VideoStep::Frames(1)).unwrap();
+    }
+    let (_, at) = step(&playback, &reports, VideoStep::Frames(-1)).unwrap();
+    assert_eq!(at, Duration::from_millis(400));
+}
+
+#[test]
+fn a_jump_past_the_end_stops_paused_on_the_last_frame() {
+    let Some((playback, reports, _)) = paused("clip.mp4").unwrap() else {
+        return;
+    };
+    let (_, at) = step(&playback, &reports, VideoStep::Seconds(10)).unwrap();
+    // 20 frames at 10 per second: the last one shows at 1.9 s.
+    assert_eq!(at, Duration::from_millis(1900));
+    // Paused there: nothing more comes, not even the end.
+    assert!(reports.recv_timeout(Duration::from_millis(500)).is_err());
+    // Still open: a step back works.
+    let (_, at) = step(&playback, &reports, VideoStep::Frames(-1)).unwrap();
+    assert_eq!(at, Duration::from_millis(1800));
+}
+
+#[test]
+fn a_jump_back_past_the_start_stops_on_the_first_frame() {
+    let Some((playback, reports, first)) = paused("clip.mp4").unwrap() else {
+        return;
+    };
+    for _ in 0..3 {
+        step(&playback, &reports, VideoStep::Frames(1)).unwrap();
+    }
+    let (frame, at) = step(&playback, &reports, VideoStep::Seconds(-10)).unwrap();
+    assert_eq!(at, Duration::ZERO);
+    assert_eq!(frame, first);
+}
+
+#[test]
+fn a_jump_past_the_end_while_playing_pauses_on_the_last_frame() {
+    let (sender, reports) = channel();
+    let playback = Playback::start_with(
+        real_helper(),
+        fixture("clip.mp4"),
+        true,
+        false,
+        move |report| {
+            // The test may be over already.
+            let _ = sender.send(report);
+        },
+    );
+    match reports.recv_timeout(WAIT) {
+        Ok(Report::Frame(..)) => {}
+        Ok(Report::Failed(message)) if message.starts_with("Videos need libmpv") => return,
+        other => panic!("{other:?}"),
+    }
+    playback.seek(VideoStep::Seconds(10));
+    let mut seen = Vec::new();
+    while let Ok(report) = reports.recv_timeout(Duration::from_secs(2)) {
+        seen.push(report);
+    }
+    assert!(seen.contains(&Report::Paused), "{seen:?}");
+    assert!(seen.contains(&Report::Seeked), "{seen:?}");
+    assert!(!seen.contains(&Report::Ended), "{seen:?}");
+    let last = seen.iter().rev().find_map(|r| match r {
+        Report::Frame(_, at) => Some(*at),
+        _ => None,
+    });
+    assert_eq!(last, Some(Duration::from_millis(1900)));
 }
