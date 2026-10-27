@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- A documentation site at https://paxel.github.io/pixpixpix/, opening with what the release brings, and What's new of every release.
 - `Shift`+arrows move a zoomed-in picture a tenth of the window per press; the key line shows them while the picture is larger than the window.
 - The key line ends with `?` hide hints, clickable like the other keys.
 
