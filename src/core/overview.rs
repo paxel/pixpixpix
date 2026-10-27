@@ -387,21 +387,29 @@ impl Core {
         }
     }
 
-    /// Keys of the dir column while the overview is open, as without it: the
-    /// overview follows the current folder, scanned anew unless it is the
-    /// root already. `.` does nothing.
+    /// Keys of the dir column while the overview is open, as without it.
+    /// `.` does nothing.
     fn contents_key(&mut self, key: Key) -> Vec<Command> {
-        let before = self.dir.clone();
-        let mut commands = match key {
+        match key {
             Key::Up
             | Key::Down
             | Key::Left
             | Key::Right
             | Key::Enter
             | Key::Escape
-            | Key::Backspace => self.dir_key(key),
-            _ => return Vec::new(),
-        };
+            | Key::Backspace => self.column_action(|core| core.dir_key(key)),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Runs `action` of the dir column; an open overview follows the folder
+    /// it went to, scanned anew unless it is the root already.
+    pub(super) fn column_action(
+        &mut self,
+        action: impl FnOnce(&mut Self) -> Vec<Command>,
+    ) -> Vec<Command> {
+        let before = self.dir.clone();
+        let mut commands = action(self);
         let Some(root) = self.dir.clone().filter(|dir| Some(dir) != before.as_ref()) else {
             return commands;
         };

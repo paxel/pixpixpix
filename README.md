@@ -106,6 +106,9 @@ In the save dialog, `Enter` saves as a new file and `Esc` goes back to editing.
 | `n`                          | close                                                          |
 | `b`                          | focus the preloaded files                                      |
 
+A click on a folder goes there, a double-click goes into its first subfolder, and the
+`..` row on top goes to the parent.
+
 The key line tags what is on.
 
 ### Band (`b`)

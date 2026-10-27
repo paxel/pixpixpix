@@ -1869,3 +1869,26 @@ fn the_band_key_is_named_preloaded_files() {
     // B and Tab both lead there.
     assert_eq!(h.query_all_by_label("preloaded files").count(), 2);
 }
+
+#[test]
+fn a_click_on_a_folder_goes_there_and_dot_dot_goes_up() {
+    let mut h = column_open();
+    h.get_by_role_and_label(Role::Button, "q").click();
+    h.run();
+    assert_eq!(
+        h.state().core.view().screen,
+        Screen::Listing {
+            dir: PathBuf::from("/q")
+        }
+    );
+    h.get_by_role_and_label(Role::Button, "..").click();
+    h.run();
+    assert_eq!(
+        h.state().core.view().screen,
+        Screen::Listing {
+            dir: PathBuf::from("/")
+        }
+    );
+    // The root stands alone, without `..`.
+    assert!(h.query_by_role_and_label(Role::Button, "..").is_none());
+}

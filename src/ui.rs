@@ -222,7 +222,7 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
             .exact_size(DIR_COLUMN_WIDTH)
             .frame(egui::Frame::NONE.fill(BACKGROUND).inner_margin(6.0))
             .show(ui, |ui| {
-                show_dir_column(ui, column, view.focus == Focus::Dirs)
+                show_dir_column(ui, column, view.focus == Focus::Dirs, &mut events)
             });
     }
     if let Some(metadata) = &view.metadata {
@@ -492,7 +492,7 @@ fn folder_name(dir: &Path) -> String {
 }
 
 /// brighter while the column has the focus.
-fn show_dir_column(ui: &mut egui::Ui, column: &DirColumn, focused: bool) {
+fn show_dir_column(ui: &mut egui::Ui, column: &DirColumn, focused: bool, events: &mut Vec<Event>) {
     ui.label(
         RichText::new(folder_name(&column.dir))
             .color(TEXT)
@@ -508,11 +508,33 @@ fn show_dir_column(ui: &mut egui::Ui, column: &DirColumn, focused: bool) {
         .show(ui, |ui| {
             let font = egui::FontId::proportional(14.0);
             let row_height = ui.ctx().fonts_mut(|f| f.row_height(&font)) + 6.0;
+            // Up, unless the current folder is the root, which stands alone.
+            let current = column.highlight.and_then(|i| column.dirs.get(i));
+            if current.is_some_and(|dir| *dir != column.dir) {
+                let size = egui::vec2(ui.available_width(), row_height);
+                let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+                if response.hovered() {
+                    ui.painter().rect_filled(rect, 3.0, HIGHLIGHT_UNFOCUSED);
+                }
+                ui.painter().text(
+                    egui::pos2(rect.min.x + 6.0, rect.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    "..",
+                    font.clone(),
+                    DIM_TEXT,
+                );
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "..")
+                });
+                if response.clicked() {
+                    events.push(Event::FolderUp);
+                }
+            }
             for (index, dir) in column.dirs.iter().enumerate() {
                 let name = folder_name(dir);
                 let highlighted = column.highlight == Some(index);
                 let size = egui::vec2(ui.available_width(), row_height);
-                let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
+                let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
                 let fg = match (highlighted, focused) {
                     (true, true) => {
                         ui.painter().rect_filled(rect, 3.0, HIGHLIGHT);
@@ -522,7 +544,12 @@ fn show_dir_column(ui: &mut egui::Ui, column: &DirColumn, focused: bool) {
                         ui.painter().rect_filled(rect, 3.0, HIGHLIGHT_UNFOCUSED);
                         TEXT
                     }
-                    (false, _) => TEXT,
+                    (false, _) => {
+                        if response.hovered() {
+                            ui.painter().rect_filled(rect, 3.0, HIGHLIGHT_UNFOCUSED);
+                        }
+                        TEXT
+                    }
                 };
                 ui.painter().text(
                     egui::pos2(rect.min.x + 6.0, rect.center().y),
@@ -539,6 +566,11 @@ fn show_dir_column(ui: &mut egui::Ui, column: &DirColumn, focused: bool) {
                         name.clone(),
                     )
                 });
+                if response.double_clicked() {
+                    events.push(Event::FolderDoubleClicked(dir.clone()));
+                } else if response.clicked() {
+                    events.push(Event::FolderClicked(dir.clone()));
+                }
                 // Only when needed: scrolling every frame never settles.
                 if highlighted && !ui.clip_rect().contains_rect(rect) {
                     ui.scroll_to_rect(rect, None);

@@ -891,7 +891,12 @@ impl Core {
         // drawn on.
         let video = self.video.is_some();
         let ask = match event {
-            Event::Show(_) | Event::Opened(_) | Event::CloseRequested => true,
+            Event::Show(_)
+            | Event::Opened(_)
+            | Event::CloseRequested
+            | Event::FolderClicked(_)
+            | Event::FolderDoubleClicked(_)
+            | Event::FolderUp => true,
             // Playing or seeking would replace the frame drawn on.
             Event::Clicked | Event::StepVideo(_) => video,
             Event::Key(key) if self.view.settings_open => key.command && key.key == Key::Q,

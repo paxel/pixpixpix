@@ -124,6 +124,13 @@ pub enum Event {
     },
     /// A thumb of the band was clicked.
     Show(PathBuf),
+    /// A folder of the dir column was clicked: it becomes the current one.
+    FolderClicked(PathBuf),
+    /// A folder of the dir column was double-clicked: it becomes the current
+    /// one and is gone into, like `Right`.
+    FolderDoubleClicked(PathBuf),
+    /// The `..` row of the dir column was clicked: up to the parent.
+    FolderUp,
     /// The system asked to open the file, as Finder's "Open With" does on
     /// macOS.
     Opened(PathBuf),
@@ -1145,6 +1152,9 @@ pub struct Core {
     /// The subfolders of the current folder, dot folders included, while the
     /// dir column is open; absent until listed.
     subdirs: Option<Vec<PathBuf>>,
+    /// A double-click went into the current folder before its subfolders
+    /// were listed: the first one is gone into once they are.
+    go_in: bool,
     /// Whether dot files and dot folders are shown: the one-shot `.` action.
     dots: bool,
     /// `Shift`+`.`: dot entries stay shown when the folder is left.
@@ -1367,6 +1377,7 @@ impl Core {
             all_files: None,
             column_dirs: None,
             subdirs: None,
+            go_in: false,
             dots: false,
             dots_kept: false,
             cache: BTreeMap::new(),
@@ -1434,6 +1445,9 @@ impl Core {
             Event::FirstFrameShown => self.first_frame(),
             Event::FolderListed { dir, result } => self.folder_listed(&dir, result),
             Event::Show(path) => self.show(path),
+            Event::FolderClicked(dir) => self.folder_clicked(dir, false),
+            Event::FolderDoubleClicked(dir) => self.folder_clicked(dir, true),
+            Event::FolderUp => self.column_action(|core| core.dir_key(Key::Left)),
             Event::Opened(path) => self.opened(path),
             Event::Viewport(size) => {
                 self.view.viewport = size;
@@ -1447,10 +1461,7 @@ impl Core {
                 self.pan(delta);
                 Vec::new()
             }
-            Event::DirsListed { dir, result } => {
-                self.dirs_listed(&dir, result);
-                Vec::new()
-            }
+            Event::DirsListed { dir, result } => self.dirs_listed(&dir, result),
             Event::SettingsLoaded(Ok(settings)) => {
                 let commands = self.apply_settings(settings);
                 self.export_settings_loaded();
@@ -2397,9 +2408,12 @@ impl Core {
 
     /// Takes in a listing of subfolders: of the column's level, or of the
     /// current folder, which `Right` goes into.
-    fn dirs_listed(&mut self, dir: &Path, result: Result<Vec<PathBuf>, String>) {
+    fn dirs_listed(&mut self, dir: &Path, result: Result<Vec<PathBuf>, String>) -> Vec<Command> {
         if self.dir.as_deref() == Some(dir) {
             self.subdirs = result.as_ref().ok().cloned();
+            if std::mem::take(&mut self.go_in) {
+                return self.column_action(|core| core.dir_key(Key::Right));
+            }
         }
         let Some(column) = self
             .view
@@ -2407,7 +2421,7 @@ impl Core {
             .as_mut()
             .filter(|c| c.dir == dir && self.dir.as_deref() != Some(dir))
         else {
-            return;
+            return Vec::new();
         };
         match result {
             Ok(dirs) => {
@@ -2420,6 +2434,7 @@ impl Core {
                 column.error = Some(message);
             }
         }
+        Vec::new()
     }
 
     /// Keys of the dir column; leaving the level ends the one-shot actions,
@@ -2485,12 +2500,7 @@ impl Core {
                 let Some(sibling) = sibling.and_then(|i| column.dirs.get(i)).cloned() else {
                     return Vec::new();
                 };
-                // The level stays, so do its dot entries.
-                let dots = self.dots;
-                let commands = self.enter(sibling);
-                self.dots = dots;
-                self.show_column_dirs();
-                return commands;
+                return self.go_to_sibling(sibling);
             }
             Key::Left | Key::Escape | Key::Backspace => self
                 .dir
@@ -2505,6 +2515,38 @@ impl Core {
             _ => None,
         };
         target.map(|dir| self.enter(dir)).unwrap_or_default()
+    }
+
+    /// A click on `dir` in the dir column: the column gets the focus and `dir`
+    /// becomes the current folder; with `into`, its first subfolder.
+    fn folder_clicked(&mut self, dir: PathBuf, into: bool) -> Vec<Command> {
+        if self.view.dir_column.is_none() {
+            return Vec::new();
+        }
+        self.set_focus(Focus::Dirs);
+        self.column_action(|core| {
+            let mut commands = if core.dir.as_ref() == Some(&dir) {
+                Vec::new()
+            } else {
+                core.go_to_sibling(dir)
+            };
+            if into && core.subdirs.is_none() {
+                core.go_in = true;
+            } else if into {
+                commands.extend(core.dir_key(Key::Right));
+            }
+            commands
+        })
+    }
+
+    /// Makes the sibling `dir` the current folder; the level stays, so do its
+    /// dot entries.
+    fn go_to_sibling(&mut self, dir: PathBuf) -> Vec<Command> {
+        let dots = self.dots;
+        let commands = self.enter(dir);
+        self.dots = dots;
+        self.show_column_dirs();
+        commands
     }
 
     /// Makes `dir` the current folder, the dir column following it. Listings
@@ -2543,6 +2585,7 @@ impl Core {
         self.live.clear();
         self.all_files = None;
         self.subdirs = None;
+        self.go_in = false;
         self.dots &= self.dots_kept;
         self.dir = Some(dir.clone());
         (self.current, self.screen) = (None, Screen::Listing { dir: dir.clone() });

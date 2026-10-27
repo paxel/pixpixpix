@@ -403,3 +403,52 @@ fn the_key_line_lists_the_keys_of_the_focused_area() {
         ]
     );
 }
+
+#[test]
+fn clicking_a_folder_goes_there_and_focuses_the_column() {
+    let mut core = column_open();
+    press(&mut core, Key::Tab);
+    assert_eq!(core.view().focus, Focus::Image);
+    core.handle(Event::FolderClicked(PathBuf::from("/q")));
+    assert_eq!(core.view().focus, Focus::Dirs);
+    assert_eq!(highlighted(&core), Some(Path::new("/q")));
+    assert_eq!(
+        core.view().screen,
+        Screen::Listing {
+            dir: PathBuf::from("/q")
+        }
+    );
+    // The current folder again changes nothing.
+    assert!(
+        core.handle(Event::FolderClicked(PathBuf::from("/q")))
+            .is_empty()
+    );
+}
+
+#[test]
+fn double_clicking_a_folder_goes_into_its_first_subfolder() {
+    let mut core = column_open();
+    core.handle(Event::FolderDoubleClicked(PathBuf::from("/p")));
+    assert_eq!(highlighted(&core), Some(Path::new("/p/x")));
+    // A folder whose subfolders are not listed yet waits for them.
+    let mut core = column_open();
+    core.handle(Event::FolderClicked(PathBuf::from("/q")));
+    core.handle(Event::FolderDoubleClicked(PathBuf::from("/q")));
+    assert_eq!(highlighted(&core), Some(Path::new("/q")));
+    dirs_listed(&mut core, "/q", &["/q/m", "/q/n"]);
+    assert_eq!(highlighted(&core), Some(Path::new("/q/m")));
+}
+
+#[test]
+fn the_up_row_goes_to_the_parent() {
+    let mut core = column_open();
+    press(&mut core, Key::Right);
+    assert_eq!(
+        core.handle(Event::FolderUp),
+        [
+            Command::WatchFolder(PathBuf::from("/p")),
+            Command::ListFolder(PathBuf::from("/p")),
+            Command::ListDirs(PathBuf::from("/")),
+        ]
+    );
+}

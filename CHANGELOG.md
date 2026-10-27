@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.2.0]
 
+### Added
+
+- The dir column works with the mouse: a click goes to a folder, a double-click goes into its first subfolder, and a `..` row goes to the parent.
+
 ### Changed
 
 - The dir column lists the current folder among its siblings, highlighted: `Up`/`Down` go to the folder above or below, `Right`/`Enter` into the first subfolder, `Left` to the parent. Opening it changes nothing on screen, and there are no folder previews; the overview's column works the same.
