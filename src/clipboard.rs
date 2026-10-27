@@ -23,6 +23,8 @@ pub struct Content {
     /// The file for GNOME and KDE file managers
     /// (`x-special/gnome-copied-files`).
     pub gnome_files: String,
+    /// Plain text, for an error report.
+    pub text: String,
 }
 
 /// The clipboard content for the file at `path` shown as `image` turned by
@@ -33,6 +35,7 @@ pub fn content(path: &Path, image: &DecodedImage, rotation: Rotation) -> Result<
         png: png(&turned(image, rotation)?)?,
         uri_list: format!("{uri}\r\n"),
         gnome_files: format!("copy\n{uri}"),
+        text: String::new(),
     })
 }
 
@@ -106,9 +109,22 @@ impl Clipboard {
                 png,
                 uri_list: String::new(),
                 gnome_files: String::new(),
+                text: String::new(),
             })
             .and_then(|content| self.set(content))
             .map_err(|e| format!("Cannot copy the image: {e}"))
+    }
+
+    /// Puts `text` on the clipboard. The error is meant to be shown to the
+    /// user as is.
+    pub fn copy_text(&mut self, text: &str) -> Result<(), String> {
+        self.set(Content {
+            png: Vec::new(),
+            uri_list: String::new(),
+            gnome_files: String::new(),
+            text: text.to_owned(),
+        })
+        .map_err(|e| format!("Cannot copy the text: {e}"))
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -166,6 +182,8 @@ mod x11 {
             PNG: b"image/png",
             URI_LIST: b"text/uri-list",
             GNOME_FILES: b"x-special/gnome-copied-files",
+            UTF8_STRING,
+            TEXT_PLAIN: b"text/plain;charset=utf-8",
         }
     }
 
@@ -244,6 +262,8 @@ mod x11 {
                 (atoms.PNG, content.png),
                 (atoms.URI_LIST, content.uri_list.into_bytes()),
                 (atoms.GNOME_FILES, content.gnome_files.into_bytes()),
+                (atoms.UTF8_STRING, content.text.clone().into_bytes()),
+                (atoms.TEXT_PLAIN, content.text.into_bytes()),
             ]
             .into_iter()
             .filter(|(_, bytes)| !bytes.is_empty())

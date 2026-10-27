@@ -31,6 +31,7 @@ pub mod metadata;
 pub mod motion;
 pub mod mpv;
 pub mod multi;
+pub mod report;
 pub mod rotate;
 pub mod settings;
 pub mod startup;

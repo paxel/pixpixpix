@@ -178,6 +178,12 @@ pub enum Event {
     },
     /// A [`Command::Copy`] finished.
     Copied(Result<(), String>),
+    /// The copy button of an error was clicked: the error about the file at
+    /// `path`, if it is about one.
+    CopyError {
+        message: String,
+        path: Option<PathBuf>,
+    },
     /// The file of a successful [`Event::Decoded`], sent right after it, is
     /// an animation; that event showed its first frame.
     Animated(PathBuf),
@@ -469,6 +475,12 @@ pub enum Command {
     /// Put only these pixels on the clipboard, without the file; answered
     /// by [`Event::Copied`].
     CopyPixels(DecodedImage),
+    /// Put a report of the error `message` about the file at `path` on the
+    /// clipboard, as text; answered by [`Event::Copied`].
+    CopyReport {
+        message: String,
+        path: Option<PathBuf>,
+    },
     SetFullscreen(bool),
     Quit,
 }
@@ -1581,6 +1593,7 @@ impl Core {
             }
             Event::RotationWritten { path, result } => self.rotation_written(path, result),
             Event::Trashed { path, result } => self.trashed(&path, result),
+            Event::CopyError { message, path } => vec![Command::CopyReport { message, path }],
             Event::Copied(result) => {
                 let commands = self.edits_copied(&result);
                 match result {

@@ -268,10 +268,12 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
                     };
                     show_image(ui, &shown, view.zoom, textures, &mut events);
                     if let Some(video) = &view.video {
-                        show_video(ui, video, view.toolbar.is_none(), &mut events);
+                        show_video(ui, video, path, view.toolbar.is_none(), &mut events);
                     }
                 }
-                Screen::Error { path, message } => show_error(ui, path.as_deref(), message),
+                Screen::Error { path, message } => {
+                    show_error(ui, path.as_deref(), message, &mut events);
+                }
             }
             if view.toolbar.is_none() && view.save_dialog.is_none() {
                 show_edge_arrows(ui, &mut events);
@@ -510,6 +512,7 @@ fn show_dir_column(ui: &mut egui::Ui, column: &DirColumn, focused: bool, events:
     ui.add_space(4.0);
     if let Some(error) = &column.error {
         ui.label(RichText::new(error).color(ERROR_TEXT));
+        copy_button(ui, error, Some(&column.dir), events);
     }
     egui::ScrollArea::vertical()
         .auto_shrink(false)
@@ -659,6 +662,7 @@ fn show_metadata(ui: &mut egui::Ui, metadata: &MetadataView, events: &mut Vec<Ev
     if let Some(error) = &metadata.error {
         ui.add_space(4.0);
         ui.label(RichText::new(error).color(ERROR_TEXT));
+        copy_button(ui, error, None, events);
     }
 }
 
@@ -700,6 +704,21 @@ fn app_field(ui: &mut egui::Ui, label: &str, value: &mut String) {
         let label = ui.label(RichText::new(label).color(TEXT));
         ui.text_edit_singleline(value).labelled_by(label.id);
     });
+}
+
+/// The button under or beside an error that copies it, with what a search
+/// or a bug report needs besides, to the clipboard.
+fn copy_button(ui: &mut egui::Ui, message: &str, path: Option<&Path>, events: &mut Vec<Event>) {
+    let button = egui::Button::new(RichText::new("Copy").color(TEXT).size(12.0)).small();
+    let response = ui.add(button).on_hover_text(
+        "Copy the error with the version and the system, for a search or a bug report",
+    );
+    if response.clicked() {
+        events.push(Event::CopyError {
+            message: message.to_owned(),
+            path: path.map(Path::to_path_buf),
+        });
+    }
 }
 
 /// The name of the area `focus` stands for, as the key line and the
@@ -841,21 +860,25 @@ fn show_key_line(ui: &mut egui::Ui, view: &View, events: &mut Vec<Event>) {
             };
             ui.label(RichText::new(text).color(NOTICE_TEXT));
         }
+        let shown = match &view.screen {
+            Screen::Image { path, .. } | Screen::Loading { path } => Some(path.as_path()),
+            Screen::Error { path, .. } => path.as_deref(),
+            Screen::Listing { .. } => None,
+        };
         if let Some(error) = &view.folder_error {
             let text = format!("Cannot read the folder: {error}");
-            ui.label(RichText::new(text).color(ERROR_TEXT));
+            ui.label(RichText::new(&text).color(ERROR_TEXT));
+            copy_button(ui, &text, None, events);
         }
-        if let Some(error) = &view.open_error {
+        let errors = [
+            &view.open_error,
+            &view.rotation_error,
+            &view.trash_error,
+            &view.copy_error,
+        ];
+        for error in errors.into_iter().flatten() {
             ui.label(RichText::new(error).color(ERROR_TEXT));
-        }
-        if let Some(error) = &view.rotation_error {
-            ui.label(RichText::new(error).color(ERROR_TEXT));
-        }
-        if let Some(error) = &view.trash_error {
-            ui.label(RichText::new(error).color(ERROR_TEXT));
-        }
-        if let Some(error) = &view.copy_error {
-            ui.label(RichText::new(error).color(ERROR_TEXT));
+            copy_button(ui, error, shown, events);
         }
     });
 }
@@ -1067,7 +1090,13 @@ fn show_edge_arrows(ui: &mut egui::Ui, events: &mut Vec<Event>) {
 /// Over a video's frame: a big play triangle, unless the tools draw there,
 /// and step buttons while it is not playing, which a click plays, and why it
 /// cannot be played.
-fn show_video(ui: &mut egui::Ui, video: &Video, triangle: bool, events: &mut Vec<Event>) {
+fn show_video(
+    ui: &mut egui::Ui,
+    video: &Video,
+    path: &Path,
+    triangle: bool,
+    events: &mut Vec<Event>,
+) {
     let area = ui.max_rect();
     if !video.playing {
         // A row in the middle, above the place of the error.
@@ -1099,7 +1128,7 @@ fn show_video(ui: &mut egui::Ui, video: &Video, triangle: bool, events: &mut Vec
         }
     }
     if let Some(error) = &video.error {
-        let rect = egui::Rect::from_min_max(egui::pos2(area.min.x, area.max.y - 56.0), area.max);
+        let rect = egui::Rect::from_min_max(egui::pos2(area.min.x, area.max.y - 84.0), area.max);
         ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
             ui.vertical_centered(|ui| {
                 ui.label(
@@ -1108,6 +1137,7 @@ fn show_video(ui: &mut egui::Ui, video: &Video, triangle: bool, events: &mut Vec
                         .background_color(ANIMATED_BADGE)
                         .size(15.0),
                 );
+                copy_button(ui, error, Some(path), events);
                 ui.label(
                     RichText::new(OPEN_HINT)
                         .color(DIM_TEXT)
@@ -1183,7 +1213,7 @@ fn fit(image: egui::Vec2, area: egui::Vec2) -> egui::Vec2 {
     egui::vec2(image.x * scale, image.y * scale)
 }
 
-fn show_error(ui: &mut egui::Ui, path: Option<&Path>, message: &str) {
+fn show_error(ui: &mut egui::Ui, path: Option<&Path>, message: &str, events: &mut Vec<Event>) {
     ui.centered_and_justified(|ui| {
         ui.vertical_centered(|ui| {
             if let Some(path) = path {
@@ -1194,6 +1224,7 @@ fn show_error(ui: &mut egui::Ui, path: Option<&Path>, message: &str) {
                 );
             }
             ui.label(RichText::new(message).color(ERROR_TEXT).size(15.0));
+            copy_button(ui, message, path, events);
             if path.is_some() {
                 ui.label(RichText::new(OPEN_HINT).color(DIM_TEXT));
             }

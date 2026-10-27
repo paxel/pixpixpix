@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Every error has a Copy button that copies the message with the file, the version, the system and the install method, for a search or a bug report.
 - The key line names the area that has the focus, and every area shows a diode in its bottom right corner that lights while it has it.
 - A click on a key in the key line does what the key does; arrows near the image's edges step to the previous or next file; the toolbar has Save and Close buttons.
 - `?` hides the key hints and brings them back, remembered across starts; a `?` marks where they were, and tags and errors still show.

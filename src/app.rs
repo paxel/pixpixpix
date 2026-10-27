@@ -156,6 +156,8 @@ enum CopyJob {
     Export(DecodedImage, Rotation, Vec<Shape>, Region, Export),
     /// Only these pixels, without a file.
     Pixels(DecodedImage),
+    /// Text, an error report.
+    Text(String),
 }
 
 /// Why there is no settings file to read or write.
@@ -516,6 +518,15 @@ impl Worker {
                     )));
                 }
             }
+            Command::CopyReport { message, path } => {
+                let text = crate::report::report(message, path.as_deref());
+                if self.copier().send(CopyJob::Text(text)).is_err() {
+                    // The app may already be gone; nothing to report to then.
+                    let _ = self.events.send(Event::Copied(Err(
+                        "Cannot copy: the clipboard stopped".to_owned(),
+                    )));
+                }
+            }
             Command::SetFullscreen(_) | Command::Quit | Command::KeepOpen => {}
         }
     }
@@ -544,6 +555,7 @@ impl Worker {
                                 .and_then(|image| clipboard.copy_pixels(&image))
                         }
                         CopyJob::Pixels(image) => clipboard.copy_pixels(&image),
+                        CopyJob::Text(text) => clipboard.copy_text(&text),
                     };
                     // The app may already be gone; nothing to report to then.
                     let _ = events.send(Event::Copied(result));
@@ -669,6 +681,7 @@ impl App {
                 | Command::SaveEdits { .. }
                 | Command::Export { .. }
                 | Command::CopyExport { .. }
+                | Command::CopyReport { .. }
                 | Command::DecodeFrames(_)
                 | Command::CancelFrames
                 | Command::DecodeInner { .. }

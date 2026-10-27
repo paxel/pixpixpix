@@ -78,6 +78,7 @@ fn content_holds_the_turned_pixels_as_png_and_the_file() {
         png,
         uri_list,
         gnome_files,
+        text,
     } = clipboard::content(Path::new("/p/cat.jpg"), &numbered(), Rotation::Right).unwrap();
     assert_eq!(image::guess_format(&png).unwrap(), ImageFormat::Png);
     let decoded = image::load(Cursor::new(&png), ImageFormat::Png)
@@ -93,6 +94,7 @@ fn content_holds_the_turned_pixels_as_png_and_the_file() {
     );
     assert_eq!(uri_list, "file:///p/cat.jpg\r\n");
     assert_eq!(gnome_files, "copy\nfile:///p/cat.jpg");
+    assert_eq!(text, "");
 }
 
 #[test]

@@ -2052,3 +2052,23 @@ fn the_key_line_names_the_focused_area_and_its_diode_is_lit() {
     assert_eq!(diode_lit(&h, "preloaded files"), Some(true));
     assert_eq!(diode_lit(&h, "image view"), Some(false));
 }
+
+#[test]
+fn an_error_has_a_copy_button_that_reports_it_with_its_file() {
+    let (mut core, _) = Core::start(Ok(PathBuf::from("/p/bad.jpg")));
+    core.handle(Event::Decoded {
+        path: PathBuf::from("/p/bad.jpg"),
+        result: Err("unexpected end of file".into()),
+    });
+    let mut h = harness(core);
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Copy").click();
+    h.run();
+    assert_eq!(
+        h.state().commands,
+        [Command::CopyReport {
+            message: "unexpected end of file".into(),
+            path: Some(PathBuf::from("/p/bad.jpg")),
+        }]
+    );
+}

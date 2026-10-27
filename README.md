@@ -268,6 +268,12 @@ cargo build --release
 No development packages are needed to build; the native libraries above are only
 loaded at runtime.
 
+## Reporting a problem
+
+Every error has a Copy button. It copies the message together with the file, the
+pixpixpix version, the system and how pixpixpix was installed, ready to paste into a
+search or an [issue](https://github.com/paxel/pixpixpix/issues).
+
 ## Development
 
 ```sh

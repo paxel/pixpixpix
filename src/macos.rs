@@ -14,7 +14,7 @@ use objc2::{AnyThread, DefinedClass, MainThreadOnly, define_class, msg_send, sel
 use objc2_app_kit::{
     NSApplication, NSApplicationDelegate, NSApplicationWillFinishLaunchingNotification,
     NSPasteboard, NSPasteboardItem, NSPasteboardTypeFileURL, NSPasteboardTypePNG,
-    NSPasteboardWriting,
+    NSPasteboardTypeString, NSPasteboardWriting,
 };
 use objc2_foundation::{
     MainThreadMarker, NSArray, NSData, NSNotification, NSNotificationCenter, NSObject,
@@ -25,18 +25,28 @@ use crate::clipboard::Content;
 use crate::core::Event;
 
 /// Puts `content` on the general pasteboard as one item: the PNG for image
-/// apps and, if there is one, the file for Finder.
+/// apps, the file for Finder and plain text, each if there is one.
 pub fn copy(content: &Content) -> Result<(), String> {
     // The clipboard thread has no pool of its own for what AppKit
     // autoreleases.
     autoreleasepool(|_| {
         let item = NSPasteboardItem::init(NSPasteboardItem::alloc());
-        let png = NSData::with_bytes(&content.png);
-        // SAFETY: the pasteboard type constants are immutable strings AppKit
-        // defines.
-        let png_type = unsafe { NSPasteboardTypePNG };
-        if !item.setData_forType(&png, png_type) {
-            return Err("the pasteboard refused the image".to_owned());
+        if !content.png.is_empty() {
+            let png = NSData::with_bytes(&content.png);
+            // SAFETY: the pasteboard type constants are immutable strings
+            // AppKit defines.
+            let png_type = unsafe { NSPasteboardTypePNG };
+            if !item.setData_forType(&png, png_type) {
+                return Err("the pasteboard refused the image".to_owned());
+            }
+        }
+        if !content.text.is_empty() {
+            let text = NSString::from_str(&content.text);
+            // SAFETY: as above.
+            let text_type = unsafe { NSPasteboardTypeString };
+            if !item.setString_forType(&text, text_type) {
+                return Err("the pasteboard refused the text".to_owned());
+            }
         }
         let uri = content.uri_list.trim_end();
         if !uri.is_empty() {

@@ -521,6 +521,13 @@ pub fn show_save_dialog(
             if let Some(error) = &dialog.error {
                 ui.add_space(6.0);
                 ui.label(RichText::new(error).size(13.0).color(DIALOG_ERROR));
+                let copy = egui::Button::new(RichText::new("Copy").size(12.0).color(INK)).small();
+                if ui.add(copy).clicked() {
+                    events.push(Event::CopyError {
+                        message: error.clone(),
+                        path: None,
+                    });
+                }
             }
             ui.add_space(20.0);
             let enabled = !dialog.busy;
