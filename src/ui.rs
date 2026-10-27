@@ -171,6 +171,7 @@ fn map_key(key: egui::Key) -> Option<Key> {
         egui::Key::P => Key::P,
         egui::Key::Z => Key::Z,
         egui::Key::I => Key::I,
+        egui::Key::Questionmark => Key::Question,
         _ => return None,
     })
 }
@@ -694,13 +695,39 @@ fn app_field(ui: &mut egui::Ui, label: &str, value: &mut String) {
     });
 }
 
+/// The width `text` takes on one line.
+fn text_width(ui: &egui::Ui, text: &RichText) -> f32 {
+    let galley = egui::WidgetText::from(text.clone()).into_galley(
+        ui,
+        Some(egui::TextWrapMode::Extend),
+        f32::INFINITY,
+        egui::TextStyle::Body,
+    );
+    galley.size().x
+}
+
 fn show_key_line(ui: &mut egui::Ui, view: &View) {
     let key_line = &view.key_line;
-    ui.horizontal(|ui| {
-        for hint in &key_line.keys {
-            ui.label(RichText::new(hint.keys).color(TEXT).strong());
-            ui.label(RichText::new(hint.action).color(DIM_TEXT));
+    ui.horizontal_wrapped(|ui| {
+        if view.settings.hints_hidden {
+            // Where the hints were: `?` brings them back.
+            ui.label(RichText::new("?").color(DIM_TEXT).strong());
             ui.add_space(12.0);
+        } else {
+            for hint in &key_line.keys {
+                let key = RichText::new(hint.keys).color(TEXT).strong();
+                let action = RichText::new(hint.action).color(DIM_TEXT);
+                // A hint never breaks between its key and its action: it
+                // starts a new line when it does not fit whole.
+                let width = text_width(ui, &key) + text_width(ui, &action);
+                let needed = width + ui.spacing().item_spacing.x;
+                if ui.available_width() < needed && ui.cursor().min.x > ui.max_rect().min.x {
+                    ui.end_row();
+                }
+                ui.add(egui::Label::new(key).wrap_mode(egui::TextWrapMode::Extend));
+                ui.add(egui::Label::new(action).wrap_mode(egui::TextWrapMode::Extend));
+                ui.add_space(12.0);
+            }
         }
         for tag in &view.tags {
             let text = match (tag.toggle, tag.kept) {

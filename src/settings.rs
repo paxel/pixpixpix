@@ -36,6 +36,8 @@ pub struct Settings {
     pub export_width: u32,
     /// The height of the last export, in pixels.
     pub export_height: u32,
+    /// `?` hid the key hints of the key line.
+    pub hints_hidden: bool,
 }
 
 impl Default for Settings {
@@ -47,6 +49,7 @@ impl Default for Settings {
             thumbnail_size: 160,
             export_width: 1920,
             export_height: 1080,
+            hints_hidden: false,
         }
     }
 }

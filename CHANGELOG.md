@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `?` hides the key hints and brings them back, remembered across starts; a `?` marks where they were, and tags and errors still show.
 - The dir column works with the mouse: a click goes to a folder, a double-click goes into its first subfolder, and a `..` row goes to the parent.
 
 ### Changed
@@ -23,6 +24,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- The key line wraps in narrow windows instead of cutting hints off.
 - Frame steps forward and back are exact, so alternating them shows the same two frames.
 - A jump past the end of a video stops paused on its last frame instead of ending it; a jump back past the start stops on the first frame.
 - A video that cannot be decoded names its codec, also when only its sound plays.

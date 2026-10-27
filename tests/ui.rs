@@ -1892,3 +1892,66 @@ fn a_click_on_a_folder_goes_there_and_dot_dot_goes_up() {
     // The root stands alone, without `..`.
     assert!(h.query_by_role_and_label(Role::Button, "..").is_none());
 }
+
+#[test]
+fn the_key_line_wraps_in_a_narrow_window() {
+    let mut h = harness(browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]));
+    h.set_size(egui::vec2(320.0, 600.0));
+    h.run();
+    let width = h.ctx.content_rect().width();
+    for keys in ["Left/Right", "+/-", "G", "N", "S", "F"] {
+        let rect = h.get_by_label(keys).rect();
+        assert!(
+            rect.max.x <= width,
+            "{keys} ends at {} of {width}",
+            rect.max.x
+        );
+    }
+    let quit = h
+        .get_by_label(if cfg!(target_os = "macos") {
+            "Cmd+Q"
+        } else {
+            "Ctrl+Q"
+        })
+        .rect();
+    assert!(quit.max.x <= width);
+    // It took more than one line.
+    assert!(quit.min.y > h.get_by_label("Left/Right").rect().max.y);
+}
+
+#[test]
+fn question_mark_hides_the_hints_but_not_the_tags_and_is_saved() {
+    let mut h = column_open();
+    h.key_press(egui::Key::Period);
+    h.run();
+    h.state_mut().commands.clear();
+    h.key_press(egui::Key::Questionmark);
+    h.run();
+    assert!(h.query_by_label("Up/Down").is_none());
+    h.get_by_label("?");
+    h.get_by_label("dot entries shown");
+    assert_eq!(
+        h.state().commands,
+        [Command::SaveSettings(Settings {
+            hints_hidden: true,
+            ..Settings::default()
+        })]
+    );
+    h.key_press(egui::Key::Questionmark);
+    h.run();
+    h.get_by_label("Up/Down");
+    assert!(h.query_by_label("?").is_none());
+}
+
+#[test]
+fn hidden_hints_stay_hidden_after_a_restart() {
+    let mut core = browsing("/p/a.jpg", &["/p/a.jpg"]);
+    core.handle(Event::SettingsLoaded(Ok(Settings {
+        hints_hidden: true,
+        ..Settings::default()
+    })));
+    let mut h = harness(core);
+    h.run();
+    assert!(h.query_by_label("Left/Right").is_none());
+    h.get_by_label("?");
+}

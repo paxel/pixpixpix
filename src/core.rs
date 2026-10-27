@@ -70,6 +70,7 @@ pub enum Key {
     P,
     Z,
     I,
+    Question,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2231,6 +2232,11 @@ impl Core {
             (Key::F, false) => {
                 self.view.fullscreen = !self.view.fullscreen;
                 vec![Command::SetFullscreen(self.view.fullscreen)]
+            }
+            (Key::Question, false) => {
+                let mut settings = self.view.settings.clone();
+                settings.hints_hidden = !settings.hints_hidden;
+                self.change_settings(settings)
             }
             (Key::G, false) => self.toggle_overview(),
             _ if self.view.overview.is_some() && key.command => Vec::new(),

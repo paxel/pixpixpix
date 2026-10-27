@@ -40,7 +40,8 @@ The [CHANGELOG](CHANGELOG.md) describes every feature in detail.
 
 ## Keys
 
-The bottom line of the window always lists the keys of the area that has the focus.
+The bottom line of the window lists the keys of the area that has the focus, on as many
+lines as it needs; `?` hides them and brings them back.
 On macOS, `Cmd` takes the place of `Ctrl` in every key below.
 
 ### Everywhere
@@ -51,6 +52,7 @@ On macOS, `Cmd` takes the place of `Ctrl` in every key below.
 | `f`      | fullscreen         |
 | `Ctrl+Q` | quit               |
 | `Tab`    | next area          |
+| `?`      | hide or show keys  |
 
 `Tab` cycles through the dir column, the image view and the band, skipping the column
 while it is closed.
