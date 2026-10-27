@@ -39,6 +39,10 @@ const ANIMATED_MARK: Color32 = Color32::from_rgb(0xe8, 0xe8, 0xea);
 /// The highlighted folder of the focused dir column, and its text.
 const HIGHLIGHT: Color32 = Color32::from_rgb(0xff, 0xd5, 0x80);
 const HIGHLIGHT_TEXT: Color32 = Color32::from_rgb(0x12, 0x12, 0x14);
+/// A key hint's pill for a moment after a click on it.
+const KEY_FLASH: Color32 = Color32::from_rgb(0xff, 0xf0, 0xc8);
+/// How long that moment is.
+const FLASH_SECONDS: f64 = 0.2;
 /// The highlighted folder while the image view has the focus.
 const HIGHLIGHT_UNFOCUSED: Color32 = Color32::from_rgb(0x3a, 0x3a, 0x40);
 /// Width of the dir column.
@@ -1123,15 +1127,31 @@ fn show_diode(ui: &mut egui::Ui, focus: Focus, view: &View) {
         .accesskit_node_builder(response.id, |node| node.set_selected(lit));
 }
 
-/// The character of `text` at `x` points from its left on one line.
-fn char_at(ui: &egui::Ui, text: &RichText, x: f32) -> usize {
-    let galley = egui::WidgetText::from(text.clone()).into_galley(
-        ui,
-        Some(egui::TextWrapMode::Extend),
-        f32::INFINITY,
-        egui::TextStyle::Body,
-    );
-    galley.cursor_from_pos(egui::vec2(x, 0.0)).index.0
+/// The keys of a hint, laid out on one line; the characters `marked` stand
+/// on a highlight pill and take its text colour.
+fn key_galley(
+    ui: &egui::Ui,
+    keys: &str,
+    marked: Option<std::ops::Range<usize>>,
+) -> Arc<egui::Galley> {
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let mut job = egui::text::LayoutJob::default();
+    let format = |color| egui::TextFormat::simple(font.clone(), color);
+    match marked.and_then(|m| {
+        Some((
+            keys.get(..m.start)?,
+            keys.get(m.clone())?,
+            keys.get(m.end..)?,
+        ))
+    }) {
+        Some((before, at, after)) => {
+            job.append(before, 0.0, format(TEXT));
+            job.append(at, 0.0, format(HIGHLIGHT_TEXT));
+            job.append(after, 0.0, format(TEXT));
+        }
+        None => job.append(keys, 0.0, format(TEXT)),
+    }
+    ui.fonts_mut(|f| f.layout_job(job))
 }
 
 /// The width `text` takes on one line.
@@ -1160,52 +1180,103 @@ fn show_key_line(ui: &mut egui::Ui, view: &View, events: &mut Vec<Event>) {
             ui.label(RichText::new("?").color(DIM_TEXT).strong());
             ui.add_space(12.0);
         } else {
-            for hint in &key_line.keys {
-                let key = RichText::new(hint.keys).color(TEXT).strong();
+            for (index, hint) in key_line.keys.iter().enumerate() {
                 let action = RichText::new(hint.action).color(DIM_TEXT);
+                let plain = key_galley(ui, hint.keys, None);
                 // A hint never breaks between its key and its action: it
                 // starts a new line when it does not fit whole.
-                let width = text_width(ui, &key) + text_width(ui, &action);
+                let width = plain.size().x + text_width(ui, &action);
                 let needed = width + ui.spacing().item_spacing.x;
                 if ui.available_width() < needed && ui.cursor().min.x > ui.max_rect().min.x {
                     ui.end_row();
                 }
-                // A click presses the key under the pointer; on the action,
-                // the key of a hint with one.
                 let presses = hint.presses();
-                let response = ui.add(
-                    egui::Label::new(key.clone())
-                        .wrap_mode(egui::TextWrapMode::Extend)
-                        .sense(egui::Sense::click()),
-                );
-                if response.clicked()
-                    && let Some(pos) = response.interact_pointer_pos()
-                {
-                    let at = char_at(ui, &key, pos.x - response.rect.min.x);
-                    let press = presses
-                        .iter()
-                        .find(|(chars, _)| chars.contains(&at))
-                        .or(presses.last())
-                        .and_then(|(_, press)| *press);
-                    events.extend(press.map(Event::Key));
-                }
                 let one = match presses.as_slice() {
                     [(_, Some(press))] => Some(*press),
                     _ => None,
                 };
+                let (rect, key) = ui.allocate_exact_size(plain.size(), egui::Sense::click());
+                key.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Label, true, hint.keys)
+                });
                 let sense = if one.is_some() {
                     egui::Sense::click()
                 } else {
                     egui::Sense::hover()
                 };
-                let response = ui.add(
+                let action = ui.add(
                     egui::Label::new(action)
                         .wrap_mode(egui::TextWrapMode::Extend)
                         .sense(sense),
                 );
-                if response.clicked() {
-                    events.extend(one.map(Event::Key));
+                // The key under the pointer, or a one-key hint's key while
+                // its action is under it: the one a click presses.
+                let at = key.hover_pos().map(|pos| {
+                    let at = plain
+                        .cursor_from_pos(egui::vec2(pos.x - rect.min.x, pos.y - rect.min.y))
+                        .index
+                        .0;
+                    presses
+                        .iter()
+                        .position(|(chars, _)| chars.contains(&at))
+                        .unwrap_or(presses.len().saturating_sub(1))
+                });
+                let lit = at
+                    .or_else(|| (action.hovered() && one.is_some()).then_some(0))
+                    .filter(|&at| matches!(presses.get(at), Some((_, Some(_)))));
+                let pressed = match (key.clicked(), action.clicked()) {
+                    (true, _) => lit,
+                    (false, true) => one.map(|_| 0),
+                    (false, false) => None,
+                };
+                let flash_id = ui.id().with(("key flash", index));
+                let now = ui.input(|i| i.time);
+                if let Some(at) = pressed {
+                    ui.data_mut(|d| d.insert_temp(flash_id, (at, now)));
+                    events.extend(
+                        presses
+                            .get(at)
+                            .and_then(|(_, press)| *press)
+                            .map(Event::Key),
+                    );
                 }
+                let flash = ui
+                    .data(|d| d.get_temp::<(usize, f64)>(flash_id))
+                    .filter(|(_, since)| now - since < FLASH_SECONDS);
+                if flash.is_some() {
+                    ui.ctx().request_repaint();
+                }
+                if lit.is_some() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                }
+                let marked = flash
+                    .map(|(at, _)| (at, KEY_FLASH))
+                    .or(lit.map(|at| (at, HIGHLIGHT)));
+                if let Some((at, fill)) = marked
+                    && let Some((chars, _)) = presses.get(at)
+                {
+                    let left = plain
+                        .pos_from_cursor(egui::text::CCursor::new(chars.start))
+                        .min
+                        .x;
+                    let right = plain
+                        .pos_from_cursor(egui::text::CCursor::new(chars.end))
+                        .min
+                        .x;
+                    let pill = egui::Rect::from_x_y_ranges(
+                        rect.min.x + left - 3.0..=rect.min.x + right + 3.0,
+                        rect.y_range(),
+                    );
+                    ui.painter().rect_filled(pill, 4.0, fill);
+                }
+                let galley = key_galley(
+                    ui,
+                    hint.keys,
+                    marked
+                        .and_then(|(at, _)| presses.get(at))
+                        .map(|(chars, _)| chars.clone()),
+                );
+                ui.painter().galley(rect.min, galley, TEXT);
                 ui.add_space(12.0);
             }
         }

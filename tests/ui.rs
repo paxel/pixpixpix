@@ -2010,6 +2010,41 @@ fn a_click_on_a_key_hint_presses_the_key_under_the_pointer() {
 }
 
 #[test]
+fn a_clickable_key_under_the_pointer_shows_a_hand() {
+    let mut h = harness(browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]));
+    h.run();
+    let rect = h.get_by_label("Left/Right").rect();
+    h.hover_at(egui::pos2(rect.min.x + 3.0, rect.center().y));
+    h.run();
+    assert_eq!(
+        h.output().platform_output.cursor_icon,
+        egui::CursorIcon::PointingHand
+    );
+    // The area name is no key.
+    let name = h.get_by_label("image view").rect();
+    h.hover_at(name.center());
+    h.run();
+    assert_ne!(
+        h.output().platform_output.cursor_icon,
+        egui::CursorIcon::PointingHand
+    );
+}
+
+#[test]
+fn a_click_on_the_left_key_of_a_pair_presses_it() {
+    let mut core = browsing("/p/b.jpg", &["/p/a.jpg", "/p/b.jpg"]);
+    decoded(&mut core, "/p/a.jpg");
+    let mut h = harness(core);
+    h.run();
+    let rect = h.get_by_label("Left/Right").rect();
+    click_at(&mut h, egui::pos2(rect.min.x + 3.0, rect.center().y));
+    assert!(matches!(
+        &h.state().core.view().screen,
+        Screen::Image { path, .. } if path == Path::new("/p/a.jpg")
+    ));
+}
+
+#[test]
 fn an_arrow_shows_near_the_edge_and_steps_to_the_next_file() {
     let mut h = harness(browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]));
     h.run();
