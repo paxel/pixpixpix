@@ -1,0 +1,50 @@
+<!-- page: title="Formats and libraries" track="reference" order=1 summary="Every format pixpixpix opens, and the system libraries some of them need." -->
+<p class="lede">What pixpixpix opens, and which system libraries a few formats and features
+need.</p>
+
+<h2>Formats</h2>
+<table>
+<thead><tr><th>Kind</th><th>Formats</th></tr></thead>
+<tbody>
+<tr><td>Images</td><td>JPEG, PNG, GIF, WebP, BMP, TIFF</td></tr>
+<tr><td>Through libheif</td><td>HEIC/HEIF, AVIF</td></tr>
+<tr><td>Animations</td><td>animated GIF and WebP</td></tr>
+<tr><td>Multi-image files</td><td>multi-page TIFF, MPO, multi-image HEIC/HEIF</td></tr>
+<tr><td>Through libmpv</td><td>mp4, mov, m4v, mkv, webm, avi, mts, m2ts, 3gp, wmv, flv, mpg</td></tr>
+<tr><td>Moving photos</td><td>Apple Live Photos (photo plus MOV), Google and Samsung Motion Photos</td></tr>
+</tbody>
+</table>
+<p>Images are shown upright according to their EXIF orientation.</p>
+
+<h2>Native libraries</h2>
+<p>pixpixpix itself is a plain Rust program. A few formats and features need system libraries,
+which are loaded only the first time they are needed, never at start, so they never slow down the
+first image. Without them everything else works; the feature that needs them says what is
+missing. The About page, linked from the settings (<kbd>s</kbd>), lists which of them were found
+and where.</p>
+<table>
+<thead><tr><th>Library</th><th>Needed for</th><th>Without it</th></tr></thead>
+<tbody>
+<tr><td>libheif</td><td>HEIC/HEIF and AVIF</td><td>such files show as broken, with the reason</td></tr>
+<tr><td>libmpv</td><td>videos, Live Photos and Motion Photos</td><td>videos say libmpv is missing</td></tr>
+<tr><td>libturbojpeg</td><td>lossless JPEG turns, upright before removing EXIF</td><td>the turn or the removal is refused, naming the package to install</td></tr>
+</tbody>
+</table>
+<p>libheif decodes through plugins: HEIC needs its libde265 plugin and AVIF its dav1d or aom
+plugin. Some distributions package these separately. The Flatpak and the macOS app bring what they
+need; the packages per system:</p>
+<table>
+<thead><tr><th>System</th><th>libheif</th><th>libmpv</th><th>libturbojpeg</th></tr></thead>
+<tbody>
+<tr><td>Debian, Ubuntu</td><td><code>libheif1 libheif-plugin-libde265 libheif-plugin-dav1d</code></td><td><code>libmpv2</code></td><td><code>libturbojpeg</code></td></tr>
+<tr><td>Fedora</td><td><code>libheif</code></td><td><code>mpv-libs</code></td><td><code>turbojpeg</code></td></tr>
+<tr><td>Arch</td><td><code>libheif</code></td><td><code>mpv</code></td><td><code>libjpeg-turbo</code></td></tr>
+<tr><td>macOS (Homebrew)</td><td><code>libheif</code></td><td><code>mpv</code></td><td><code>jpeg-turbo</code></td></tr>
+</tbody>
+</table>
+
+<h3>Phone videos on Fedora</h3>
+<p>Fedora ships <code>ffmpeg-free</code>, which cannot decode H.264 and HEVC, the codecs of most
+phone videos; such a video then says its codec cannot be decoded. The full ffmpeg from
+<a href="https://rpmfusion.org/Configuration">RPM Fusion</a> decodes them:</p>
+<pre><code>sudo dnf swap ffmpeg-free ffmpeg --allowerasing</code></pre>

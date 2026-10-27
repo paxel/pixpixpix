@@ -1,0 +1,52 @@
+<!-- page: title="Install" track="start" order=1 summary="Install pixpixpix with Homebrew, as a Flatpak, from a release tarball or from source." -->
+<p class="lede">pixpixpix runs on Linux (x86_64 and aarch64) and macOS (Apple Silicon). Pick one
+way to install it; every way gives you the <code>pixpixpix</code> command and its short form
+<code>pix3</code>.</p>
+
+<h2>Homebrew on Linux</h2>
+<p>From the <code>paxel/tap</code> tap. Install by the full name: Homebrew then trusts just this
+formula from the tap, not the whole tap (see Homebrew's
+<a href="https://docs.brew.sh/Tap-Trust">Tap Trust</a>).</p>
+<pre><code>brew install paxel/tap/pixpixpix</code></pre>
+<p>It puts pixpixpix into the application menu and into "Open with" for images and videos, never
+as the default app. The <a href="formats.html#native-libraries">native libraries</a> come from your
+distribution.</p>
+
+<h2>Homebrew on macOS</h2>
+<p>The cask installs <code>pixpixpix.app</code> with libmpv bundled, plus the
+<code>pixpixpix</code> and <code>pix3</code> commands:</p>
+<pre><code>brew install --cask paxel/tap/pixpixpix</code></pre>
+<p>The app is not signed, so macOS blocks its first start: allow it once in System Settings &gt;
+Privacy &amp; Security &gt; "Open Anyway", or run
+<code>xattr -dr com.apple.quarantine /Applications/pixpixpix.app</code>.</p>
+
+<h2>Flatpak on Linux</h2>
+<p>Each release carries a Flatpak bundle for x86_64 and aarch64, with libmpv, libheif and
+libturbojpeg included. This installs the latest one for the current user:</p>
+<pre><code>curl -fsSL https://raw.githubusercontent.com/paxel/pixpixpix/summer/packaging/flatpak/install.sh | sh</code></pre>
+<p>It needs <code>flatpak</code> and <code>curl</code>. The script adds the Flathub remote
+(<code>--user</code>, if it is not there yet) only for the runtime, installs the bundle with
+<code>--user</code> and writes <code>pixpixpix</code> and <code>pix3</code> commands that start
+the Flatpak to <code>~/.local/bin</code>. Running it again updates to the latest release.</p>
+<p>The Flatpak sees your home, <code>/media</code>, <code>/run/media</code> and <code>/mnt</code>.
+<kbd>o</kbd> opens files in your default apps through the desktop portal; other apps named in the
+settings cannot be started from the sandbox. Its settings live in
+<code>~/.var/app/io.github.paxel.pixpixpix</code>.</p>
+<p>To uninstall:</p>
+<pre><code>flatpak uninstall --user io.github.paxel.pixpixpix
+rm ~/.local/bin/pixpixpix ~/.local/bin/pix3</code></pre>
+
+<h2>Release tarballs</h2>
+<p>Each <a href="https://github.com/paxel/pixpixpix/releases">GitHub release</a> carries a tarball
+for Linux x86_64, Linux aarch64 and macOS arm64 with the <code>pixpixpix</code> and
+<code>pix3</code> binaries. Put them anywhere on your <code>PATH</code>. The macOS build is
+unsigned.</p>
+
+<h2>From source</h2>
+<p>With a current stable Rust toolchain:</p>
+<pre><code>git clone https://github.com/paxel/pixpixpix
+cd pixpixpix
+cargo build --release
+# target/release/pixpixpix and target/release/pix3</code></pre>
+<p>No development packages are needed to build; the native libraries are only loaded at
+runtime.</p>
