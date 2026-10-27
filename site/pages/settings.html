@@ -1,0 +1,21 @@
+<!-- page: title="Settings and default apps" track="use" order=4 summary="The settings screen, where they are kept, and making pixpixpix the default app per file type." -->
+<p class="lede"><kbd>s</kbd> opens the settings. Every change takes effect at once and is
+saved.</p>
+
+<table>
+<thead><tr><th>Key</th><th>Action</th></tr></thead>
+<tbody>
+<tr><td><kbd>s</kbd> / <kbd>Esc</kbd></td><td>close</td></tr>
+</tbody>
+</table>
+<p>The settings are kept in <code>settings.toml</code> in the platform config directory and may be
+edited by hand. The About page, linked from the settings, shows the version, the license and
+which <a href="formats.html#native-libraries">native libraries</a> were found where.</p>
+
+<h2>Default apps</h2>
+<p>Under "Default apps" the settings make pixpixpix the default app for a file type, or for all
+images or all videos at once, and give the type back to the app it replaced, which they remember.
+pixpixpix becomes a default only there, never by being installed. While it is the default,
+<kbd>o</kbd> opens files in the app it replaced.</p>
+<p>On Linux this goes through <code>xdg-mime</code>, on macOS through Launch Services. The Flatpak
+can only show the defaults, not change them.</p>
