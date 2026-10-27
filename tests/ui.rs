@@ -2102,3 +2102,51 @@ fn the_settings_screen_lines_its_controls_up_in_sections() {
         assert!(window.contains_rect(rect), "{rect:?}");
     }
 }
+
+#[test]
+fn the_settings_link_to_an_about_page_that_lists_and_copies_the_libraries() {
+    let mut h = harness(shown("/p/cat.jpg"));
+    h.run();
+    h.key_press(egui::Key::S);
+    h.run();
+    h.state_mut().commands.clear();
+    h.get_by_role_and_label(Role::Button, "About pixpixpix")
+        .click();
+    h.run();
+    assert_eq!(h.state().commands, [Command::ProbeLibraries]);
+    h.get_by_label("pixpixpix");
+    h.get_by_label(&format!(
+        "Version {} \u{b7} MIT license",
+        env!("CARGO_PKG_VERSION")
+    ));
+    h.get_by_label("Looking\u{2026}");
+    h.state_mut().core.handle(Event::LibrariesProbed(vec![
+        pixpixpix::core::LibraryStatus {
+            name: "libmpv".into(),
+            needed_for: "videos".into(),
+            found: None,
+            hint: "mpv-libs on Fedora".into(),
+        },
+    ]));
+    h.run();
+    h.get_by_label("missing");
+    h.get_by_label("mpv-libs on Fedora");
+    h.state_mut().commands.clear();
+    h.get_by_role_and_label(Role::Button, "Copy").click();
+    h.run();
+    let [Command::CopyText(text)] = h.state().commands.as_slice() else {
+        panic!("{:?}", h.state().commands);
+    };
+    assert!(
+        text.contains("libmpv (videos): missing (mpv-libs on Fedora)"),
+        "{text}"
+    );
+    assert!(text.contains(env!("CARGO_PKG_VERSION")), "{text}");
+    // Esc goes back to the settings, S closes them.
+    h.key_press(egui::Key::Escape);
+    h.run();
+    h.get_by_label("Browsing");
+    h.key_press(egui::Key::S);
+    h.run();
+    assert!(h.query_by_label("Browsing").is_none());
+}

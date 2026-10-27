@@ -18,13 +18,26 @@ pub fn report_for(message: &str, path: Option<&Path>, installed: &str) -> String
     if let Some(path) = path {
         text.push_str(&format!("File: {}\n", path.display()));
     }
-    text.push_str(&format!(
-        "pixpixpix {} on {} {}, installed as {installed}\n",
+    text.push_str(&system_for(installed));
+    text.push('\n');
+    text
+}
+
+/// The version, the system and how this executable was installed, on one
+/// line.
+pub fn system() -> String {
+    let exe = std::env::current_exe().unwrap_or_default();
+    let flatpak = std::env::var_os("FLATPAK_ID").is_some();
+    system_for(install_method(&exe, flatpak))
+}
+
+fn system_for(installed: &str) -> String {
+    format!(
+        "pixpixpix {} on {} {}, installed as {installed}",
         env!("CARGO_PKG_VERSION"),
         std::env::consts::OS,
         std::env::consts::ARCH,
-    ));
-    text
+    )
 }
 
 /// How the executable at `exe` was installed, `flatpak` telling whether it

@@ -178,6 +178,14 @@ pub enum Event {
     },
     /// A [`Command::Copy`] finished.
     Copied(Result<(), String>),
+    /// The About page's link on the settings screen was clicked.
+    OpenAbout,
+    /// The About page's back button was clicked.
+    CloseAbout,
+    /// The [`Command::ProbeLibraries`] found these.
+    LibrariesProbed(Vec<LibraryStatus>),
+    /// A copy button asked for this text on the clipboard.
+    CopyText(String),
     /// The copy button of an error was clicked: the error about the file at
     /// `path`, if it is about one.
     CopyError {
@@ -475,6 +483,11 @@ pub enum Command {
     /// Put only these pixels on the clipboard, without the file; answered
     /// by [`Event::Copied`].
     CopyPixels(DecodedImage),
+    /// Look for the optional libraries without loading them into the app,
+    /// answered by [`Event::LibrariesProbed`].
+    ProbeLibraries,
+    /// Put the text on the clipboard; answered by [`Event::Copied`].
+    CopyText(String),
     /// Put a report of the error `message` about the file at `path` on the
     /// clipboard, as text; answered by [`Event::Copied`].
     CopyReport {
@@ -955,6 +968,41 @@ const SETTINGS_KEYS: &[KeyHint] = &[
     },
 ];
 
+/// The keys of the About page.
+const ABOUT_KEYS: &[KeyHint] = &[
+    KeyHint {
+        keys: "Esc",
+        action: "back",
+    },
+    KeyHint {
+        keys: "S",
+        action: "close",
+    },
+    KeyHint {
+        keys: QUIT_KEYS,
+        action: "quit",
+    },
+];
+
+/// The About page.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct About {
+    /// The optional libraries; absent while they are looked for.
+    pub libraries: Option<Vec<LibraryStatus>>,
+}
+
+/// Whether an optional library is there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LibraryStatus {
+    pub name: String,
+    /// What it is needed for.
+    pub needed_for: String,
+    /// Where it was found; absent when it is missing.
+    pub found: Option<String>,
+    /// How to install it.
+    pub hint: String,
+}
+
 /// The area keys go to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
@@ -1195,6 +1243,8 @@ pub struct View {
     pub settings: Settings,
     /// Whether the settings screen is open; it gets every key then.
     pub settings_open: bool,
+    /// The About page, opened from the settings screen.
+    pub about: Option<About>,
     /// Why the settings file could not be read or written; the defaults are
     /// in effect after a failed read.
     pub settings_error: Option<String>,
@@ -1457,6 +1507,7 @@ impl Core {
                 dir_column: None,
                 settings: Settings::default(),
                 settings_open: false,
+                about: None,
                 settings_error: None,
                 open_error: None,
                 rotation: Rotation::None,
@@ -1594,6 +1645,18 @@ impl Core {
             Event::RotationWritten { path, result } => self.rotation_written(path, result),
             Event::Trashed { path, result } => self.trashed(&path, result),
             Event::CopyError { message, path } => vec![Command::CopyReport { message, path }],
+            Event::CopyText(text) => vec![Command::CopyText(text)],
+            Event::OpenAbout => self.open_about(),
+            Event::CloseAbout => {
+                self.close_about();
+                Vec::new()
+            }
+            Event::LibrariesProbed(libraries) => {
+                if let Some(about) = self.view.about.as_mut() {
+                    about.libraries = Some(libraries);
+                }
+                Vec::new()
+            }
             Event::Copied(result) => {
                 let commands = self.edits_copied(&result);
                 match result {
@@ -2329,7 +2392,9 @@ impl Core {
         if self.view.settings_open {
             match (key.key, key.command) {
                 (Key::Q, true) => return vec![Command::Quit],
+                (Key::Escape, false) if self.view.about.is_some() => self.close_about(),
                 (Key::S | Key::Escape, false) => {
+                    self.view.about = None;
                     self.view.settings_open = false;
                     self.view.key_line.keys =
                         focus_keys(self.view.focus, self.view.dir_column.is_some());
@@ -2400,6 +2465,23 @@ impl Core {
     }
 
     /// Opens the settings screen, which takes every key but quit.
+    /// The About page over the open settings screen; its libraries are
+    /// looked for.
+    fn open_about(&mut self) -> Vec<Command> {
+        if !self.view.settings_open {
+            return Vec::new();
+        }
+        self.view.about = Some(About::default());
+        self.view.key_line.keys = ABOUT_KEYS.to_vec();
+        vec![Command::ProbeLibraries]
+    }
+
+    /// Back from the About page to the settings screen.
+    fn close_about(&mut self) {
+        self.view.about = None;
+        self.view.key_line.keys = SETTINGS_KEYS.to_vec();
+    }
+
     fn open_settings(&mut self) {
         self.view.settings_open = true;
         self.view.key_line.keys = SETTINGS_KEYS.to_vec();

@@ -25,6 +25,7 @@ pub mod grabber;
 pub mod heif;
 pub mod helper;
 pub mod launcher;
+pub mod libraries;
 #[cfg(target_os = "macos")]
 pub mod macos;
 pub mod metadata;

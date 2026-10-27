@@ -8,9 +8,9 @@ use std::sync::Arc;
 use egui::{Color32, ColorImage, RichText, TextureHandle, TextureOptions};
 
 use crate::core::{
-    DirColumn, EditsView, Event, ExportView, Focus, InnerImages, Key, KeyPress, MetadataView,
-    MotionKind, Notice, Points, Region, Screen, Thumb, Toggle, Video, VideoStep, View, Zoom,
-    unturned,
+    About, DirColumn, EditsView, Event, ExportView, Focus, InnerImages, Key, KeyPress,
+    MetadataView, MotionKind, Notice, Points, Region, Screen, Thumb, Toggle, Video, VideoStep,
+    View, Zoom, unturned,
 };
 use crate::decode::DecodedImage;
 use crate::folder;
@@ -289,7 +289,9 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
     if let (Some(dialog), Screen::Image { path, .. }) = (&view.save_dialog, &view.screen) {
         tools::show_save_dialog(ui.ctx(), &folder::file_name(path), dialog, &mut events);
     }
-    if view.settings_open {
+    if let Some(about) = view.about.as_ref().filter(|_| view.settings_open) {
+        show_about(ui.ctx(), about, &mut events);
+    } else if view.settings_open {
         show_settings(
             ui.ctx(),
             &view.settings,
@@ -712,7 +714,132 @@ fn show_settings(
                 ui.add_space(12.0);
                 ui.label(RichText::new(error).color(ERROR_TEXT));
             }
+            settings_section(ui, "About", |ui| {
+                let link = egui::Button::new(RichText::new("About pixpixpix").color(TEXT));
+                if ui.add(link).clicked() {
+                    events.push(Event::OpenAbout);
+                }
+            });
         });
+}
+
+/// Where pixpixpix lives.
+const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
+/// The band the name nods to.
+const BAND_WIKIPEDIA: &str = "https://en.wikipedia.org/wiki/Pigs_Pigs_Pigs_Pigs_Pigs_Pigs_Pigs";
+const BAND_SPOTIFY: &str = "https://open.spotify.com/artist/1F7QDWyZTLGzkyGLgFjEhU";
+
+/// The About page: the icon, name, version, license and links, and the
+/// optional libraries, with buttons to copy it all and to go back.
+fn show_about(ctx: &egui::Context, about: &About, events: &mut Vec<Event>) {
+    egui::Modal::new(egui::Id::new("about"))
+        .frame(
+            egui::Frame::NONE
+                .fill(BACKGROUND)
+                .inner_margin(24.0)
+                .corner_radius(8.0),
+        )
+        .show(ctx, |ui| {
+            ui.set_width(SETTINGS_WIDTH);
+            ui.horizontal(|ui| {
+                if let Some(icon) = icon_texture(ui.ctx()) {
+                    ui.add(egui::Image::new(&icon).fit_to_exact_size(egui::Vec2::splat(72.0)));
+                }
+                ui.vertical(|ui| {
+                    ui.label(RichText::new("pixpixpix").color(TEXT).strong().size(22.0));
+                    ui.label(
+                        RichText::new(format!(
+                            "Version {} \u{b7} MIT license",
+                            env!("CARGO_PKG_VERSION")
+                        ))
+                        .color(DIM_TEXT),
+                    );
+                    ui.hyperlink_to("GitHub", REPOSITORY);
+                });
+            });
+            ui.add_space(8.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    RichText::new("The name nods to the band Pigs Pigs Pigs Pigs Pigs Pigs Pigs:")
+                        .color(TEXT),
+                );
+                ui.hyperlink_to("Wikipedia", BAND_WIKIPEDIA);
+                ui.hyperlink_to("Spotify", BAND_SPOTIFY);
+            });
+            settings_section(ui, "Libraries", |ui| match &about.libraries {
+                None => {
+                    ui.label(RichText::new("Looking\u{2026}").color(DIM_TEXT));
+                }
+                Some(libraries) => {
+                    settings_grid(ui, "libraries", |ui| {
+                        for library in libraries {
+                            ui.label(RichText::new(&library.name).color(TEXT).strong());
+                            ui.vertical(|ui| {
+                                ui.label(RichText::new(&library.needed_for).color(DIM_TEXT));
+                                match &library.found {
+                                    Some(path) => {
+                                        ui.label(RichText::new(path).color(TEXT));
+                                    }
+                                    None => {
+                                        ui.label(RichText::new("missing").color(ERROR_TEXT));
+                                        ui.label(RichText::new(&library.hint).color(DIM_TEXT));
+                                    }
+                                }
+                            });
+                            ui.end_row();
+                        }
+                    });
+                }
+            });
+            ui.add_space(16.0);
+            ui.horizontal(|ui| {
+                if ui.button(RichText::new("Copy").color(TEXT)).clicked() {
+                    events.push(Event::CopyText(about_text(about)));
+                }
+                if ui.button(RichText::new("Back").color(TEXT)).clicked() {
+                    events.push(Event::CloseAbout);
+                }
+            });
+        });
+}
+
+/// What the About page's copy button puts on the clipboard.
+pub fn about_text(about: &About) -> String {
+    let mut text = format!(
+        "{}\nMIT license\n{REPOSITORY}\n\nLibraries:\n",
+        crate::report::system()
+    );
+    for library in about.libraries.iter().flatten() {
+        let found = match &library.found {
+            Some(path) => path.clone(),
+            None => format!("missing ({})", library.hint),
+        };
+        text.push_str(&format!(
+            "{} ({}): {found}\n",
+            library.name, library.needed_for
+        ));
+    }
+    text
+}
+
+/// The app's icon as a texture, made once.
+fn icon_texture(ctx: &egui::Context) -> Option<egui::TextureHandle> {
+    let id = egui::Id::new("app icon");
+    if let Some(icon) = ctx.data(|d| d.get_temp::<egui::TextureHandle>(id)) {
+        return Some(icon);
+    }
+    let png = include_bytes!("../assets/icon/icon_256.png");
+    let image = image::load_from_memory_with_format(png, image::ImageFormat::Png)
+        .ok()?
+        .to_rgba8();
+    let size = [
+        usize::try_from(image.width()).ok()?,
+        usize::try_from(image.height()).ok()?,
+    ];
+    let pixels = egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw());
+    let texture = ctx.load_texture("app icon", pixels, egui::TextureOptions::LINEAR);
+    ctx.data_mut(|d| d.insert_temp(id, texture.clone()));
+    Some(texture)
 }
 
 /// The width of the settings screen's content.

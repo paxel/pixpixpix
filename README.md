@@ -168,7 +168,8 @@ Images are shown upright according to their EXIF orientation.
 pixpixpix itself is a plain Rust program. A few formats and features need system
 libraries, which are loaded only the first time they are needed, never at start, so
 they never slow down the first image. Without them everything else works; the
-feature that needs them says what is missing.
+feature that needs them says what is missing. The About page, linked from the settings
+(`s`), lists which of them were found and where.
 
 | Library      | Needed for                                          | Without it                                         |
 |--------------|-----------------------------------------------------|----------------------------------------------------|

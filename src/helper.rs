@@ -10,7 +10,7 @@ use std::process::{Child, Command, ExitCode, Stdio};
 use std::sync::Arc;
 
 use crate::decode::DecodedImage;
-use crate::{grabber, video};
+use crate::{grabber, libraries, video};
 
 /// The first argument that makes pixpixpix a helper.
 pub const FLAG: &str = "--helper";
@@ -20,6 +20,9 @@ pub const PLAY: &str = "play";
 
 /// The job of the helper grabbing first frames.
 pub const GRAB: &str = "grab";
+
+/// The job of the helper looking for the optional libraries.
+pub const LIBRARIES: &str = "libraries";
 
 /// Runs the helper job the arguments name, if they name one; `None` for a
 /// normal start.
@@ -32,6 +35,7 @@ pub fn serve() -> Option<ExitCode> {
     Some(match job.as_ref().and_then(|j| j.to_str()) {
         Some(PLAY) => video::serve_playback(),
         Some(GRAB) => grabber::serve(),
+        Some(LIBRARIES) => libraries::serve(),
         _ => ExitCode::FAILURE,
     })
 }

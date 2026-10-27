@@ -518,6 +518,17 @@ impl Worker {
                     )));
                 }
             }
+            Command::ProbeLibraries => {
+                self.run(|| Some(Event::LibrariesProbed(crate::libraries::probe())));
+            }
+            Command::CopyText(text) => {
+                if self.copier().send(CopyJob::Text(text.clone())).is_err() {
+                    // The app may already be gone; nothing to report to then.
+                    let _ = self.events.send(Event::Copied(Err(
+                        "Cannot copy: the clipboard stopped".to_owned(),
+                    )));
+                }
+            }
             Command::CopyReport { message, path } => {
                 let text = crate::report::report(message, path.as_deref());
                 if self.copier().send(CopyJob::Text(text)).is_err() {
@@ -682,6 +693,8 @@ impl App {
                 | Command::Export { .. }
                 | Command::CopyExport { .. }
                 | Command::CopyReport { .. }
+                | Command::CopyText(_)
+                | Command::ProbeLibraries
                 | Command::DecodeFrames(_)
                 | Command::CancelFrames
                 | Command::DecodeInner { .. }
