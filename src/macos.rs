@@ -214,3 +214,17 @@ impl crate::associations::Backend for LaunchServices {
         Ok(command)
     }
 }
+
+/// Moves `path` to the Trash, returning where it went.
+pub fn trash(path: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    autoreleasepool(|_| {
+        let url = NSURL::from_file_path(path).ok_or("the path is not a file URL")?;
+        let mut trashed: Option<Retained<NSURL>> = None;
+        objc2_foundation::NSFileManager::defaultManager()
+            .trashItemAtURL_resultingItemURL_error(&url, Some(&mut trashed))
+            .map_err(|error| error.localizedDescription().to_string())?;
+        trashed
+            .and_then(|url| url.to_file_path())
+            .ok_or_else(|| "the Trash did not say where the file went".to_owned())
+    })
+}

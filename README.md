@@ -79,6 +79,7 @@ while it is closed.
 | `o`                    | open in another app                              |
 | `i`                    | metadata panel                                   |
 | `x`                    | move to the trash                                |
+| `u`                    | put the last trashed file back                   |
 | `p`                    | tools (annotation toolbar)                       |
 | `g`                    | overview, the file shown selected                |
 | `n`                    | dir column                                       |

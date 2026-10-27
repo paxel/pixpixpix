@@ -48,3 +48,47 @@ fn a_missing_file_is_an_error_naming_it() {
     let error = trash::move_to_trash(&dir.path().join("gone.jpg")).unwrap_err();
     assert!(error.starts_with("Cannot trash gone.jpg: "), "{error}");
 }
+
+#[cfg(all(unix, not(target_os = "macos")))]
+#[test]
+fn a_trashed_file_is_put_back_unless_its_place_is_taken() {
+    use std::path::Path;
+    use std::process::Command;
+
+    /// Set for the child run, to the folder holding the file and the trash.
+    const CHILD_DIR: &str = "PIXPIXPIX_RESTORE_TEST_DIR";
+
+    if let Some(dir) = std::env::var_os(CHILD_DIR) {
+        let dir = Path::new(&dir);
+        let file = dir.join("a b.jpg");
+        std::fs::write(&file, b"first").unwrap();
+        trash::move_to_trash(&file).unwrap();
+        trash::restore(&[file.clone()]).unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), b"first");
+        // Trashed again, and the place taken meanwhile: it stays in the trash.
+        trash::move_to_trash(&file).unwrap();
+        std::fs::write(&file, b"second").unwrap();
+        let error = trash::restore(&[file.clone()]).unwrap_err();
+        assert!(error.starts_with("Cannot restore a b.jpg: "), "{error}");
+        assert_eq!(std::fs::read(&file).unwrap(), b"second");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "a_trashed_file_is_put_back_unless_its_place_is_taken",
+            "--test-threads=1",
+        ])
+        .env(CHILD_DIR, dir.path())
+        .env("XDG_DATA_HOME", dir.path().join("data"))
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "{stdout}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(stdout.contains("1 passed"), "{stdout}");
+}

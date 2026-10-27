@@ -354,6 +354,13 @@ impl Worker {
                     Some(Event::EditsSaved { target, result })
                 });
             }
+            Command::Restore(paths) => {
+                let paths = paths.clone();
+                self.run(move || {
+                    let result = trash::restore(&paths);
+                    Some(Event::Restored { paths, result })
+                });
+            }
             Command::Trash(path) => {
                 let path = path.clone();
                 self.run(move || {
@@ -716,6 +723,7 @@ impl App {
                 | Command::OpenExternally { .. }
                 | Command::WriteRotation { .. }
                 | Command::Trash(_)
+                | Command::Restore(_)
                 | Command::Copy { .. }
                 | Command::SaveEdits { .. }
                 | Command::Export { .. }

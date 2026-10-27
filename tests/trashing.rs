@@ -264,3 +264,96 @@ fn the_key_line_lists_x() {
     let keys = &core.view().key_line.keys;
     assert!(keys.iter().any(|k| k.keys == "X" && k.action == "trash"));
 }
+
+fn restored(core: &mut Core, names: &[&str], result: Result<(), String>) -> Vec<Command> {
+    core.handle(Event::Restored {
+        paths: names.iter().map(|n| p(n)).collect(),
+        result,
+    })
+}
+
+fn current(core: &Core) -> Option<PathBuf> {
+    match &core.view().screen {
+        Screen::Image { path, .. } | Screen::Loading { path } => Some(path.clone()),
+        _ => None,
+    }
+}
+
+fn hint(core: &Core, keys: &str) -> Option<&'static str> {
+    core.view()
+        .key_line
+        .keys
+        .iter()
+        .find(|k| k.keys == keys)
+        .map(|k| k.action)
+}
+
+#[test]
+fn u_puts_the_trashed_files_back_newest_first() {
+    let mut core = browsing("a.jpg", &["a.jpg", "b.jpg", "c.jpg"]);
+    assert_eq!(hint(&core, "U"), None);
+    press(&mut core, Key::X);
+    trashed(&mut core, "a.jpg", Ok(()));
+    press(&mut core, Key::X);
+    trashed(&mut core, "b.jpg", Ok(()));
+    assert_eq!(hint(&core, "U"), Some("undo trash"));
+    assert_eq!(
+        press(&mut core, Key::U),
+        [Command::Restore(vec![p("b.jpg")])]
+    );
+    assert_eq!(
+        press(&mut core, Key::U),
+        [Command::Restore(vec![p("a.jpg")])]
+    );
+    assert!(press(&mut core, Key::U).is_empty());
+    assert_eq!(hint(&core, "U"), None);
+}
+
+#[test]
+fn a_restored_file_shows_and_its_folder_is_read_again() {
+    let mut core = browsing("a.jpg", &["a.jpg", "b.jpg"]);
+    press(&mut core, Key::X);
+    trashed(&mut core, "a.jpg", Ok(()));
+    assert_eq!(current(&core), Some(p("b.jpg")));
+    press(&mut core, Key::U);
+    let commands = restored(&mut core, &["a.jpg"], Ok(()));
+    assert!(commands.contains(&Command::ListFolder(PathBuf::from("/p"))));
+    assert_eq!(current(&core), Some(p("a.jpg")));
+}
+
+#[test]
+fn a_file_restored_after_moving_on_shows_in_its_own_folder() {
+    let mut core = browsing("a.jpg", &["a.jpg", "b.jpg"]);
+    press(&mut core, Key::X);
+    trashed(&mut core, "a.jpg", Ok(()));
+    core.handle(Event::Opened(PathBuf::from("/q/z.jpg")));
+    press(&mut core, Key::U);
+    let commands = restored(&mut core, &["a.jpg"], Ok(()));
+    assert!(commands.contains(&Command::ListFolder(PathBuf::from("/p"))));
+    assert_eq!(current(&core), Some(p("a.jpg")));
+}
+
+#[test]
+fn a_file_that_was_not_trashed_is_not_put_back() {
+    let mut core = browsing("a.jpg", &["a.jpg", "b.jpg"]);
+    press(&mut core, Key::X);
+    trashed(&mut core, "a.jpg", Err("Cannot trash a.jpg: no".into()));
+    assert!(press(&mut core, Key::U).is_empty());
+}
+
+#[test]
+fn a_failed_restore_says_why() {
+    let mut core = browsing("a.jpg", &["a.jpg", "b.jpg"]);
+    press(&mut core, Key::X);
+    trashed(&mut core, "a.jpg", Ok(()));
+    press(&mut core, Key::U);
+    restored(
+        &mut core,
+        &["a.jpg"],
+        Err("Cannot restore a.jpg: a file of that name is back there".into()),
+    );
+    assert_eq!(
+        core.view().trash_error.as_deref(),
+        Some("Cannot restore a.jpg: a file of that name is back there")
+    );
+}

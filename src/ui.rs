@@ -173,6 +173,7 @@ fn map_key(key: egui::Key) -> Option<Key> {
         egui::Key::Z => Key::Z,
         egui::Key::I => Key::I,
         egui::Key::Questionmark => Key::Question,
+        egui::Key::U => Key::U,
         _ => return None,
     })
 }

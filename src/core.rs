@@ -71,6 +71,7 @@ pub enum Key {
     Z,
     I,
     Question,
+    U,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -174,6 +175,11 @@ pub enum Event {
     /// A [`Command::Trash`] finished.
     Trashed {
         path: PathBuf,
+        result: Result<(), String>,
+    },
+    /// A [`Command::Restore`] finished.
+    Restored {
+        paths: Vec<PathBuf>,
         result: Result<(), String>,
     },
     /// A [`Command::Copy`] finished.
@@ -372,6 +378,9 @@ pub enum Command {
     },
     /// Move the file to the system trash, answered by [`Event::Trashed`].
     Trash(PathBuf),
+    /// Put the files back from the trash where they were, answered by
+    /// [`Event::Restored`].
+    Restore(Vec<PathBuf>),
     /// Put the file itself on the clipboard, for file managers; answered by
     /// [`Event::Copied`].
     CopyFile(PathBuf),
@@ -635,6 +644,7 @@ fn key_named(name: &str) -> Option<Key> {
         "Z" => Key::Z,
         "I" => Key::I,
         "?" => Key::Question,
+        "U" => Key::U,
         _ => return None,
     })
 }
@@ -765,6 +775,12 @@ const TOOLBAR_KEYS: [KeyHint; 2] = if cfg!(target_os = "macos") {
             action: "redo",
         },
     ]
+};
+
+/// While something trashed can be put back.
+const UNDO_TRASH_KEY: KeyHint = KeyHint {
+    keys: "U",
+    action: "undo trash",
 };
 
 /// What `Enter` does in the image view while edits are unsaved.
@@ -1404,6 +1420,9 @@ pub struct Core {
     /// Files sent to the trash and not reported back yet; listings leave them
     /// out, so a listing taken before the trash cannot bring them back.
     trashing: BTreeSet<PathBuf>,
+    /// What `u` puts back, the last trashed last: the files of one trashing
+    /// each, a Live Photo's MOV with its photo.
+    trashed: Vec<Vec<PathBuf>>,
     /// Files whose last decode found an animation.
     animated: BTreeSet<PathBuf>,
     /// The animation of the current file, once the first frame is shown.
@@ -1615,6 +1634,7 @@ impl Core {
             rotation: Rotation::None,
             writing: None,
             trashing: BTreeSet::new(),
+            trashed: Vec::new(),
             animated: BTreeSet::new(),
             animation: None,
             images: BTreeMap::new(),
@@ -1713,6 +1733,7 @@ impl Core {
             }
             Event::RotationWritten { path, result } => self.rotation_written(path, result),
             Event::Trashed { path, result } => self.trashed(&path, result),
+            Event::Restored { paths, result } => self.restored(paths, result),
             Event::CopyError { message, path } => vec![Command::CopyReport { message, path }],
             Event::CopyText(text) => vec![Command::CopyText(text)],
             Event::OpenAbout => self.open_about(),
@@ -1967,6 +1988,11 @@ impl Core {
                 for key in keys.iter_mut().filter(|k| k.keys == "Enter") {
                     *key = SAVE_KEY;
                 }
+            }
+            if !self.trashed.is_empty()
+                && let Some(at) = keys.iter().position(|k| k.keys == "X")
+            {
+                keys.insert(at.saturating_add(1), UNDO_TRASH_KEY);
             }
             if self.toolbar_open
                 && let Some(at) = keys.iter().position(|k| k.keys == "P")
@@ -3020,6 +3046,7 @@ impl Core {
             }
             Key::Enter => self.write_rotation(),
             Key::X => self.trash(),
+            Key::U => self.undo_trash(),
             Key::C => self.copy(),
             Key::I => {
                 self.toggle_info();
@@ -3059,6 +3086,7 @@ impl Core {
         let files: Vec<PathBuf> = self.live.get(&path).cloned().into_iter().collect();
         let files = [vec![path], files].concat();
         self.trashing.extend(files.iter().cloned());
+        self.trashed.push(files.clone());
         let mut commands: Vec<Command> = files.into_iter().map(Command::Trash).collect();
         // The listing without the file steps on as if the watcher reported it.
         commands.extend(self.folder_listed(&dir, Ok(listing)));
@@ -3118,6 +3146,11 @@ impl Core {
     fn trashed(&mut self, path: &Path, result: Result<(), String>) -> Vec<Command> {
         self.trashing.remove(path);
         if let Err(message) = result {
+            // Not in the trash, so nothing to put back.
+            for files in &mut self.trashed {
+                files.retain(|f| f != path);
+            }
+            self.trashed.retain(|files| !files.is_empty());
             let before = self.view.trash_error.take();
             let commands = match (self.dir.clone(), self.all_files.clone()) {
                 (Some(dir), Some(files)) => self.folder_listed(&dir, Ok(files)),
@@ -3138,6 +3171,33 @@ impl Core {
             && let (Some(dir), Some(files)) = (self.dir.clone(), self.all_files.clone())
         {
             commands.extend(self.folder_listed(&dir, Ok(files)));
+        }
+        commands
+    }
+
+    /// `u`: the files of the last trashing go back where they were.
+    fn undo_trash(&mut self) -> Vec<Command> {
+        let Some(files) = self.trashed.pop() else {
+            return Vec::new();
+        };
+        self.view.trash_error = None;
+        vec![Command::Restore(files)]
+    }
+
+    /// Files are back from the trash: the first shows in its folder, which is
+    /// read anew so it is back in navigation. A failure is shown.
+    fn restored(&mut self, paths: Vec<PathBuf>, result: Result<(), String>) -> Vec<Command> {
+        if let Err(message) = result {
+            self.view.trash_error = Some(message);
+            return Vec::new();
+        }
+        let Some(first) = paths.into_iter().next() else {
+            return Vec::new();
+        };
+        let same_folder = first.parent() == self.dir.as_deref();
+        let mut commands = self.opened(first);
+        if same_folder && let Some(dir) = self.dir.clone() {
+            commands.push(Command::ListFolder(dir));
         }
         commands
     }
