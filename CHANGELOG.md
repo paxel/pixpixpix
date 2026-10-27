@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- A new icon: a pig face in front of three stacked pictures, also on the window.
 - `c` copies only the picture, for chats and image apps; `Shift`+`c` copies the file, for file managers.
 - The settings screen is laid out in sections with dividers, its labels and controls lined up.
 - `g` opens the overview with the file shown selected, and `g` again shows the file selected there; the key line tags the overview while it is open.

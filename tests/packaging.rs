@@ -443,3 +443,12 @@ fn the_flatpak_command_starts_the_binary_with_the_host_data_dir_for_the_trash() 
     assert_eq!(run(None), "/home/u/.local/share a.jpg b c.png\n");
     assert_eq!(run(Some("/data")), "/data a.jpg b c.png\n");
 }
+
+#[test]
+fn the_icon_is_a_256_pixel_png_and_an_svg_with_a_size() {
+    let png = image::open("assets/icon/icon_256.png").unwrap();
+    assert_eq!((png.width(), png.height()), (256, 256));
+    let svg = fs::read_to_string("assets/icon/icon.svg").unwrap();
+    // Qt draws an SVG without width and height as nothing.
+    assert!(svg.contains(r#"width="256" height="256""#));
+}

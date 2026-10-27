@@ -782,6 +782,7 @@ impl eframe::App for App {
                 );
             }
             self.dispatch(&ctx, Event::FirstFrameShown);
+            set_window_icon(ctx.clone());
         }
         while let Ok(event) = self.inbox.try_recv() {
             self.dispatch(&ctx, event);
@@ -834,4 +835,23 @@ fn default_opener(path: &Path, earlier: Option<&str>) -> Result<std::process::Co
             file_type.name
         )),
     }
+}
+
+/// Gives the window the app's icon, decoded on a thread of its own: only
+/// after the first frame, which it must not delay. Wayland desktops take the
+/// icon from the launcher entry instead.
+fn set_window_icon(ctx: egui::Context) {
+    std::thread::spawn(move || {
+        let png = include_bytes!("../assets/icon/icon_256.png");
+        let Ok(icon) = image::load_from_memory_with_format(png, image::ImageFormat::Png) else {
+            return;
+        };
+        let icon = icon.to_rgba8();
+        let data = egui::IconData {
+            width: icon.width(),
+            height: icon.height(),
+            rgba: icon.into_raw(),
+        };
+        ctx.send_viewport_cmd(egui::ViewportCommand::Icon(Some(std::sync::Arc::new(data))));
+    });
 }
