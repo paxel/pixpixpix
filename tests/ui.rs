@@ -2072,3 +2072,33 @@ fn an_error_has_a_copy_button_that_reports_it_with_its_file() {
         }]
     );
 }
+
+#[test]
+fn the_settings_screen_lines_its_controls_up_in_sections() {
+    let mut h = harness(shown("/p/cat.jpg"));
+    h.run();
+    h.key_press(egui::Key::S);
+    h.run();
+    h.get_by_label("Browsing");
+    h.get_by_label("Other apps");
+    let slider = h.get_by_role_and_label(Role::Slider, CACHE_LABEL).rect();
+    let image_app = h
+        .get_by_role_and_label(Role::TextInput, "App for images")
+        .rect();
+    let video_app = h
+        .get_by_role_and_label(Role::TextInput, "App for videos")
+        .rect();
+    // The controls start in one column, right of every label.
+    assert!((slider.min.x - image_app.min.x).abs() < 1.0);
+    assert!((image_app.min.x - video_app.min.x).abs() < 1.0);
+    // The labels' column comes first.
+    let left = h.get_by_label("Browsing").rect().min.x;
+    assert!(slider.min.x >= left + 170.0, "{left} {slider:?}");
+    // Rows do not overlap, and everything is in the window.
+    assert!(image_app.min.y >= slider.max.y);
+    assert!(video_app.min.y >= image_app.max.y);
+    let window = h.ctx.content_rect();
+    for rect in [slider, image_app, video_app] {
+        assert!(window.contains_rect(rect), "{rect:?}");
+    }
+}

@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- The settings screen is laid out in sections with dividers, its labels and controls lined up.
 - `g` opens the overview with the file shown selected, and `g` again shows the file selected there; the key line tags the overview while it is open.
 - The dir column lists the current folder among its siblings, highlighted: `Up`/`Down` go to the folder above or below, `Right`/`Enter` into the first subfolder, `Left` to the parent. Opening it changes nothing on screen, and there are no folder previews; the overview's column works the same.
 - The band keeps the current file in its middle, shows a placeholder for each file still loading, and is called "preloaded files" in the key line.

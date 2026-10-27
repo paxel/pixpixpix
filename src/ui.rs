@@ -675,35 +675,79 @@ fn show_settings(
     events: &mut Vec<Event>,
 ) {
     egui::Modal::new(egui::Id::new("settings"))
-        .frame(egui::Frame::NONE.fill(BACKGROUND).inner_margin(16.0))
+        .frame(
+            egui::Frame::NONE
+                .fill(BACKGROUND)
+                .inner_margin(24.0)
+                .corner_radius(8.0),
+        )
         .show(ctx, |ui| {
-            ui.label(RichText::new("Settings").color(TEXT).strong().size(18.0));
+            ui.set_width(SETTINGS_WIDTH);
+            ui.label(RichText::new("Settings").color(TEXT).strong().size(20.0));
             ui.add_space(8.0);
             let mut changed = values.clone();
-            ui.add(
-                egui::Slider::new(&mut changed.cache_per_side, settings::CACHE_PER_SIDE)
-                    .text(RichText::new(CACHE_LABEL).color(TEXT)),
-            );
-            ui.add_space(8.0);
-            app_field(ui, IMAGE_APP_LABEL, &mut changed.image_app);
-            app_field(ui, VIDEO_APP_LABEL, &mut changed.video_app);
-            ui.label(RichText::new(APP_HINT).color(DIM_TEXT));
+            settings_section(ui, "Browsing", |ui| {
+                settings_grid(ui, "browsing", |ui| {
+                    let label = ui.label(RichText::new(CACHE_LABEL).color(TEXT));
+                    ui.add(egui::Slider::new(
+                        &mut changed.cache_per_side,
+                        settings::CACHE_PER_SIDE,
+                    ))
+                    .labelled_by(label.id);
+                    ui.end_row();
+                });
+            });
+            settings_section(ui, "Other apps", |ui| {
+                settings_grid(ui, "apps", |ui| {
+                    app_field(ui, IMAGE_APP_LABEL, &mut changed.image_app);
+                    app_field(ui, VIDEO_APP_LABEL, &mut changed.video_app);
+                });
+                ui.add_space(6.0);
+                ui.label(RichText::new(APP_HINT).color(DIM_TEXT));
+            });
             if changed != *values {
                 events.push(Event::SettingsChanged(changed));
             }
             if let Some(error) = error {
-                ui.add_space(8.0);
+                ui.add_space(12.0);
                 ui.label(RichText::new(error).color(ERROR_TEXT));
             }
         });
 }
 
-/// A labelled one-line text field for an external app.
+/// The width of the settings screen's content.
+const SETTINGS_WIDTH: f32 = 520.0;
+
+/// The width of the labels' column of the settings screen.
+const SETTINGS_LABELS: f32 = 170.0;
+
+/// A section of the settings screen: a divider, its title and `add`.
+fn settings_section(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui)) {
+    ui.add_space(8.0);
+    ui.separator();
+    ui.add_space(8.0);
+    ui.label(RichText::new(title).color(TEXT).strong().size(15.0));
+    ui.add_space(8.0);
+    add(ui);
+}
+
+/// The rows of a settings section, labels on the left, controls lined up on
+/// the right.
+fn settings_grid(ui: &mut egui::Ui, id: &str, add: impl FnOnce(&mut egui::Ui)) {
+    egui::Grid::new(id)
+        .num_columns(2)
+        .spacing([16.0, 10.0])
+        .min_col_width(SETTINGS_LABELS)
+        .show(ui, add);
+}
+
+/// A labelled one-line text field for an external app, as a row of a
+/// settings grid.
 fn app_field(ui: &mut egui::Ui, label: &str, value: &mut String) {
-    ui.horizontal(|ui| {
-        let label = ui.label(RichText::new(label).color(TEXT));
-        ui.text_edit_singleline(value).labelled_by(label.id);
-    });
+    let label = ui.label(RichText::new(label).color(TEXT));
+    ui.add(egui::TextEdit::singleline(value).desired_width(f32::INFINITY))
+        .labelled_by(label.id);
+    ui.end_row();
 }
 
 /// The button under or beside an error that copies it, with what a search
