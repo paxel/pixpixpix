@@ -296,13 +296,13 @@ fn videos_get_their_first_frame_as_thumbnail() {
 }
 
 #[test]
-fn closing_cancels_the_scan_and_the_thumbnail_decodes() {
+fn g_out_cancels_the_thumbnail_decodes_and_keeps_the_scan_for_g_back() {
     let (mut core, scan) = opened();
     let scan = scan.unwrap();
     many(&mut core, scan, 3);
     visible(&mut core, 0..3);
     let commands = press(&mut core, Key::G);
-    assert!(commands.contains(&Command::CancelScan));
+    assert!(!commands.contains(&Command::CancelScan));
     assert_eq!(cancels(&commands), names(0..3));
 }
 
@@ -524,12 +524,14 @@ fn opening_with_the_dir_column_open_moves_the_column_too() {
 }
 
 #[test]
-fn g_closing_the_overview_drops_it_and_the_next_g_scans_anew() {
+fn g_out_keeps_the_overview_and_the_next_g_brings_it_back() {
     let (mut core, _) = tree();
+    let sections = overview(&core).unwrap().sections.len();
     press(&mut core, Key::G);
+    assert!(overview(&core).is_none());
     let commands = press(&mut core, Key::G);
-    assert!(scan_of(&commands).is_some());
-    assert!(overview(&core).unwrap().sections.is_empty());
+    assert!(scan_of(&commands).is_none());
+    assert_eq!(overview(&core).unwrap().sections.len(), sections);
 }
 
 /// The commands' trash requests.
@@ -920,4 +922,51 @@ fn up_and_down_in_the_dir_column_switch_the_overview_to_the_sibling_folder() {
         column.highlight.and_then(|i| column.dirs.get(i)).cloned(),
         Some(PathBuf::from("/q"))
     );
+}
+
+#[test]
+fn g_in_selects_the_tile_of_the_file_shown_once_it_arrives() {
+    let mut core = browsing();
+    // b.jpg is shown.
+    press(&mut core, Key::Right);
+    decoded(&mut core, p("b.jpg"));
+    let commands = press(&mut core, Key::G);
+    let (scan, _, _) = scan_of(&commands).unwrap();
+    section(&mut core, scan, "/p", &["/p/a.jpg", "/p/b.jpg"]);
+    assert_eq!(overview(&core).unwrap().selected, Some(1));
+}
+
+#[test]
+fn a_selection_moved_before_the_shown_file_arrives_stays() {
+    let mut core = browsing();
+    press(&mut core, Key::Right);
+    decoded(&mut core, p("b.jpg"));
+    let commands = press(&mut core, Key::G);
+    let (scan, _, _) = scan_of(&commands).unwrap();
+    section(&mut core, scan, "/p/x", &["/p/x/1.jpg", "/p/x/2.jpg"]);
+    press(&mut core, Key::Right);
+    section(&mut core, scan, "/p", &["/p/a.jpg", "/p/b.jpg"]);
+    assert_eq!(overview(&core).unwrap().selected, Some(1));
+}
+
+#[test]
+fn g_out_shows_the_selected_tile_and_the_overview_is_tagged_while_open() {
+    let mut core = browsing();
+    let commands = press(&mut core, Key::G);
+    assert_eq!(
+        core.view().tags,
+        [pixpixpix::core::Tag {
+            toggle: pixpixpix::core::Toggle::Overview,
+            kept: false
+        }]
+    );
+    let (scan, _, _) = scan_of(&commands).unwrap();
+    section(&mut core, scan, "/p", &["/p/a.jpg", "/p/b.jpg"]);
+    press(&mut core, Key::Right);
+    press(&mut core, Key::G);
+    assert!(core.view().tags.is_empty());
+    assert!(matches!(
+        &core.view().screen,
+        Screen::Image { path, .. } if *path == p("b.jpg")
+    ));
 }

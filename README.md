@@ -76,7 +76,7 @@ while it is closed.
 | `i`                    | metadata panel                                   |
 | `x`                    | move to the trash                                |
 | `p`                    | tools (annotation toolbar)                       |
-| `g`                    | overview                                         |
+| `g`                    | overview, the file shown selected                |
 | `n`                    | dir column                                       |
 | `b`                    | focus the preloaded files                        |
 | `Up` / `Down`          | previous / next image inside a multi-image file  |
@@ -135,7 +135,7 @@ The key line tags what is on.
 | `c`                     | copy                                              |
 | `o`                     | open in another app                               |
 | `x`                     | move to the trash                                 |
-| `g`                     | close the overview                                |
+| `g`                     | close, showing the selected file                  |
 | `Tab`                   | switch between gallery and dir column             |
 
 The dir column works the same in the overview: the overview follows the folder it

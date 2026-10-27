@@ -825,6 +825,7 @@ fn show_key_line(ui: &mut egui::Ui, view: &View, events: &mut Vec<Event>) {
             let text = match (tag.toggle, tag.kept) {
                 (Toggle::DotEntries, false) => "dot entries shown",
                 (Toggle::DotEntries, true) => "dot entries shown, kept",
+                (Toggle::Overview, _) => "overview",
             };
             ui.label(
                 RichText::new(text)

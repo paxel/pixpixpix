@@ -588,11 +588,14 @@ fn key_named(name: &str) -> Option<Key> {
     })
 }
 
-/// A one-shot action of the dir column that is on, tagged in the key line.
+/// Something on that the key line tags: a one-shot action of the dir column,
+/// or the overview.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Toggle {
     /// `.`: dot files and dot folders are shown.
     DotEntries,
+    /// `g`: the overview is open.
+    Overview,
 }
 
 /// A toggle that is on, and whether it stays on when the folder is left:
@@ -1740,7 +1743,11 @@ impl Core {
             toggle: Toggle::DotEntries,
             kept: self.dots_kept,
         });
-        self.view.tags = dots.into_iter().collect();
+        let overview = self.view.overview.is_some().then_some(Tag {
+            toggle: Toggle::Overview,
+            kept: false,
+        });
+        self.view.tags = overview.into_iter().chain(dots).collect();
         self.view.rotation = self.rotation;
         self.view.inner = self.inner.as_ref().map(|inner| InnerImages {
             index: inner.index,

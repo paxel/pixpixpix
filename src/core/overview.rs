@@ -87,17 +87,20 @@ pub(super) struct Gallery {
     pub(super) copying: Option<PathBuf>,
     /// The focus before the overview opened, given back when `g` closes it.
     focus: Option<Focus>,
+    /// The file shown when the overview opened, selected once its tile
+    /// arrives unless the selection was moved before.
+    select: Option<PathBuf>,
 }
 
 impl Core {
     /// `g`: brings back the overview left by opening a file while the
     /// current folder is inside its root, or opens the overview of the
-    /// folder highlighted in the dir column, or of the column's folder
-    /// without one, or else of the current folder; or closes it. The gallery
-    /// gets the focus; a playing video is paused.
+    /// current folder, the tile of the file shown selected; or closes it,
+    /// showing the selected tile's file. The gallery gets the focus; a
+    /// playing video is paused.
     pub(super) fn toggle_overview(&mut self) -> Vec<Command> {
         if self.view.overview.is_some() {
-            return self.close_overview();
+            return self.leave_overview();
         }
         if !matches!(self.view.focus, Focus::Image | Focus::Dirs) {
             return Vec::new();
@@ -111,7 +114,16 @@ impl Core {
                 .as_ref()
                 .is_some_and(|dir| dir.starts_with(&o.root))
         });
+        self.gallery.select = self.current.clone();
         if let Some(mut kept) = kept.filter(|_| inside) {
+            if let Some(index) = self
+                .current
+                .as_ref()
+                .and_then(|c| kept.tiles.iter().position(|t| t.path == *c))
+            {
+                kept.selected = Some(index);
+                self.gallery.select = None;
+            }
             kept.reveal = kept.selected.map(Reveal::Tile);
             self.view.overview = Some(kept);
         } else {
@@ -150,6 +162,21 @@ impl Core {
             root,
             dots: self.dots,
         }]
+    }
+
+    /// `g` in the overview: the selected tile's file shows, as `Enter` shows
+    /// it, with the focus there was before the overview; without a tile the
+    /// overview just closes.
+    fn leave_overview(&mut self) -> Vec<Command> {
+        if self.selected_path().is_none() {
+            return self.close_overview();
+        }
+        let focus = self.gallery.focus;
+        let commands = self.open_selected();
+        if focus == Some(Focus::Dirs) && self.view.dir_column.is_some() {
+            self.set_focus(Focus::Dirs);
+        }
+        commands
     }
 
     /// Drops the overview, cancelling its scan and thumbnail decodes; the
@@ -209,6 +236,7 @@ impl Core {
         }
         let live = folder::live_photos(&files);
         let files = folder::without_live_videos(files);
+        let want = self.gallery.select.clone();
         let Some(overview) = self.overview_mut() else {
             return Vec::new();
         };
@@ -227,8 +255,22 @@ impl Core {
             title: title(&overview.root, dir),
             tiles: start..overview.tiles.len(),
         });
-        if overview.selected.is_none() {
+        let wanted = want.as_ref().and_then(|want| {
+            overview
+                .tiles
+                .get(start..)?
+                .iter()
+                .position(|t| t.path == *want)
+        });
+        if let Some(offset) = wanted {
+            let index = start.saturating_add(offset);
+            overview.selected = Some(index);
+            overview.reveal = Some(Reveal::Tile(index));
+        } else if overview.selected.is_none() {
             overview.selected = Some(start);
+        }
+        if wanted.is_some() {
+            self.gallery.select = None;
         }
         self.gallery.live.extend(live);
         self.overview_refresh()
@@ -426,6 +468,8 @@ impl Core {
     /// The arrows move the selection: Left/Right through all tiles in order,
     /// Up/Down by rows, from section to section.
     fn move_selection(&mut self, key: Key) {
+        // A moved selection stays where it was moved to.
+        self.gallery.select = None;
         let Some(overview) = self.view.overview.as_mut() else {
             return;
         };
