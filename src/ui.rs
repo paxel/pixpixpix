@@ -1498,43 +1498,46 @@ const VIDEO_STEPS: [(&str, VideoStep); 6] = [
     ("+30s", VideoStep::Seconds(30)),
 ];
 
-/// How close to the left or right edge of the main area the pointer brings
-/// up the arrow to the previous or next file, in points.
-const EDGE: f32 = 96.0;
+/// How far from the left or right edge of the main area the arrows to the
+/// previous and next file stand, to their centres, in points.
+const ARROW_INSET: f32 = 48.0;
 
-/// The arrow to the previous or next file, while the pointer is near the
-/// left or right edge of the main area; a click on it steps there.
+/// The arrows to the previous and next file, both dimmed while the pointer
+/// is over the main area, the one under it lit; a click on one steps there.
 fn show_edge_arrows(ui: &mut egui::Ui, events: &mut Vec<Event>) {
     let area = ui.max_rect();
-    let Some(pointer) = ui.input(|i| i.pointer.hover_pos()) else {
+    if !ui
+        .input(|i| i.pointer.hover_pos())
+        .is_some_and(|pointer| area.contains(pointer))
+    {
         return;
-    };
+    }
     for (forward, label) in [(false, "Previous"), (true, "Next")] {
         let x = if forward {
-            area.max.x - EDGE / 2.0
+            area.max.x - ARROW_INSET
         } else {
-            area.min.x + EDGE / 2.0
+            area.min.x + ARROW_INSET
         };
-        let near = if forward {
-            pointer.x >= area.max.x - EDGE
-        } else {
-            pointer.x <= area.min.x + EDGE
-        };
-        if !near || !area.contains(pointer) {
-            continue;
-        }
         let rect =
             egui::Rect::from_center_size(egui::pos2(x, area.center().y), egui::Vec2::splat(44.0));
         let response = ui.interact(rect, ui.id().with(label), egui::Sense::click());
+        let (fill, color) = if response.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            (ANIMATED_BADGE, TEXT)
+        } else {
+            (ANIMATED_BADGE.gamma_multiply(0.5), DIM_TEXT)
+        };
         let painter = ui.painter();
-        painter.circle_filled(rect.center(), 22.0, ANIMATED_BADGE);
+        painter.circle_filled(rect.center(), 22.0, fill);
         let (tip, back) = if forward { (8.0, -6.0) } else { (-8.0, 6.0) };
         let center = rect.center();
         let at = |dx: f32, dy: f32| egui::pos2(center.x + dx, center.y + dy);
-        let stroke = egui::Stroke::new(3.0, TEXT);
+        let stroke = egui::Stroke::new(3.0, color);
         painter.line_segment([at(back, -10.0), at(tip, 0.0)], stroke);
         painter.line_segment([at(back, 10.0), at(tip, 0.0)], stroke);
-        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(egui::WidgetType::Button, true, response.hovered(), label)
+        });
         if response.clicked() {
             events.push(Event::Navigate { forward });
         }

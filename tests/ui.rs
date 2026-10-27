@@ -2073,16 +2073,33 @@ fn a_click_on_the_left_key_of_a_pair_presses_it() {
 }
 
 #[test]
-fn an_arrow_shows_near_the_edge_and_steps_to_the_next_file() {
+fn both_arrows_show_over_the_image_and_only_a_click_on_one_steps() {
     let mut h = harness(browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]));
     h.run();
     assert!(h.query_by_label("Next").is_none());
     let area = h.ctx.content_rect();
-    h.hover_at(egui::pos2(area.max.x - 20.0, area.center().y));
+    h.hover_at(area.center());
     h.run();
-    assert!(h.query_by_label("Previous").is_none());
-    h.get_by_role_and_label(Role::Button, "Next").click();
+    let lit = |h: &Harness<'static, State>, label: &str| {
+        h.get_by_role_and_label(Role::Button, label)
+            .accesskit_node()
+            .toggled()
+            == Some(Toggled::True)
+    };
+    assert!(!lit(&h, "Previous"));
+    assert!(!lit(&h, "Next"));
+    // A click away from the arrows changes no file.
+    click_at(&mut h, area.center());
+    assert!(matches!(
+        &h.state().core.view().screen,
+        Screen::Image { path, .. } if path == Path::new("/p/a.jpg")
+    ));
+    let next = h.get_by_role_and_label(Role::Button, "Next").rect();
+    h.hover_at(next.center());
     h.run();
+    assert!(lit(&h, "Next"));
+    assert!(!lit(&h, "Previous"));
+    click_at(&mut h, next.center());
     assert_eq!(
         h.state().core.view().screen,
         Screen::Loading {
