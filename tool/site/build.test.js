@@ -170,12 +170,14 @@ function releasedRepo() {
   write("site/assets/site.css", "body{}");
   write("site/assets/site.js", "");
   write("site/pages/index.html", PAGE("Home", "<!-- whats-new -->"));
-  write("site/pages/old.html", PAGE("Old", "<p>Only in 0.3.0.</p>", 'track="use"'));
+  write("site/pages/old.html", PAGE("Old", '<p>Only in 0.3.0.</p><img src="assets/screenshots/a.png" alt="">', 'track="use"'));
+  write("site/assets/screenshots/a.png", "the app of 0.3.0");
   run("add", "-A");
   run("commit", "-qm", "0.3.0");
   run("tag", "v0.3.0");
   release("0.4.0");
   fs.rmSync(path.join(dir, "site/pages/old.html"));
+  write("site/assets/screenshots/a.png", "the app of 0.4.0");
   return dir;
 }
 
@@ -191,6 +193,9 @@ test("build-all writes the latest at the root, every release with pages under it
   // The menu sends the old page to the latest overview, which lacks it.
   assert.match(old, /href="\/pixpixpix\/index\.html">v0\.4\.0 \(latest\)/);
   assert.ok(!fs.existsSync(path.join(out, "v0.2.0")));
+  // Each version shows its own app.
+  assert.equal(fs.readFileSync(path.join(out, "v0.3.0", "assets", "screenshots", "a.png"), "utf8"), "the app of 0.3.0");
+  assert.equal(fs.readFileSync(path.join(out, "assets", "screenshots", "a.png"), "utf8"), "the app of 0.4.0");
   const versions = JSON.parse(fs.readFileSync(path.join(out, "versions.json"), "utf8"));
   assert.deepEqual(versions.map((v) => v.version), ["0.4.0", "0.3.0"]);
 });

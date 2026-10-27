@@ -520,6 +520,8 @@ export function buildSite({
   version = readVersion(fs.readFileSync(path.join(REPO_ROOT, "Cargo.toml"), "utf8")),
   base = "/",
   assetsDir = path.join(srcDir, "assets"),
+  // Copied over the assets: a release's own screenshots, which show its app.
+  overlayDir = null,
   pages = null,
   generated = [],
   news = "",
@@ -544,6 +546,9 @@ export function buildSite({
 
   const copied = [];
   if (fs.existsSync(assetsDir)) copyDir(assetsDir, path.join(outDir, "assets"), copied);
+  if (overlayDir && fs.existsSync(overlayDir)) {
+    copyDir(overlayDir, path.join(outDir, "assets", path.basename(overlayDir)), copied);
+  }
   if (fs.existsSync(ICON)) {
     fs.copyFileSync(ICON, path.join(outDir, "assets", "icon.png"));
     copied.push(path.join(outDir, "assets", "icon.png"));

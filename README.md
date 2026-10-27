@@ -321,6 +321,15 @@ Linux x86_64, Linux aarch64 and macOS arm64.
 `PIXPIXPIX_TIMING=1` prints the time from launch to the first frame. `PIXPIXPIX_DEBUG=1`
 shows what libmpv and its decoders print, which pixpixpix otherwise drops.
 
+The documentation site lives in `site/` and is built by a small Node script (Node 22,
+no dependencies); the screenshots are drawn by a test from generated sample pictures:
+
+```sh
+node tool/site/build.js --serve                   # build and preview at localhost:8080
+node --test "tool/site/*.test.js"                 # test the site build
+cargo test --test screenshots -- --ignored        # redo site/assets/screenshots
+```
+
 ## The name
 
 The name nods to the band Pigs Pigs Pigs Pigs Pigs Pigs Pigs

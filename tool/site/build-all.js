@@ -5,9 +5,9 @@
 // git tag vX.Y.Z whose tree carries site/pages/index.html; the working tree
 // is one more version (the newest, normally) and takes the place of the tag
 // with the same version. Every version is built with today's build.js and
-// today's assets from that release's own pages and changelogs, so the
-// version menu looks the same everywhere and an old version describes its
-// own app. A release that no longer builds fails the whole build. Zero
+// today's assets from that release's own pages, screenshots and changelogs,
+// so the version menu looks the same everywhere and an old version describes
+// and shows its own app. A release that no longer builds fails the whole build. Zero
 // dependencies beyond git and tar; Node 22+. Usage:
 //   node tool/site/build-all.js [--out site-dist] [--base /]
 
@@ -132,6 +132,7 @@ export function buildAll({ repoRoot = REPO_ROOT, outDir = path.join(REPO_ROOT, "
           version: entry.version,
           base: versionBase,
           assetsDir,
+          overlayDir: path.join(entry.srcDir, "assets", "screenshots"),
           pages: entry.pages,
           versions,
           knownTargets,
