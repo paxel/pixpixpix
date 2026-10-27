@@ -196,7 +196,7 @@ pub(super) fn show_overview(
 }
 
 /// Where `reveal` lies from the top left of the content and how to align it:
-/// a tile as little as needed, a section with its heading at the top.
+/// a tile, as little as needed.
 fn revealed(
     overview: &Overview,
     grid: Grid,
@@ -214,11 +214,6 @@ fn revealed(
             let min = grid.tile(rows_top, index.checked_sub(start)?);
             let size = egui::vec2(grid.side, grid.side + NAME_HEIGHT);
             Some((Rect::from_min_size(min.to_pos2(), size), None))
-        }
-        Reveal::Section(index) => {
-            let top = *tops.get(index)?;
-            let rect = Rect::from_min_size(egui::pos2(0.0, top), egui::vec2(1.0, HEADER_HEIGHT));
-            Some((rect, Some(egui::Align::TOP)))
         }
     }
 }

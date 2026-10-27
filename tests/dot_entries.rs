@@ -57,16 +57,17 @@ fn dirs_listed(core: &mut Core, dir: &str, dirs: &[&str]) -> Vec<Command> {
     })
 }
 
-fn decode(path: &str) -> Command {
-    Command::Decode(PathBuf::from(path))
-}
-
 fn column_dirs(core: &Core) -> Vec<PathBuf> {
     core.view()
         .dir_column
         .as_ref()
         .map(|c| c.dirs.clone())
         .unwrap_or_default()
+}
+
+fn current_dir(core: &Core) -> Option<PathBuf> {
+    let column = core.view().dir_column.as_ref()?;
+    column.highlight.and_then(|i| column.dirs.get(i)).cloned()
 }
 
 fn shows_image(core: &Core, path: &str) -> bool {
@@ -83,11 +84,12 @@ fn browsing() -> Core {
     core
 }
 
-/// [`browsing`] with the column open on `/p` listing `.git`, `x` and `y`, `x`
-/// highlighted.
+/// [`browsing`] with the column open: `/p` among `/.hidden` and `/q`, and
+/// `/p`'s subfolders `.git`, `x` and `y` listed.
 fn column_open() -> Core {
     let mut core = browsing();
     press(&mut core, Key::N);
+    dirs_listed(&mut core, "/", &["/.hidden", "/p", "/q"]);
     dirs_listed(&mut core, "/p", &["/p/.git", "/p/x", "/p/y"]);
     core
 }
@@ -95,39 +97,19 @@ fn column_open() -> Core {
 #[test]
 fn dot_entries_are_hidden_by_default() {
     let mut core = column_open();
-    assert_eq!(column_dirs(&core), paths(&["/p/x", "/p/y"]));
-    // The preview skips the highlighted folder's dot files too.
-    assert_eq!(
-        files_listed(&mut core, "/p/x", &["/p/x/.a.jpg", "/p/x/1.jpg"]),
-        [decode("/p/x/1.jpg")]
-    );
+    assert_eq!(column_dirs(&core), paths(&["/p", "/q"]));
     press(&mut core, Key::Tab);
     press(&mut core, Key::Right);
     assert!(shows_image(&core, "/p/c.jpg"));
 }
 
 #[test]
-fn a_folder_with_only_dot_folders_counts_none() {
-    let mut core = column_open();
-    files_listed(&mut core, "/p/x", &[]);
-    dirs_listed(&mut core, "/p/x", &["/p/x/.git"]);
-    assert_eq!(
-        core.view().screen,
-        Screen::NoImages {
-            dir: PathBuf::from("/p/x"),
-            folders: Some(0)
-        }
-    );
-}
-
-#[test]
 fn dot_shows_dot_folders_in_the_column_and_dot_files_in_navigation() {
     let mut core = column_open();
     press(&mut core, Key::Period);
-    assert_eq!(column_dirs(&core), paths(&["/p/.git", "/p/x", "/p/y"]));
-    // The highlight stays on the folder highlighted so far.
-    let column = core.view().dir_column.clone().unwrap();
-    assert_eq!(column.highlight, Some(1));
+    assert_eq!(column_dirs(&core), paths(&["/.hidden", "/p", "/q"]));
+    // The highlight stays on the current folder.
+    assert_eq!(current_dir(&core), Some(PathBuf::from("/p")));
     press(&mut core, Key::Tab);
     press(&mut core, Key::Left);
     assert!(matches!(
@@ -146,13 +128,24 @@ fn dot_again_hides_them_and_moves_off_a_dot_file() {
     press(&mut core, Key::Tab);
     press(&mut core, Key::Tab);
     press(&mut core, Key::Period);
-    assert_eq!(column_dirs(&core), paths(&["/p/x", "/p/y"]));
+    assert_eq!(column_dirs(&core), paths(&["/p", "/q"]));
     press(&mut core, Key::Tab);
     assert!(shows_image(&core, "/p/a.jpg"));
 }
 
 #[test]
-fn leaving_the_folder_resets_dots() {
+fn right_goes_into_the_first_subfolder_shown() {
+    let mut core = column_open();
+    press(&mut core, Key::Right);
+    assert_eq!(current_dir(&core), Some(PathBuf::from("/p/x")));
+    let mut core = column_open();
+    press(&mut core, Key::Period);
+    press(&mut core, Key::Right);
+    assert_eq!(current_dir(&core), Some(PathBuf::from("/p/.git")));
+}
+
+#[test]
+fn leaving_the_level_resets_dots() {
     for key in [
         Key::Left,
         Key::Right,
@@ -170,14 +163,14 @@ fn leaving_the_folder_resets_dots() {
 }
 
 #[test]
-fn moving_the_highlight_keeps_dot_folders() {
+fn going_to_a_sibling_keeps_dot_folders() {
     for key in [Key::Up, Key::Down] {
         let mut core = column_open();
         press(&mut core, Key::Period);
         press(&mut core, key);
         assert_eq!(
             column_dirs(&core),
-            paths(&["/p/.git", "/p/x", "/p/y"]),
+            paths(&["/.hidden", "/p", "/q"]),
             "{key:?}"
         );
         assert_eq!(tags(&core), [(Toggle::DotEntries, false)], "{key:?}");
@@ -189,17 +182,17 @@ fn shift_dot_keeps_dot_entries_in_every_folder_entered() {
     let mut core = column_open();
     shift(&mut core, Key::Period);
     assert_eq!(tags(&core), [(Toggle::DotEntries, true)]);
-    assert_eq!(column_dirs(&core), paths(&["/p/.git", "/p/x", "/p/y"]));
+    assert_eq!(column_dirs(&core), paths(&["/.hidden", "/p", "/q"]));
     press(&mut core, Key::Right);
-    dirs_listed(&mut core, "/p/x", &["/p/x/.h", "/p/x/k"]);
-    assert_eq!(column_dirs(&core), paths(&["/p/x/.h", "/p/x/k"]));
-    press(&mut core, Key::Left);
     dirs_listed(&mut core, "/p", &["/p/.git", "/p/x", "/p/y"]);
     assert_eq!(column_dirs(&core), paths(&["/p/.git", "/p/x", "/p/y"]));
+    press(&mut core, Key::Left);
+    dirs_listed(&mut core, "/", &["/.hidden", "/p", "/q"]);
+    assert_eq!(column_dirs(&core), paths(&["/.hidden", "/p", "/q"]));
     // `.` ends it.
     press(&mut core, Key::Period);
     assert!(tags(&core).is_empty());
-    assert_eq!(column_dirs(&core), paths(&["/p/x", "/p/y"]));
+    assert_eq!(column_dirs(&core), paths(&["/p", "/q"]));
 }
 
 #[test]
@@ -217,5 +210,5 @@ fn dot_does_nothing_in_the_image_view() {
     assert!(press(&mut core, Key::Period).is_empty());
     assert!(shows_image(&core, "/p/a.jpg"));
     press(&mut core, Key::Tab);
-    assert_eq!(column_dirs(&core), paths(&["/p/x", "/p/y"]));
+    assert_eq!(column_dirs(&core), paths(&["/p", "/q"]));
 }

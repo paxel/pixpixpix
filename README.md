@@ -19,8 +19,8 @@ neighbours are preloaded so the next image is already there.
 - **Browse.** Left and Right step through the folder in natural name order (`img2`
   before `img10`), with a band of the preloaded neighbours, the current file in its middle. Files other programs add,
   remove or rename show up on their own.
-- **Move through folders.** A dir column lists the subfolders and previews the first
-  image of the highlighted one.
+- **Move through folders.** A dir column lists the current folder among its
+  siblings; moving through it moves the image view along.
 - **Overview.** A scrollable gallery of the current folder and every folder below it,
   with thumbnails shared with other apps through the freedesktop thumbnail cache.
 - **Act on the file.** Rotate (JPEG losslessly), move to the trash, copy to the
@@ -97,12 +97,12 @@ In the save dialog, `Enter` saves as a new file and `Esc` goes back to editing.
 
 | Key                          | Action                                                         |
 |------------------------------|----------------------------------------------------------------|
-| `Up` / `Down`                | select a subfolder                                             |
-| `Right` / `Enter`            | enter it                                                       |
+| `Up` / `Down`                | go to the folder above or below                                |
+| `Right` / `Enter`            | go into the first subfolder                                    |
 | `Left` / `Esc` / `Backspace` | go to the parent                                               |
-| `.`                          | show dot files and dot folders until you leave the folder      |
+| `.`                          | show dot files and dot folders until you leave the level       |
 | `Shift`+`.`                  | show dot files and dot folders in every folder, until `.`      |
-| `g`                          | overview of the highlighted folder                             |
+| `g`                          | overview of the current folder                                 |
 | `n`                          | close                                                          |
 | `b`                          | focus the preloaded files                                      |
 
@@ -130,9 +130,8 @@ The key line tags what is on.
 | `g`                     | close the overview                                |
 | `Tab`                   | switch between gallery and dir column             |
 
-With the dir column focused in the overview, `Up` / `Down` scroll to the highlighted
-folder's section, and `Right` / `Enter` or going up makes the column's folder the new
-root.
+The dir column works the same in the overview: the overview follows the folder it
+goes to.
 
 ### Settings (`s`)
 

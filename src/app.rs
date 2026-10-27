@@ -107,7 +107,7 @@ pub fn run() -> ExitCode {
 fn title(view: &crate::core::View) -> String {
     let path = match &view.screen {
         Screen::Loading { path } | Screen::Image { path, .. } => Some(path),
-        Screen::Listing { dir } | Screen::NoImages { dir, .. } => Some(dir),
+        Screen::Listing { dir } => Some(dir),
         Screen::Error { path, .. } => path.as_ref(),
     };
     match path {

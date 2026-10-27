@@ -1700,11 +1700,11 @@ impl Core {
 
     /// Puts toolbar, edits and dialog into the view; edits show only over
     /// their own file.
-    pub(super) fn publish_edits(&mut self, previewing: bool) {
+    pub(super) fn publish_edits(&mut self) {
         self.view.toolbar = self.toolbar_open.then_some(self.toolbar);
         // The crop tool shows the whole image, with the part kept framed.
         let cropping = self.toolbar_open && self.toolbar.tool == Tool::Crop;
-        let edits = self.edits.as_ref().filter(|_| !previewing);
+        let edits = self.edits.as_ref();
         self.view.edits = edits.map(|e| EditsView {
             shapes: e.shapes.clone(),
             drawing: e.drawing.clone(),
@@ -1731,7 +1731,7 @@ impl Core {
             frame: d.frame,
             strip: d.strip.as_ref().map(|j| j.strip),
         });
-        let exporting = self.toolbar_open && self.toolbar.tool == Tool::Export && !previewing;
+        let exporting = self.toolbar_open && self.toolbar.tool == Tool::Export;
         self.view.export = exporting.then(|| ExportView {
             export: self.exporting.export,
             area: self.export_area(),

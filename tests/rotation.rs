@@ -241,21 +241,6 @@ fn a_failed_write_keeps_the_rotation_and_shows_why() {
 }
 
 #[test]
-fn a_preview_is_not_turned_but_the_rotation_waits_for_the_return() {
-    let mut core = showing();
-    press(&mut core, Key::R);
-    press(&mut core, Key::N);
-    core.handle(Event::DirsListed {
-        dir: PathBuf::from("/p"),
-        result: Ok(vec![p("sub")]),
-    });
-    assert_eq!(core.view().rotation, Rotation::None);
-    press(&mut core, Key::Tab);
-    assert_eq!(shown_path(&core), Some(p("a.jpg")));
-    assert_eq!(core.view().rotation, Rotation::Right);
-}
-
-#[test]
 fn the_key_line_lists_rotation() {
     let core = showing();
     let keys = &core.view().key_line.keys;

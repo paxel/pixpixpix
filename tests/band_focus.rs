@@ -193,13 +193,3 @@ fn the_key_line_lists_the_band_keys_while_it_has_the_focus() {
     press(&mut core, Key::B);
     assert_eq!(core.view().key_line.keys[3].action, "folders");
 }
-
-#[test]
-fn the_band_focused_from_the_column_keeps_the_preview() {
-    let mut core = column_open();
-    files_listed(&mut core, "/p/x", &["/p/x/1.jpg"]);
-    decoded(&mut core, "/p/x/1.jpg");
-    press(&mut core, Key::B);
-    assert!(shows_image(&core, "/p/x/1.jpg"));
-    assert_eq!(highlighted(&core), Some(Path::new("/p/x/1.jpg")));
-}

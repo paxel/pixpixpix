@@ -54,12 +54,18 @@ fn browsing() -> Core {
     core
 }
 
-/// [`browsing`] with the column open on `/p` listing `x` and `y`.
+/// [`browsing`] with the column open: `/p` among `/o` and `/q`, and its
+/// subfolders `x` and `y` listed.
 fn column_open() -> Core {
     let mut core = browsing();
     press(&mut core, Key::N);
+    dirs_listed(&mut core, "/", &["/o", "/p", "/q"]);
     dirs_listed(&mut core, "/p", &["/p/x", "/p/y"]);
     core
+}
+
+fn shows_image(core: &Core, path: &str) -> bool {
+    matches!(&core.view().screen, Screen::Image { path: p, .. } if p == Path::new(path))
 }
 
 fn column(core: &Core) -> Option<&DirColumn> {
@@ -79,21 +85,34 @@ fn key_names(core: &Core) -> Vec<&'static str> {
 }
 
 #[test]
-fn n_opens_the_column_on_the_current_folder_focused() {
+fn n_opens_the_column_on_the_level_of_the_current_folder_focused() {
     let mut core = browsing();
     assert_eq!(
         press(&mut core, Key::N),
         [
+            Command::ListDirs(PathBuf::from("/")),
+            // The subfolders, for Right.
             Command::ListDirs(PathBuf::from("/p")),
-            // The parent's first image, for the nav cache.
-            Command::ListFolder(PathBuf::from("/")),
         ]
     );
     assert_eq!(core.view().focus, Focus::Dirs);
-    assert_eq!(column(&core).unwrap().dir, Path::new("/p"));
-    dirs_listed(&mut core, "/p", &["/p/x", "/p/y"]);
-    assert_eq!(column(&core).unwrap().dirs, paths(&["/p/x", "/p/y"]));
-    assert_eq!(highlighted(&core), Some(Path::new("/p/x")));
+    assert_eq!(column(&core).unwrap().dir, Path::new("/"));
+    dirs_listed(&mut core, "/", &["/o", "/p", "/q"]);
+    assert_eq!(column(&core).unwrap().dirs, paths(&["/o", "/p", "/q"]));
+    assert_eq!(highlighted(&core), Some(Path::new("/p")));
+}
+
+#[test]
+fn opening_the_column_or_tabbing_into_it_changes_nothing_on_screen() {
+    let mut core = column_open();
+    assert!(shows_image(&core, "/p/a.jpg"));
+    let band = core.view().band.clone();
+    press(&mut core, Key::Tab);
+    press(&mut core, Key::Tab);
+    press(&mut core, Key::Tab);
+    assert_eq!(core.view().focus, Focus::Dirs);
+    assert!(shows_image(&core, "/p/a.jpg"));
+    assert_eq!(core.view().band, band);
 }
 
 #[test]
@@ -112,11 +131,11 @@ fn n_before_the_first_frame_does_nothing() {
 }
 
 #[test]
-fn an_unreadable_folder_shows_the_error_in_the_column() {
+fn an_unreadable_level_shows_the_error_in_the_column() {
     let mut core = browsing();
     press(&mut core, Key::N);
     core.handle(Event::DirsListed {
-        dir: PathBuf::from("/p"),
+        dir: PathBuf::from("/"),
         result: Err("permission denied".into()),
     });
     assert_eq!(
@@ -127,22 +146,28 @@ fn an_unreadable_folder_shows_the_error_in_the_column() {
 }
 
 #[test]
-fn up_and_down_move_the_highlight_and_stop_at_the_ends() {
+fn up_and_down_go_to_the_folder_above_or_below_and_stop_at_the_ends() {
     let mut core = column_open();
     press(&mut core, Key::Up);
-    assert_eq!(highlighted(&core), Some(Path::new("/p/x")));
+    assert_eq!(highlighted(&core), Some(Path::new("/o")));
+    assert_eq!(
+        core.view().screen,
+        Screen::Listing {
+            dir: PathBuf::from("/o")
+        }
+    );
+    assert!(press(&mut core, Key::Up).is_empty());
     press(&mut core, Key::Down);
-    assert_eq!(highlighted(&core), Some(Path::new("/p/y")));
     press(&mut core, Key::Down);
-    assert_eq!(highlighted(&core), Some(Path::new("/p/y")));
-    press(&mut core, Key::Up);
-    assert_eq!(highlighted(&core), Some(Path::new("/p/x")));
+    assert_eq!(highlighted(&core), Some(Path::new("/q")));
+    assert!(press(&mut core, Key::Down).is_empty());
+    assert_eq!(column(&core).unwrap().dir, Path::new("/"));
 }
 
 #[test]
 fn keys_go_to_the_focused_area() {
     let mut core = column_open();
-    // Right enters the folder instead of stepping to b.jpg.
+    // Right enters the first subfolder instead of stepping to b.jpg.
     press(&mut core, Key::Right);
     assert_eq!(
         core.view().screen,
@@ -156,23 +181,19 @@ fn keys_go_to_the_focused_area() {
 }
 
 #[test]
-fn entering_a_folder_cancels_the_old_work_and_lists_the_new_one() {
+fn going_to_a_folder_cancels_the_old_work_and_lists_the_new_one() {
     let mut core = column_open();
     assert_eq!(
         press(&mut core, Key::Down),
-        [Command::ListFolder(PathBuf::from("/p/y"))]
-    );
-    assert_eq!(
-        press(&mut core, Key::Enter),
         [
             Command::CancelDecode(PathBuf::from("/p/b.jpg")),
-            Command::WatchFolder(PathBuf::from("/p/y")),
-            Command::ListFolder(PathBuf::from("/p/y")),
-            Command::ListDirs(PathBuf::from("/p/y")),
+            Command::WatchFolder(PathBuf::from("/q")),
+            Command::ListFolder(PathBuf::from("/q")),
+            Command::ListDirs(PathBuf::from("/q")),
         ]
     );
     assert!(core.view().band.is_empty());
-    assert_eq!(column(&core).unwrap().dir, Path::new("/p/y"));
+    assert_eq!(column(&core).unwrap().dir, Path::new("/"));
     assert_eq!(core.view().focus, Focus::Dirs);
 }
 
@@ -197,10 +218,27 @@ fn entering_a_folder_shows_its_first_image_before_any_neighbour() {
             Command::FindMotion(PathBuf::from("/p/x/1.jpg"))
         ]
     );
-    assert!(matches!(
-        &core.view().screen,
-        Screen::Image { path, .. } if path == Path::new("/p/x/1.jpg")
-    ));
+    assert!(shows_image(&core, "/p/x/1.jpg"));
+}
+
+#[test]
+fn right_and_enter_go_into_the_first_subfolder_listing_it_among_its_siblings() {
+    for key in [Key::Right, Key::Enter] {
+        let mut core = column_open();
+        assert_eq!(
+            press(&mut core, key),
+            [
+                Command::CancelDecode(PathBuf::from("/p/b.jpg")),
+                Command::WatchFolder(PathBuf::from("/p/x")),
+                Command::ListFolder(PathBuf::from("/p/x")),
+                Command::ListDirs(PathBuf::from("/p/x")),
+            ],
+            "{key:?}"
+        );
+        assert_eq!(column(&core).unwrap().dir, Path::new("/p"), "{key:?}");
+        assert_eq!(column(&core).unwrap().dirs, paths(&["/p/x", "/p/y"]));
+        assert_eq!(highlighted(&core), Some(Path::new("/p/x")), "{key:?}");
+    }
 }
 
 #[test]
@@ -209,10 +247,8 @@ fn late_results_of_the_old_folder_change_nothing() {
     press(&mut core, Key::Right);
     assert!(decoded(&mut core, "/p/b.jpg").is_empty());
     assert!(files_listed(&mut core, "/p", &["/p/a.jpg"]).is_empty());
-    dirs_listed(&mut core, "/p", &["/p/x", "/p/y"]);
     assert!(core.view().band.is_empty());
-    assert_eq!(column(&core).unwrap().dir, Path::new("/p/x"));
-    assert!(column(&core).unwrap().dirs.is_empty());
+    assert_eq!(highlighted(&core), Some(Path::new("/p/x")));
     assert_eq!(
         core.view().screen,
         Screen::Listing {
@@ -222,21 +258,15 @@ fn late_results_of_the_old_folder_change_nothing() {
 }
 
 #[test]
-fn entering_highlights_the_first_subfolder() {
-    let mut core = column_open();
-    press(&mut core, Key::Right);
-    dirs_listed(&mut core, "/p/x", &["/p/x/m", "/p/x/n"]);
-    assert_eq!(highlighted(&core), Some(Path::new("/p/x/m")));
-}
-
-#[test]
 fn right_without_subfolders_does_nothing() {
     let mut core = browsing();
     press(&mut core, Key::N);
+    // Not listed yet.
+    assert!(press(&mut core, Key::Right).is_empty());
     dirs_listed(&mut core, "/p", &[]);
     assert!(press(&mut core, Key::Right).is_empty());
     assert!(press(&mut core, Key::Enter).is_empty());
-    assert_eq!(column(&core).unwrap().dir, Path::new("/p"));
+    assert!(shows_image(&core, "/p/a.jpg"));
 }
 
 #[test]
@@ -254,37 +284,42 @@ fn a_folder_without_media_says_so() {
 }
 
 #[test]
-fn left_escape_and_backspace_go_to_the_parent_highlighting_the_folder_left() {
+fn left_escape_and_backspace_go_to_the_parent_highlighting_it() {
     for key in [Key::Left, Key::Escape, Key::Backspace] {
         let mut core = column_open();
-        press(&mut core, Key::Down);
         press(&mut core, Key::Right);
-        assert_eq!(column(&core).unwrap().dir, Path::new("/p/y"));
         assert_eq!(
             press(&mut core, key),
             [
                 Command::WatchFolder(PathBuf::from("/p")),
                 Command::ListFolder(PathBuf::from("/p")),
-                Command::ListDirs(PathBuf::from("/p")),
-                // The nav cache: the new parent and the folder left.
-                Command::ListFolder(PathBuf::from("/")),
-                Command::ListFolder(PathBuf::from("/p/y")),
-                Command::FindMotion(PathBuf::from("/p/a.jpg")),
+                Command::ListDirs(PathBuf::from("/")),
             ],
             "{key:?}"
         );
-        dirs_listed(&mut core, "/p", &["/p/x", "/p/y"]);
-        assert_eq!(highlighted(&core), Some(Path::new("/p/y")), "{key:?}");
+        dirs_listed(&mut core, "/", &["/o", "/p", "/q"]);
+        assert_eq!(highlighted(&core), Some(Path::new("/p")), "{key:?}");
+        // The subfolders were known already: Right goes back in.
+        press(&mut core, Key::Right);
+        assert_eq!(highlighted(&core), Some(Path::new("/p/x")), "{key:?}");
     }
 }
 
 #[test]
-fn the_root_has_no_parent() {
+fn the_root_stands_alone_and_has_no_parent() {
     let (mut core, _) = Core::start(Ok(PathBuf::from("/a.jpg")));
     decoded(&mut core, "/a.jpg");
     core.handle(Event::FirstFrameShown);
-    press(&mut core, Key::N);
+    assert_eq!(
+        press(&mut core, Key::N),
+        [Command::ListDirs(PathBuf::from("/"))]
+    );
+    assert_eq!(column(&core).unwrap().dirs, paths(&["/"]));
+    assert_eq!(highlighted(&core), Some(Path::new("/")));
     assert!(press(&mut core, Key::Left).is_empty());
+    dirs_listed(&mut core, "/", &["/p"]);
+    press(&mut core, Key::Right);
+    assert_eq!(highlighted(&core), Some(Path::new("/p")));
     assert_eq!(column(&core).unwrap().dir, Path::new("/"));
 }
 

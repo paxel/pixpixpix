@@ -44,8 +44,6 @@ pub struct Overview {
 pub enum Reveal {
     /// The tile with this index, as little as needed.
     Tile(usize),
-    /// The section with this index, its heading at the top.
-    Section(usize),
 }
 
 /// One folder with media files.
@@ -120,16 +118,8 @@ impl Core {
             if kept_scanning {
                 commands.push(Command::CancelScan);
             }
-            let root = match &self.view.dir_column {
-                Some(column) => column
-                    .highlight
-                    .and_then(|i| column.dirs.get(i))
-                    .unwrap_or(&column.dir)
-                    .clone(),
-                None => match &self.dir {
-                    Some(dir) => dir.clone(),
-                    None => return Vec::new(),
-                },
+            let Some(root) = self.dir.clone() else {
+                return Vec::new();
             };
             commands.extend(self.scan_overview(root));
         }
@@ -397,13 +387,11 @@ impl Core {
         }
     }
 
-    /// Keys of the dir column while the overview is open: it is the table of
-    /// contents. Moving the highlight scrolls to the folder's section and
-    /// selects its first file; entering a folder or going up makes the
-    /// column's new folder the root, scanned anew unless it is the root
-    /// already. `.` and `r` do nothing.
+    /// Keys of the dir column while the overview is open, as without it: the
+    /// overview follows the current folder, scanned anew unless it is the
+    /// root already. `.` does nothing.
     fn contents_key(&mut self, key: Key) -> Vec<Command> {
-        let before = self.view.dir_column.as_ref().map(|c| c.dir.clone());
+        let before = self.dir.clone();
         let mut commands = match key {
             Key::Up
             | Key::Down
@@ -414,31 +402,15 @@ impl Core {
             | Key::Backspace => self.dir_key(key),
             _ => return Vec::new(),
         };
-        let Some(column) = &self.view.dir_column else {
+        let Some(root) = self.dir.clone().filter(|dir| Some(dir) != before.as_ref()) else {
             return commands;
         };
-        let rooted = self.view.overview.as_ref().map(|o| &o.root);
-        if Some(&column.dir) != before.as_ref() && rooted != Some(&column.dir) {
-            let root = column.dir.clone();
+        if self.view.overview.as_ref().is_some_and(|o| o.root != root) {
             if self.view.overview.as_ref().is_some_and(|o| o.scanning) {
                 commands.push(Command::CancelScan);
             }
             commands.extend(self.drop_thumbnails(None));
             commands.extend(self.scan_overview(root));
-            return commands;
-        }
-        let highlighted = column.highlight.and_then(|i| column.dirs.get(i)).cloned();
-        if let (Some(dir), Some(overview)) = (highlighted, self.view.overview.as_mut()) {
-            let found = dir.starts_with(&overview.root).then(|| {
-                overview
-                    .sections
-                    .iter()
-                    .position(|s| s.dir.starts_with(&dir))
-            });
-            if let Some(index) = found.flatten() {
-                overview.selected = overview.sections.get(index).map(|s| s.tiles.start);
-                overview.reveal = Some(Reveal::Section(index));
-            }
         }
         commands
     }

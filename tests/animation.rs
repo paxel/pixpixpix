@@ -281,35 +281,3 @@ fn c_copies_the_frame_shown() {
         }]
     );
 }
-
-#[test]
-fn entering_a_folder_whose_animated_first_image_is_preloaded_plays_it() {
-    let (mut core, _) = Core::start(Ok(PathBuf::from("/r/p/a.jpg")));
-    core.handle(Event::Decoded {
-        path: PathBuf::from("/r/p/a.jpg"),
-        result: Ok(gray(0)),
-    });
-    core.handle(Event::FirstFrameShown);
-    core.handle(Event::FolderListed {
-        dir: PathBuf::from("/r/p"),
-        result: Ok(vec![PathBuf::from("/r/p/a.jpg")]),
-    });
-    press(&mut core, Key::N);
-    core.handle(Event::DirsListed {
-        dir: PathBuf::from("/r/p"),
-        result: Ok(vec![PathBuf::from("/r/p/x")]),
-    });
-    core.handle(Event::FolderListed {
-        dir: PathBuf::from("/r/p/x"),
-        result: Ok(vec![PathBuf::from("/r/p/x/1.gif")]),
-    });
-    core.handle(Event::Decoded {
-        path: PathBuf::from("/r/p/x/1.gif"),
-        result: Ok(gray(0)),
-    });
-    // The preview does not play.
-    let commands = core.handle(Event::Animated(PathBuf::from("/r/p/x/1.gif")));
-    assert!(!commands.contains(&Command::DecodeFrames(PathBuf::from("/r/p/x/1.gif"))));
-    let commands = press(&mut core, Key::Right);
-    assert!(commands.contains(&Command::DecodeFrames(PathBuf::from("/r/p/x/1.gif"))));
-}

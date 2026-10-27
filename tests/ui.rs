@@ -318,8 +318,8 @@ fn an_unreadable_folder_is_shown_in_the_key_line() {
     h.get_by_label("Cannot read the folder: permission denied");
 }
 
-/// [`browsing`] with the column opened by `n` and listing `holidays` and
-/// `work`.
+/// [`browsing`] with the column opened by `n`: `p` among `q`, and the
+/// subfolders `holidays` and `work` of `p` listed.
 fn column_open() -> Harness<'static, State> {
     let mut h = harness(browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]));
     h.run();
@@ -328,10 +328,14 @@ fn column_open() -> Harness<'static, State> {
     assert_eq!(
         h.state().commands,
         [
-            Command::ListDirs(PathBuf::from("/p")),
-            Command::ListFolder(PathBuf::from("/"))
+            Command::ListDirs(PathBuf::from("/")),
+            Command::ListDirs(PathBuf::from("/p"))
         ]
     );
+    h.state_mut().core.handle(Event::DirsListed {
+        dir: PathBuf::from("/"),
+        result: Ok(vec![PathBuf::from("/p"), PathBuf::from("/q")]),
+    });
     h.state_mut().core.handle(Event::DirsListed {
         dir: PathBuf::from("/p"),
         result: Ok(vec![PathBuf::from("/p/holidays"), PathBuf::from("/p/work")]),
@@ -340,27 +344,35 @@ fn column_open() -> Harness<'static, State> {
     h
 }
 
-#[test]
-fn n_shows_the_folder_and_its_subfolders_with_the_first_highlighted() {
-    let mut h = column_open();
-    h.get_by_label("p");
-    let toggled = |h: &Harness<'_, State>, name: &str| {
-        h.get_by_role_and_label(Role::Button, name)
-            .accesskit_node()
-            .toggled()
-    };
-    assert_eq!(toggled(&h, "holidays"), Some(Toggled::True));
-    assert_eq!(toggled(&h, "work"), Some(Toggled::False));
-    h.key_press(egui::Key::ArrowDown);
-    h.run();
-    assert_eq!(toggled(&h, "work"), Some(Toggled::True));
-    h.key_press(egui::Key::N);
-    h.run();
-    assert!(h.query_by_label("holidays").is_none());
+fn folder_toggled(h: &Harness<'_, State>, name: &str) -> Option<Toggled> {
+    h.get_by_role_and_label(Role::Button, name)
+        .accesskit_node()
+        .toggled()
 }
 
 #[test]
-fn enter_opens_the_highlighted_folder() {
+fn n_shows_the_current_folder_among_its_siblings_highlighted() {
+    let mut h = column_open();
+    assert_eq!(folder_toggled(&h, "p"), Some(Toggled::True));
+    assert_eq!(folder_toggled(&h, "q"), Some(Toggled::False));
+    // Opening it changed nothing on screen.
+    h.get_by_role_and_label(Role::Image, "a.jpg");
+    h.key_press(egui::Key::ArrowDown);
+    h.run();
+    assert_eq!(folder_toggled(&h, "q"), Some(Toggled::True));
+    assert_eq!(
+        h.state().core.view().screen,
+        Screen::Listing {
+            dir: PathBuf::from("/q")
+        }
+    );
+    h.key_press(egui::Key::N);
+    h.run();
+    assert!(h.query_by_label("q").is_none());
+}
+
+#[test]
+fn enter_goes_into_the_first_subfolder() {
     let mut h = column_open();
     h.key_press(egui::Key::Enter);
     h.run();
@@ -370,7 +382,8 @@ fn enter_opens_the_highlighted_folder() {
             dir: PathBuf::from("/p/holidays")
         }
     );
-    h.get_by_label("holidays");
+    assert_eq!(folder_toggled(&h, "holidays"), Some(Toggled::True));
+    assert_eq!(folder_toggled(&h, "work"), Some(Toggled::False));
 }
 
 #[test]
@@ -384,7 +397,7 @@ fn backspace_goes_to_the_parent() {
             dir: PathBuf::from("/")
         }
     );
-    h.get_by_label("/");
+    assert_eq!(folder_toggled(&h, "/"), Some(Toggled::True));
 }
 
 #[test]
@@ -407,15 +420,13 @@ fn listed(h: &mut Harness<'static, State>, dir: &str, files: Result<Vec<PathBuf>
 }
 
 #[test]
-fn the_highlighted_folder_is_previewed_with_the_band_following() {
+fn going_down_shows_the_next_folder_with_its_band() {
     let mut h = column_open();
-    listed(
-        &mut h,
-        "/p/holidays",
-        Ok(vec![PathBuf::from("/p/holidays/beach.jpg")]),
-    );
+    h.key_press(egui::Key::ArrowDown);
+    h.run();
+    listed(&mut h, "/q", Ok(vec![PathBuf::from("/q/beach.jpg")]));
     h.state_mut().core.handle(Event::Decoded {
-        path: PathBuf::from("/p/holidays/beach.jpg"),
+        path: PathBuf::from("/q/beach.jpg"),
         result: Ok(DecodedImage {
             width: 2,
             height: 1,
@@ -429,22 +440,12 @@ fn the_highlighted_folder_is_previewed_with_the_band_following() {
 }
 
 #[test]
-fn a_folder_without_images_shows_a_placeholder_with_its_subfolder_count() {
+fn a_folder_without_images_says_so() {
     let mut h = column_open();
     h.key_press(egui::Key::ArrowDown);
     h.run();
-    listed(&mut h, "/p/work", Ok(Vec::new()));
-    h.get_by_label("No images");
-    h.state_mut().core.handle(Event::DirsListed {
-        dir: PathBuf::from("/p/work"),
-        result: Ok(vec![
-            PathBuf::from("/p/work/a"),
-            PathBuf::from("/p/work/b"),
-            PathBuf::from("/p/work/c"),
-        ]),
-    });
-    h.run();
-    h.get_by_label("No images · 3 folders");
+    listed(&mut h, "/q", Ok(Vec::new()));
+    h.get_by_label("No images in /q");
 }
 
 #[test]
@@ -460,8 +461,8 @@ fn entering_an_unreadable_folder_shows_the_error() {
 fn dot_in_the_column_shows_dot_folders() {
     let mut h = column_open();
     h.state_mut().core.handle(Event::DirsListed {
-        dir: PathBuf::from("/p"),
-        result: Ok(vec![PathBuf::from("/p/.git"), PathBuf::from("/p/work")]),
+        dir: PathBuf::from("/"),
+        result: Ok(vec![PathBuf::from("/.git"), PathBuf::from("/p")]),
     });
     h.run();
     assert!(h.query_by_label(".git").is_none());
@@ -474,8 +475,8 @@ fn dot_in_the_column_shows_dot_folders() {
 fn shift_dot_on_any_layout_keeps_dot_folders_and_says_so() {
     let mut h = column_open();
     h.state_mut().core.handle(Event::DirsListed {
-        dir: PathBuf::from("/p"),
-        result: Ok(vec![PathBuf::from("/p/.git"), PathBuf::from("/p/work")]),
+        dir: PathBuf::from("/"),
+        result: Ok(vec![PathBuf::from("/.git"), PathBuf::from("/p")]),
     });
     h.run();
     // A German layout types `:`, a US one `>`.

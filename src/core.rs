@@ -480,12 +480,6 @@ pub enum Screen {
         path: Option<PathBuf>,
         message: String,
     },
-    /// The previewed subfolder has no media files directly in it.
-    NoImages {
-        dir: PathBuf,
-        /// How many subfolders it has; absent until they are counted.
-        folders: Option<usize>,
-    },
 }
 
 /// One entry of the key line: the keys and what they do.
@@ -685,7 +679,7 @@ fn video_keys(video: &Video) -> [KeyHint; 5] {
 const DIR_COLUMN_KEYS: &[KeyHint] = &[
     KeyHint {
         keys: "Up/Down",
-        action: "select",
+        action: "go to folder",
     },
     KeyHint {
         keys: "Left/Esc/Backspace",
@@ -693,7 +687,7 @@ const DIR_COLUMN_KEYS: &[KeyHint] = &[
     },
     KeyHint {
         keys: "Right/Enter",
-        action: "open",
+        action: "first subfolder",
     },
     KeyHint {
         keys: "./Shift+.",
@@ -804,7 +798,7 @@ const CONTENTS_KEYS: &[KeyHint] = &[
     },
     KeyHint {
         keys: "Right/Enter",
-        action: "open",
+        action: "first subfolder",
     },
     KeyHint {
         keys: "G",
@@ -876,13 +870,15 @@ fn focus_keys(focus: Focus, column_open: bool) -> Vec<KeyHint> {
 /// The column on the left listing the subfolders of the current folder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DirColumn {
-    /// The current folder.
+    /// The folder whose subfolders are listed: the parent of the current
+    /// folder, or the current folder itself at the root.
     pub dir: PathBuf,
-    /// Its subfolders in natural order; empty until listed.
+    /// The current folder and its siblings in natural order; empty until
+    /// listed.
     pub dirs: Vec<PathBuf>,
-    /// The index of the highlighted subfolder, if there is one.
+    /// The index of the current folder, highlighted.
     pub highlight: Option<usize>,
-    /// Why the subfolders could not be listed.
+    /// Why the folders could not be listed.
     pub error: Option<String>,
 }
 
@@ -1146,6 +1142,9 @@ pub struct Core {
     /// The last listing of the dir column's folder, dot folders included;
     /// absent until listed.
     column_dirs: Option<Vec<PathBuf>>,
+    /// The subfolders of the current folder, dot folders included, while the
+    /// dir column is open; absent until listed.
+    subdirs: Option<Vec<PathBuf>>,
     /// Whether dot files and dot folders are shown: the one-shot `.` action.
     dots: bool,
     /// `Shift`+`.`: dot entries stay shown when the folder is left.
@@ -1155,16 +1154,9 @@ pub struct Core {
     cache: BTreeMap<PathBuf, Result<DecodedImage, String>>,
     /// Decodes asked for and neither answered nor cancelled yet.
     decoding: BTreeSet<PathBuf>,
-    /// The subfolder to highlight once the dir column is listed: the folder
-    /// just left by going up.
-    came_from: Option<PathBuf>,
     /// The folder given on the command line when it had no file to show.
     start_dir: Option<PathBuf>,
-    /// The nav cache: the first image of the parent folder and of the
-    /// highlighted subfolder, by folder, while the dir column is open.
-    nav: BTreeMap<PathBuf, Nav>,
-    /// The area that had the focus before the band; the band keeps showing
-    /// the dir column's preview or search when it was the column.
+    /// The area that had the focus before the band, which `Esc` returns to.
     band_from: Focus,
     /// The highlighted file of the band while it has the focus; the current
     /// one when unset or no longer in the band.
@@ -1309,74 +1301,6 @@ impl Animation {
     }
 }
 
-/// What the nav cache knows of a folder.
-#[derive(Debug)]
-struct Nav {
-    state: NavState,
-    /// How many subfolders a folder without media has, once counted.
-    folders: Option<usize>,
-}
-
-#[derive(Debug)]
-enum NavState {
-    /// Waiting for the listing of the folder.
-    Listing,
-    /// The folder could not be read.
-    Failed(String),
-    /// The folder has no media files.
-    Empty,
-    /// Waiting for the decode of the folder's first file.
-    Decoding(PathBuf),
-    Done(PathBuf, Result<DecodedImage, String>),
-}
-
-impl Nav {
-    const LISTING: Self = Self {
-        state: NavState::Listing,
-        folders: None,
-    };
-
-    /// The main area and band previewing `dir` from this entry.
-    fn preview(&self, dir: &Path) -> (Screen, Vec<Thumb>) {
-        match &self.state {
-            NavState::Listing => (
-                Screen::Listing {
-                    dir: dir.to_path_buf(),
-                },
-                Vec::new(),
-            ),
-            NavState::Failed(message) => (
-                Screen::Error {
-                    path: None,
-                    message: cannot_read(dir, message),
-                },
-                Vec::new(),
-            ),
-            NavState::Empty => (
-                Screen::NoImages {
-                    dir: dir.to_path_buf(),
-                    folders: self.folders,
-                },
-                Vec::new(),
-            ),
-            NavState::Decoding(path) => (Screen::Loading { path: path.clone() }, Vec::new()),
-            NavState::Done(path, result) => (
-                screen(path, result.clone()),
-                vec![Thumb {
-                    path: path.clone(),
-                    image: result.as_ref().ok().cloned(),
-                    loading: false,
-                    current: true,
-                    animated: false,
-                    images: 1,
-                    video: false,
-                    motion: None,
-                }],
-            ),
-        }
-    }
-}
-
 impl Core {
     /// Starts on `start`, the file chosen from the command line, or the folder
     /// without one and the reason. Returns the commands to run right away.
@@ -1442,13 +1366,12 @@ impl Core {
             files: Vec::new(),
             all_files: None,
             column_dirs: None,
+            subdirs: None,
             dots: false,
             dots_kept: false,
             cache: BTreeMap::new(),
             decoding,
-            came_from: None,
             start_dir,
-            nav: BTreeMap::new(),
             band_from: Focus::Image,
             band_highlight: None,
             rotation: Rotation::None,
@@ -1495,7 +1418,6 @@ impl Core {
             self.view.rotation_error = None;
         }
         self.sync_edits();
-        commands.extend(self.sync_nav());
         commands.extend(self.sync_animation());
         commands.extend(self.sync_inner());
         commands.extend(self.sync_motion());
@@ -1705,75 +1627,37 @@ impl Core {
         commands
     }
 
-    /// Whether the dir column decides what the main area and the band show:
-    /// while it has the focus, or the band has it coming from the column.
-    pub(super) fn column_shown(&self) -> bool {
-        match self.view.focus {
-            Focus::Dirs => true,
-            Focus::Band => self.band_from == Focus::Dirs,
-            Focus::Image => false,
-        }
-    }
-
-    /// The highlighted subfolder while the dir column decides what is shown:
-    /// the main area and the band preview it.
-    fn previewed(&self) -> Option<&Path> {
-        if !self.column_shown() {
-            return None;
-        }
-        let column = self.view.dir_column.as_ref()?;
-        column
-            .highlight
-            .and_then(|i| column.dirs.get(i))
-            .map(PathBuf::as_path)
-    }
-
-    /// Shows the preview if there is one, otherwise the current folder.
+    /// Shows the current file and the band around it.
     fn publish(&mut self) {
         let dots = self.dots.then_some(Tag {
             toggle: Toggle::DotEntries,
             kept: self.dots_kept,
         });
         self.view.tags = dots.into_iter().collect();
-        let preview = self
-            .previewed()
-            .and_then(|dir| Some(self.nav.get(dir)?.preview(dir)));
-        let previewing = preview.is_some();
-        // A preview is never the current file, so it is shown unturned.
-        self.view.rotation = if preview.is_some() {
-            Rotation::None
-        } else {
-            self.rotation
-        };
-        self.view.inner = match (&preview, &self.inner) {
-            (None, Some(inner)) => Some(InnerImages {
-                index: inner.index,
-                count: inner.count,
-            }),
-            _ => None,
-        };
-        self.view.next_frame_in = match (&preview, &self.animation) {
-            (None, Some(Animation::Playing { next_in, .. })) => Some(*next_in),
+        self.view.rotation = self.rotation;
+        self.view.inner = self.inner.as_ref().map(|inner| InnerImages {
+            index: inner.index,
+            count: inner.count,
+        });
+        self.view.next_frame_in = match &self.animation {
+            Some(Animation::Playing { next_in, .. }) => Some(*next_in),
             _ => None,
         };
         // A still of a Live Photo or Motion Photo shows no player.
-        self.view.video = match (&preview, &self.video) {
-            (None, Some(video)) if !video.motion || video.started || video.error.is_some() => {
-                Some(Video {
-                    playing: video.playing,
-                    muted: self.muted,
-                    error: video.error.clone(),
-                })
-            }
+        self.view.video = match &self.video {
+            Some(video) if !video.motion || video.started || video.error.is_some() => Some(Video {
+                playing: video.playing,
+                muted: self.muted,
+                error: video.error.clone(),
+            }),
             _ => None,
         };
-        let shown = match (&preview, &self.screen) {
-            (None, Screen::Image { path, .. }) => Some(path),
+        let shown = match &self.screen {
+            Screen::Image { path, .. } => Some(path),
             _ => None,
         };
         self.view.motion = shown.and_then(|path| self.motion_kind(path));
-        (self.view.screen, self.view.band) =
-            preview.unwrap_or_else(|| (self.screen.clone(), self.band.clone()));
+        (self.view.screen, self.view.band) = (self.screen.clone(), self.band.clone());
         for thumb in &mut self.view.band {
             thumb.animated = thumb.image.is_some() && self.animated.contains(&thumb.path);
             thumb.images = match (&thumb.image, self.images.get(&thumb.path)) {
@@ -1824,7 +1708,7 @@ impl Core {
         if self.dialog.is_some() {
             self.view.key_line.keys = SAVE_DIALOG_KEYS.to_vec();
         }
-        self.publish_edits(previewing);
+        self.publish_edits();
         self.publish_info();
         self.publish_band_highlight();
     }
@@ -2217,86 +2101,6 @@ impl Core {
         self.view.band_highlight = index;
     }
 
-    /// The folders the nav cache holds while the dir column is open: the
-    /// highlighted subfolder, the parent, and the folder just left until it is
-    /// highlighted; none while the overview is open.
-    fn nav_wanted(&self) -> Vec<PathBuf> {
-        // The overview shows no preview.
-        if self.view.overview.is_some() {
-            return Vec::new();
-        }
-        let Some(column) = &self.view.dir_column else {
-            return Vec::new();
-        };
-        let highlighted = column.highlight.and_then(|i| column.dirs.get(i)).cloned();
-        let parent = column.dir.parent().map(Path::to_path_buf);
-        highlighted
-            .into_iter()
-            .chain(parent)
-            .chain(self.came_from.clone())
-            .collect()
-    }
-
-    /// Fits the nav cache to the folders it should hold: work for the others
-    /// is cancelled, missing ones are listed.
-    fn sync_nav(&mut self) -> Vec<Command> {
-        let wanted = self.nav_wanted();
-        let (keep, gone): (BTreeMap<_, _>, BTreeMap<_, _>) = std::mem::take(&mut self.nav)
-            .into_iter()
-            .partition(|(dir, _)| wanted.contains(dir));
-        self.nav = keep;
-        let mut commands: Vec<Command> = gone
-            .into_values()
-            .filter_map(|nav| match nav.state {
-                NavState::Decoding(path) => self.cancel_decode(path),
-                _ => None,
-            })
-            .collect();
-        for dir in wanted {
-            if !self.nav.contains_key(&dir) {
-                self.nav.insert(dir.clone(), Nav::LISTING);
-                commands.push(Command::ListFolder(dir));
-            }
-        }
-        commands
-    }
-
-    /// A nav folder listed: its first file is decoded, a folder without media
-    /// gets its subfolders counted. Dot files never count here.
-    fn nav_listed(&mut self, dir: &Path, result: Result<Vec<PathBuf>, String>) -> Vec<Command> {
-        let Some(nav) = self
-            .nav
-            .get_mut(dir)
-            .filter(|n| matches!(n.state, NavState::Listing))
-        else {
-            return Vec::new();
-        };
-        match result.map(|files| files.into_iter().find(|f| !folder::is_dot(f))) {
-            Ok(Some(first)) => {
-                nav.state = NavState::Decoding(first.clone());
-                vec![Command::Decode(first)]
-            }
-            Ok(None) => {
-                nav.state = NavState::Empty;
-                vec![Command::ListDirs(dir.to_path_buf())]
-            }
-            Err(message) => {
-                nav.state = NavState::Failed(message);
-                Vec::new()
-            }
-        }
-    }
-
-    fn nav_decoded(&mut self, path: PathBuf, result: Result<DecodedImage, String>) {
-        let waiting = self
-            .nav
-            .values_mut()
-            .find(|n| matches!(&n.state, NavState::Decoding(p) if *p == path));
-        if let Some(nav) = waiting {
-            nav.state = NavState::Done(path, result);
-        }
-    }
-
     /// The first image is on screen: now the settings and the folder may be
     /// read and the folder watched. The watch starts before the listing, so no
     /// change between the two is missed.
@@ -2331,7 +2135,7 @@ impl Core {
     /// file appears.
     fn folder_listed(&mut self, dir: &Path, result: Result<Vec<PathBuf>, String>) -> Vec<Command> {
         if self.dir.as_deref() != Some(dir) {
-            return self.nav_listed(dir, result);
+            return Vec::new();
         }
         let files = match result {
             Ok(files) => files,
@@ -2521,48 +2325,94 @@ impl Core {
             self.set_focus(Focus::Image);
             return commands;
         }
-        let Some(dir) = self.dir.clone() else {
+        if self.dir.is_none() {
             return Vec::new();
-        };
-        self.came_from = None;
+        }
         self.column_dirs = None;
+        self.subdirs = None;
         self.view.dir_column = Some(DirColumn {
-            dir: dir.clone(),
+            dir: PathBuf::new(),
             dirs: Vec::new(),
             highlight: None,
             error: None,
         });
         self.set_focus(Focus::Dirs);
-        vec![Command::ListDirs(dir)]
+        self.sync_column()
     }
 
-    /// Lists the column's subfolders, keeping the highlight on the folder just
-    /// left or the one highlighted so far; or counts a nav folder's subfolders.
-    /// Dot folders are dropped unless shown, and never counted.
-    fn dirs_listed(&mut self, dir: &Path, result: Result<Vec<PathBuf>, String>) {
-        let Some(column) = self.view.dir_column.as_mut().filter(|c| c.dir == dir) else {
-            if let (Some(nav), Ok(dirs)) = (self.nav.get_mut(dir), result) {
-                nav.folders = Some(dirs.iter().filter(|d| !folder::is_dot(d)).count());
+    /// Fits the open dir column to the current folder: it lists the folder's
+    /// level, the current folder highlighted, listed anew only when the level
+    /// changed; and the current folder's subfolders are listed for `Right`.
+    fn sync_column(&mut self) -> Vec<Command> {
+        let (Some(dir), Some(column)) = (self.dir.clone(), self.view.dir_column.as_mut()) else {
+            return Vec::new();
+        };
+        let mut commands = Vec::new();
+        match dir.parent() {
+            // The root has no level above; it stands alone.
+            None => {
+                *column = DirColumn {
+                    dir: dir.clone(),
+                    dirs: vec![dir.clone()],
+                    highlight: Some(0),
+                    error: None,
+                };
+                self.column_dirs = None;
             }
+            Some(level) if column.dir != level => {
+                *column = DirColumn {
+                    dir: level.to_path_buf(),
+                    dirs: Vec::new(),
+                    highlight: None,
+                    error: None,
+                };
+                self.column_dirs = None;
+                commands.push(Command::ListDirs(level.to_path_buf()));
+            }
+            Some(_) => self.show_column_dirs(),
+        }
+        if self.subdirs.is_none() {
+            commands.push(Command::ListDirs(dir));
+        }
+        commands
+    }
+
+    /// Puts the last listing of the column's level into the column: dot
+    /// folders only while shown, the current folder always, and highlighted.
+    fn show_column_dirs(&mut self) {
+        let (Some(column), Some(listed)) = (self.view.dir_column.as_mut(), &self.column_dirs)
+        else {
             return;
         };
-        self.column_dirs = result.as_ref().ok().cloned();
+        let current = self.dir.as_ref();
+        let dirs: Vec<PathBuf> = listed
+            .iter()
+            .filter(|d| self.dots || !folder::is_dot(d) || Some(*d) == current)
+            .cloned()
+            .collect();
+        column.highlight = dirs.iter().position(|d| Some(d) == current);
+        column.dirs = dirs;
+        column.error = None;
+    }
+
+    /// Takes in a listing of subfolders: of the column's level, or of the
+    /// current folder, which `Right` goes into.
+    fn dirs_listed(&mut self, dir: &Path, result: Result<Vec<PathBuf>, String>) {
+        if self.dir.as_deref() == Some(dir) {
+            self.subdirs = result.as_ref().ok().cloned();
+        }
+        let Some(column) = self
+            .view
+            .dir_column
+            .as_mut()
+            .filter(|c| c.dir == dir && self.dir.as_deref() != Some(dir))
+        else {
+            return;
+        };
         match result {
             Ok(dirs) => {
-                let dirs: Vec<PathBuf> = dirs
-                    .into_iter()
-                    .filter(|d| self.dots || !folder::is_dot(d))
-                    .collect();
-                let highlighted = column.highlight.and_then(|i| column.dirs.get(i)).cloned();
-                let index = self
-                    .came_from
-                    .take()
-                    .or(highlighted)
-                    .and_then(|keep| dirs.iter().position(|d| *d == keep))
-                    .unwrap_or(0);
-                column.highlight = (index < dirs.len()).then_some(index);
-                column.dirs = dirs;
-                column.error = None;
+                self.column_dirs = Some(dirs);
+                self.show_column_dirs();
             }
             Err(message) => {
                 column.dirs = Vec::new();
@@ -2572,21 +2422,21 @@ impl Core {
         }
     }
 
-    /// Keys of the dir column; leaving the folder ends the one-shot actions
-    /// first.
+    /// Keys of the dir column; leaving the level ends the one-shot actions,
+    /// once the folder to go to is chosen with them.
     fn dir_key(&mut self, key: Key) -> Vec<Command> {
-        let mut commands = match key {
-            Key::Period => {
-                self.dots_kept = false;
-                let dots = !self.dots;
-                return self.set_dots(dots);
-            }
-            Key::Left | Key::Right | Key::Enter | Key::Escape | Key::Backspace => {
-                self.reset_one_shot()
-            }
-            _ => Vec::new(),
-        };
-        commands.extend(self.move_in_column(key));
+        if key == Key::Period {
+            self.dots_kept = false;
+            let dots = !self.dots;
+            return self.set_dots(dots);
+        }
+        let mut commands = self.move_in_column(key);
+        if matches!(
+            key,
+            Key::Left | Key::Right | Key::Enter | Key::Escape | Key::Backspace
+        ) {
+            commands.extend(self.reset_one_shot());
+        }
         commands
     }
 
@@ -2610,95 +2460,80 @@ impl Core {
     /// Shows or hides dot entries in the column and the current folder.
     fn set_dots(&mut self, dots: bool) -> Vec<Command> {
         self.dots = dots;
-        let column = self.view.dir_column.as_ref().map(|c| c.dir.clone());
-        if let (Some(dir), Some(dirs)) = (column, self.column_dirs.clone()) {
-            self.dirs_listed(&dir, Ok(dirs));
-        }
+        self.show_column_dirs();
         match (self.dir.clone(), self.all_files.clone()) {
             (Some(dir), Some(files)) => self.folder_listed(&dir, Ok(files)),
             _ => Vec::new(),
         }
     }
 
+    /// Up/Down go to the folder above or below the current one, Left to the
+    /// parent, Right and Enter into the first subfolder.
     fn move_in_column(&mut self, key: Key) -> Vec<Command> {
-        let Some(column) = self.view.dir_column.as_mut() else {
+        let Some(column) = self.view.dir_column.as_ref() else {
             return Vec::new();
         };
-        match key {
-            Key::Up => {
-                if let Some(index) = column.highlight {
-                    column.highlight = Some(index.saturating_sub(1));
-                }
-                Vec::new()
-            }
-            Key::Down => {
-                if let Some(index) = column.highlight
-                    && let Some(next) = index.checked_add(1).filter(|i| *i < column.dirs.len())
-                {
-                    column.highlight = Some(next);
-                }
-                Vec::new()
-            }
-            Key::Left | Key::Escape | Key::Backspace => {
-                let current = column.dir.clone();
-                match current.parent() {
-                    Some(parent) => {
-                        let parent = parent.to_path_buf();
-                        let commands = self.enter(parent);
-                        self.came_from = Some(current);
-                        commands
+        let target = match key {
+            Key::Up | Key::Down => {
+                let sibling = column.highlight.and_then(|i| {
+                    if key == Key::Up {
+                        i.checked_sub(1)
+                    } else {
+                        i.checked_add(1)
                     }
-                    None => Vec::new(),
-                }
+                });
+                let Some(sibling) = sibling.and_then(|i| column.dirs.get(i)).cloned() else {
+                    return Vec::new();
+                };
+                // The level stays, so do its dot entries.
+                let dots = self.dots;
+                let commands = self.enter(sibling);
+                self.dots = dots;
+                self.show_column_dirs();
+                return commands;
             }
-            Key::Right | Key::Enter => {
-                let target = column.highlight.and_then(|i| column.dirs.get(i)).cloned();
-                match target {
-                    Some(dir) => self.enter(dir),
-                    None => Vec::new(),
-                }
-            }
-            _ => Vec::new(),
-        }
+            Key::Left | Key::Escape | Key::Backspace => self
+                .dir
+                .as_deref()
+                .and_then(Path::parent)
+                .map(Path::to_path_buf),
+            Key::Right | Key::Enter => self.subdirs.as_ref().and_then(|dirs| {
+                dirs.iter()
+                    .find(|d| self.dots || !folder::is_dot(d))
+                    .cloned()
+            }),
+            _ => None,
+        };
+        target.map(|dir| self.enter(dir)).unwrap_or_default()
     }
 
-    /// Makes `dir` the current folder and the dir column's.
+    /// Makes `dir` the current folder, the dir column following it. Listings
+    /// known carry over: the subfolders of the folder left are the level of a
+    /// subfolder entered, the level left holds the subfolders of the parent
+    /// entered.
     fn enter(&mut self, dir: PathBuf) -> Vec<Command> {
+        let left = self.dir.clone();
+        let level = self.view.dir_column.as_ref().map(|c| c.dir.clone());
+        let (siblings, children) = (self.column_dirs.take(), self.subdirs.take());
         let mut commands = self.switch_folder(dir.clone());
-        self.view.dir_column = Some(DirColumn {
-            dir: dir.clone(),
-            dirs: Vec::new(),
-            highlight: None,
-            error: None,
-        });
-        commands.push(Command::ListDirs(dir));
+        if left.is_some() && dir.parent() == left.as_deref() {
+            if let (Some(column), Some(left)) = (self.view.dir_column.as_mut(), left) {
+                column.dir = left;
+            }
+            self.column_dirs = children;
+        } else if Some(&dir) == level.as_ref() {
+            self.subdirs = siblings;
+        } else if dir.parent() == level.as_deref() {
+            self.column_dirs = siblings;
+        }
+        commands.extend(self.sync_column());
         commands
     }
 
     /// Makes `dir` the current folder, like a start there: all work of the old
     /// folder is cancelled and dropped, and once it is listed its first file
     /// is shown before any neighbour is decoded.
-    /// A first image the nav cache holds for `dir` shows at once.
     fn switch_folder(&mut self, dir: PathBuf) -> Vec<Command> {
-        // The folder left becomes the parent or a subfolder of the new one, so
-        // its first image stays in the nav cache.
-        let first = self.files.first().cloned();
-        if let (Some(left), Some(first)) = (self.dir.clone(), first) {
-            let state = match self.cache.remove(&first) {
-                Some(result) => Some(NavState::Done(first, result)),
-                None => self
-                    .decoding
-                    .remove(&first)
-                    .then_some(NavState::Decoding(first)),
-            };
-            if let Some(state) = state {
-                let nav = Nav {
-                    state,
-                    folders: None,
-                };
-                self.nav.insert(left, nav);
-            }
-        }
         let mut commands: Vec<Command> = std::mem::take(&mut self.decoding)
             .into_iter()
             .filter_map(|path| self.cancel_decode(path))
@@ -2707,22 +2542,10 @@ impl Core {
         self.files.clear();
         self.live.clear();
         self.all_files = None;
-        self.column_dirs = None;
+        self.subdirs = None;
         self.dots &= self.dots_kept;
-        self.came_from = None;
         self.dir = Some(dir.clone());
-        let cached = self.nav.remove(&dir).map(|n| n.state);
-        (self.current, self.screen) = match cached {
-            Some(NavState::Done(path, result)) => {
-                self.cache.insert(path.clone(), result.clone());
-                (Some(path.clone()), screen(&path, result))
-            }
-            Some(NavState::Decoding(path)) => {
-                self.decoding.insert(path.clone());
-                (Some(path.clone()), Screen::Loading { path })
-            }
-            _ => (None, Screen::Listing { dir: dir.clone() }),
-        };
+        (self.current, self.screen) = (None, Screen::Listing { dir: dir.clone() });
         self.view.key_line.notice = None;
         self.view.folder_error = None;
         commands.extend(self.refresh());
@@ -3090,7 +2913,6 @@ impl Core {
         self.images.remove(&path);
         let mut commands = self.copy_decoded(&path, &result);
         if !self.decoding.remove(&path) {
-            self.nav_decoded(path, result);
             return commands;
         }
         let rewritten = self.writing.as_ref() == Some(&path);
@@ -3113,14 +2935,9 @@ impl Core {
         commands
     }
 
-    /// Whether the current folder or the nav cache waits for the decode of
-    /// `path`.
+    /// Whether the current folder waits for the decode of `path`.
     fn decoding_elsewhere(&self, path: &Path) -> bool {
         self.decoding.contains(path)
-            || self
-                .nav
-                .values()
-                .any(|n| matches!(&n.state, NavState::Decoding(p) if p == path))
     }
 
     /// The current file and up to `cache_per_side` neighbours on each side, in

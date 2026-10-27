@@ -268,7 +268,6 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
                     }
                 }
                 Screen::Error { path, message } => show_error(ui, path.as_deref(), message),
-                Screen::NoImages { folders, .. } => show_no_images(ui, *folders),
             }
             if let Some(inner) = view.inner {
                 show_inner(ui, inner);
@@ -484,13 +483,22 @@ fn motion_name(kind: MotionKind) -> &'static str {
 }
 
 /// The current folder's name over its subfolders, the highlighted one painted
+/// The name of a folder in the dir column; the root's is its path.
+fn folder_name(dir: &Path) -> String {
+    match folder::file_name(dir) {
+        name if name.is_empty() => dir.display().to_string(),
+        name => name,
+    }
+}
+
 /// brighter while the column has the focus.
 fn show_dir_column(ui: &mut egui::Ui, column: &DirColumn, focused: bool) {
-    let header = match folder::file_name(&column.dir) {
-        name if name.is_empty() => column.dir.display().to_string(),
-        name => name,
-    };
-    ui.label(RichText::new(header).color(TEXT).strong().size(15.0));
+    ui.label(
+        RichText::new(folder_name(&column.dir))
+            .color(TEXT)
+            .strong()
+            .size(15.0),
+    );
     ui.add_space(4.0);
     if let Some(error) = &column.error {
         ui.label(RichText::new(error).color(ERROR_TEXT));
@@ -501,7 +509,7 @@ fn show_dir_column(ui: &mut egui::Ui, column: &DirColumn, focused: bool) {
             let font = egui::FontId::proportional(14.0);
             let row_height = ui.ctx().fonts_mut(|f| f.row_height(&font)) + 6.0;
             for (index, dir) in column.dirs.iter().enumerate() {
-                let name = folder::file_name(dir);
+                let name = folder_name(dir);
                 let highlighted = column.highlight == Some(index);
                 let size = egui::vec2(ui.available_width(), row_height);
                 let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
@@ -996,17 +1004,6 @@ fn show_error(ui: &mut egui::Ui, path: Option<&Path>, message: &str) {
             }
         });
     });
-}
-
-/// The placeholder of a previewed folder without media, with its subfolder
-/// count once known.
-fn show_no_images(ui: &mut egui::Ui, folders: Option<usize>) {
-    let text = match folders {
-        None => "No images".to_owned(),
-        Some(1) => "No images · 1 folder".to_owned(),
-        Some(n) => format!("No images · {n} folders"),
-    };
-    show_status(ui, &text);
 }
 
 /// A dim line in the middle of the main area.

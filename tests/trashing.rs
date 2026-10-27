@@ -105,9 +105,8 @@ fn trashing_the_only_file_says_no_images_and_opens_the_dir_column() {
         press(&mut core, Key::X),
         [
             Command::Trash(p("a.jpg")),
+            Command::ListDirs(PathBuf::from("/")),
             Command::ListDirs(PathBuf::from("/p")),
-            // The parent's first image, for the nav cache.
-            Command::ListFolder(PathBuf::from("/")),
         ]
     );
     assert_eq!(core.view().screen, no_images());
@@ -115,7 +114,7 @@ fn trashing_the_only_file_says_no_images_and_opens_the_dir_column() {
     assert_eq!(core.view().focus, Focus::Dirs);
     assert_eq!(
         core.view().dir_column.as_ref().map(|c| c.dir.clone()),
-        Some(PathBuf::from("/p"))
+        Some(PathBuf::from("/"))
     );
     core.handle(Event::DirsListed {
         dir: PathBuf::from("/p"),
@@ -126,17 +125,6 @@ fn trashing_the_only_file_says_no_images_and_opens_the_dir_column() {
     assert!(listed(&mut core, &[]).is_empty());
     assert_eq!(core.view().screen, no_images());
     assert_eq!(core.view().focus, Focus::Dirs);
-}
-
-#[test]
-fn an_emptied_folder_with_subfolders_previews_the_first() {
-    let mut core = browsing("a.jpg", &["a.jpg"]);
-    press(&mut core, Key::X);
-    core.handle(Event::DirsListed {
-        dir: PathBuf::from("/p"),
-        result: Ok(vec![p("sub")]),
-    });
-    assert_eq!(core.view().screen, Screen::Listing { dir: p("sub") });
 }
 
 #[test]

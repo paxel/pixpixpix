@@ -151,16 +151,19 @@ fn g_opens_the_overview_of_the_current_folder_and_closes_it() {
 }
 
 #[test]
-fn the_root_is_the_folder_highlighted_in_the_dir_column() {
+fn the_root_is_the_current_folder_the_dir_column_went_to() {
     let mut core = browsing();
     press(&mut core, Key::N);
     core.handle(Event::DirsListed {
-        dir: PathBuf::from("/p"),
-        result: Ok(vec![p("x"), p("y")]),
+        dir: PathBuf::from("/"),
+        result: Ok(vec![PathBuf::from("/p"), PathBuf::from("/q")]),
     });
     press(&mut core, Key::Down);
     let commands = press(&mut core, Key::G);
-    assert_eq!(scan_of(&commands).map(|(_, root, _)| root), Some(p("y")));
+    assert_eq!(
+        scan_of(&commands).map(|(_, root, _)| root),
+        Some(PathBuf::from("/q"))
+    );
 }
 
 #[test]
@@ -510,10 +513,12 @@ fn opening_with_the_dir_column_open_moves_the_column_too() {
     let (scan, _, _) = scan_of(&commands).unwrap();
     section(&mut core, scan, "/p/x/y", &["/p/x/y/c.jpg"]);
     let commands = press(&mut core, Key::Enter);
+    // The column lists the new folder among its siblings.
     assert_eq!(
         core.view().dir_column.as_ref().map(|c| c.dir.clone()),
-        Some(PathBuf::from("/p/x/y"))
+        Some(PathBuf::from("/p/x"))
     );
+    assert!(commands.contains(&Command::ListDirs(PathBuf::from("/p/x"))));
     assert!(commands.contains(&Command::ListDirs(PathBuf::from("/p/x/y"))));
     assert_eq!(core.view().focus, Focus::Image);
 }
@@ -741,12 +746,16 @@ fn contents() -> (Core, u64) {
     let mut core = browsing();
     press(&mut core, Key::N);
     core.handle(Event::DirsListed {
+        dir: PathBuf::from("/"),
+        result: Ok(vec![PathBuf::from("/p"), PathBuf::from("/q")]),
+    });
+    core.handle(Event::DirsListed {
         dir: PathBuf::from("/p"),
         result: Ok(vec![p("x"), p("z")]),
     });
     let commands = press(&mut core, Key::G);
     let (scan, root, _) = scan_of(&commands).unwrap_or_default();
-    assert_eq!(root, p("x"));
+    assert_eq!(root, PathBuf::from("/p"));
     (core, scan)
 }
 
@@ -790,31 +799,6 @@ fn tab_moves_between_dir_column_and_gallery_and_the_key_line_follows() {
 }
 
 #[test]
-fn the_dir_column_highlight_scrolls_to_its_section_without_previewing() {
-    let (mut core, scan) = contents();
-    press(&mut core, Key::Tab);
-    // Entering x, the root already, scans nothing anew.
-    let commands = press(&mut core, Key::Right);
-    assert_eq!(scan_of(&commands), None);
-    assert!(!commands.contains(&Command::CancelScan));
-    core.handle(Event::DirsListed {
-        dir: p("x"),
-        result: Ok(vec![p("x/1"), p("x/2")]),
-    });
-    section(&mut core, scan, "/p/x", &["/p/x/a.jpg"]);
-    section(&mut core, scan, "/p/x/1", &["/p/x/1/b.jpg"]);
-    section(&mut core, scan, "/p/x/2/deep", &["/p/x/2/deep/c.jpg"]);
-
-    let commands = press(&mut core, Key::Down);
-    assert!(commands.is_empty(), "{commands:?}");
-    assert_eq!(reveal(&core), Some(Reveal::Section(2)));
-    assert_eq!(selected(&core), Some(2));
-    press(&mut core, Key::Up);
-    assert_eq!(reveal(&core), Some(Reveal::Section(1)));
-    assert_eq!(selected(&core), Some(1));
-}
-
-#[test]
 fn going_up_in_the_dir_column_re_roots_and_aborts_the_scan() {
     let (mut core, scan) = contents();
     section(&mut core, scan, "/p/x", &["/p/x/a.jpg"]);
@@ -851,15 +835,15 @@ fn g_outside_the_kept_overview_s_root_drops_it_and_scans_anew() {
     press(&mut core, Key::Tab);
     press(&mut core, Key::Tab);
     assert_eq!(core.view().focus, Focus::Dirs);
+    // Up to the root, outside the kept overview's.
     press(&mut core, Key::Left);
-    core.handle(Event::DirsListed {
-        dir: PathBuf::from("/p"),
-        result: Ok(vec![p("x"), p("z")]),
-    });
-    press(&mut core, Key::Down);
+    press(&mut core, Key::Left);
     let commands = press(&mut core, Key::G);
     assert!(commands.contains(&Command::CancelScan));
-    assert_eq!(scan_of(&commands).map(|(_, root, _)| root), Some(p("z")));
+    assert_eq!(
+        scan_of(&commands).map(|(_, root, _)| root),
+        Some(PathBuf::from("/"))
+    );
 }
 
 #[test]
@@ -914,5 +898,26 @@ fn c_on_a_file_the_image_view_decodes_copies_even_when_the_view_drops_it() {
             rotation: Rotation::None,
             shapes: Vec::new(),
         }]
+    );
+}
+
+#[test]
+fn up_and_down_in_the_dir_column_switch_the_overview_to_the_sibling_folder() {
+    let (mut core, scan) = contents();
+    press(&mut core, Key::Tab);
+    let commands = press(&mut core, Key::Down);
+    assert!(commands.contains(&Command::CancelScan));
+    let (new, root, _) = scan_of(&commands).unwrap();
+    assert_ne!(new, scan);
+    assert_eq!(root, PathBuf::from("/q"));
+    assert_eq!(
+        overview(&core).map(|o| o.root.clone()),
+        Some(PathBuf::from("/q"))
+    );
+    // The current folder went along: the column is the same as without it.
+    let column = core.view().dir_column.clone().unwrap();
+    assert_eq!(
+        column.highlight.and_then(|i| column.dirs.get(i)).cloned(),
+        Some(PathBuf::from("/q"))
     );
 }

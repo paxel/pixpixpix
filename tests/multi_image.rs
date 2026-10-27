@@ -238,28 +238,3 @@ fn the_key_line_lists_up_and_down_only_for_a_multi_image_file() {
     press(&mut core, Key::Right);
     assert!(!keys(&core).contains(&"Up/Down"));
 }
-
-#[test]
-fn a_previewed_folder_shows_no_hint() {
-    let (mut core, _) = Core::start(Ok(PathBuf::from("/r/p/a.tiff")));
-    core.handle(Event::Decoded {
-        path: PathBuf::from("/r/p/a.tiff"),
-        result: Ok(gray(0)),
-    });
-    core.handle(Event::Images {
-        path: PathBuf::from("/r/p/a.tiff"),
-        count: 2,
-    });
-    core.handle(Event::FirstFrameShown);
-    core.handle(Event::FolderListed {
-        dir: PathBuf::from("/r/p"),
-        result: Ok(vec![PathBuf::from("/r/p/a.tiff")]),
-    });
-    assert_eq!(core.view().inner, inner(0, 2));
-    press(&mut core, Key::N);
-    core.handle(Event::DirsListed {
-        dir: PathBuf::from("/r/p"),
-        result: Ok(vec![PathBuf::from("/r/p/x")]),
-    });
-    assert_eq!(core.view().inner, None);
-}
