@@ -1,5 +1,5 @@
 // The site build: front matter, headings, the overview's What's new, the
-// search index, the 404 page and the link check. Run with
+// search index, the 404 page, the link check and the versions. Run with
 // `node --test "tool/site/*.test.js"`.
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -17,6 +17,8 @@ import {
   versionHref,
 } from "./build.js";
 import { generatedPages, latestNews, parseChangelog } from "./generated.js";
+import { buildAll, compareVersions, planVersions } from "./build-all.js";
+import { execFileSync } from "node:child_process";
 
 const PAGE = (title, body = "<p>Text.</p>", extra = "") =>
   `<!-- page: title="${title}" ${extra} -->\n${body}\n`;
@@ -128,4 +130,67 @@ test("the version menu keeps the page where the other version has it, else the o
   const old = { version: "0.3.0", base: "/pixpixpix/v0.3.0/", pages: ["index.html", "install.html"], latest: false };
   assert.equal(versionHref(old, "install.html"), "/pixpixpix/v0.3.0/install.html");
   assert.equal(versionHref(old, "trash.html"), "/pixpixpix/v0.3.0/index.html");
+});
+
+test("every release is built, the working tree replacing its own tag or ahead of them", () => {
+  const plan = planVersions({ tags: ["v0.3.0", "v0.3.1", "v0.4.0"], workingVersion: "0.4.0" });
+  assert.deepEqual(
+    plan.map((e) => [e.version, e.source, e.latest]),
+    [
+      ["0.4.0", "worktree", true],
+      ["0.3.1", "tag", false],
+      ["0.3.0", "tag", false],
+    ],
+  );
+  const ahead = planVersions({ tags: ["v0.3.0"], workingVersion: "0.4.0" });
+  assert.deepEqual(ahead.map((e) => e.version), ["0.4.0", "0.3.0"]);
+  assert.deepEqual(["0.9.0", "0.10.0", "1.0.0"].sort(compareVersions), ["1.0.0", "0.10.0", "0.9.0"]);
+});
+
+/** A git repository with a site: a tag without pages, one with, and a newer working tree. */
+function releasedRepo() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pixpixpix-releases-"));
+  const run = (...args) => execFileSync("git", args, { cwd: dir, stdio: "pipe" });
+  const write = (rel, text) => {
+    fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    fs.writeFileSync(path.join(dir, rel), text);
+  };
+  const release = (version) => {
+    write("Cargo.toml", `[package]\nname = "pixpixpix"\nversion = "${version}"\n`);
+    write("CHANGELOG.md", `# Changelog\n\n## [${version}]\n\n### Added\n\n- Feature of ${version}.\n`);
+  };
+  run("init", "-q");
+  run("config", "user.email", "test@example.com");
+  run("config", "user.name", "Test");
+  release("0.2.0");
+  run("add", "-A");
+  run("commit", "-qm", "0.2.0");
+  run("tag", "v0.2.0");
+  release("0.3.0");
+  write("site/assets/site.css", "body{}");
+  write("site/assets/site.js", "");
+  write("site/pages/index.html", PAGE("Home", "<!-- whats-new -->"));
+  write("site/pages/old.html", PAGE("Old", "<p>Only in 0.3.0.</p>", 'track="use"'));
+  run("add", "-A");
+  run("commit", "-qm", "0.3.0");
+  run("tag", "v0.3.0");
+  release("0.4.0");
+  fs.rmSync(path.join(dir, "site/pages/old.html"));
+  return dir;
+}
+
+test("build-all writes the latest at the root, every release with pages under its version", () => {
+  const repo = releasedRepo();
+  const out = path.join(repo, "site-dist");
+  const result = buildAll({ repoRoot: repo, outDir: out, base: "/pixpixpix/" });
+  assert.deepEqual(result.versions, ["0.4.0", "0.3.0"]);
+  assert.match(fs.readFileSync(path.join(out, "index.html"), "utf8"), /What's new in 0\.4\.0/);
+  const old = fs.readFileSync(path.join(out, "v0.3.0", "old.html"), "utf8");
+  assert.match(old, /Only in 0\.3\.0/);
+  assert.match(old, /class="version-notice"/);
+  // The menu sends the old page to the latest overview, which lacks it.
+  assert.match(old, /href="\/pixpixpix\/index\.html">v0\.4\.0 \(latest\)/);
+  assert.ok(!fs.existsSync(path.join(out, "v0.2.0")));
+  const versions = JSON.parse(fs.readFileSync(path.join(out, "versions.json"), "utf8"));
+  assert.deepEqual(versions.map((v) => v.version), ["0.4.0", "0.3.0"]);
 });

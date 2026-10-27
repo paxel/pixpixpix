@@ -1,7 +1,10 @@
 # Builds the documentation site (site/ -> site-dist/) on every push to summer,
 # every pull request and every release tag; deploys it to GitHub Pages only
-# for release tags, so the site always describes a released version. The
-# build fails on a broken link or a release without its changelog section.
+# for release tags, so the site always describes a released version. Every
+# build assembles every release that carries a site (under /vX.Y.Z/) plus the
+# working tree at the root, so a release whose docs no longer build fails on
+# summer, not on release day. The build fails on a broken link or a release
+# without its changelog section.
 #
 # One-time steps in the repository settings, done by the owner:
 #   1. Settings -> Pages -> Source: "GitHub Actions".
@@ -26,6 +29,8 @@ jobs:
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0 # every release tag that carries a site is built, see tool/site/build-all.js
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
@@ -33,8 +38,8 @@ jobs:
       - name: Test the site build
         run: node --test "tool/site/*.test.js"
 
-      - name: Build the site
-        run: node tool/site/build.js --base "/${{ github.event.repository.name }}/"
+      - name: Build the site, every release and the working tree
+        run: node tool/site/build-all.js --base "/${{ github.event.repository.name }}/"
 
       - name: Check that the tag matches the Cargo.toml version
         if: startsWith(github.ref, 'refs/tags/v')
