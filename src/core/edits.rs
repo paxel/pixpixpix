@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use super::{Command, Core, Event, Key, Points, Screen, Zoom, copied_file};
+use super::{Command, Core, Event, Key, Points, Screen, Zoom};
 use crate::decode::DecodedImage;
 use crate::folder;
 use crate::metadata::Strip;
@@ -1076,7 +1076,6 @@ impl Core {
                 dialog.busy = Some(Busy::Copying);
                 self.view.copy_error = None;
                 vec![Command::Copy {
-                    path: copied_file(&path, &shapes),
                     image,
                     rotation: self.rotation,
                     shapes,

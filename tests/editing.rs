@@ -400,7 +400,6 @@ fn copy_in_the_dialog_copies_the_edited_image() {
     let mut core = edited(&["a.jpg", "b.jpg"]);
     press(&mut core, Key::Right);
     let expected = Command::Copy {
-        path: Some(p("a.jpg")),
         image: image(),
         rotation: Rotation::None,
         shapes: shapes(&core),
@@ -419,7 +418,6 @@ fn copy_in_the_dialog_copies_the_edited_image() {
 fn c_copies_the_image_with_its_edits() {
     let mut core = edited(&["a.jpg"]);
     let expected = Command::Copy {
-        path: Some(p("a.jpg")),
         image: image(),
         rotation: Rotation::None,
         shapes: shapes(&core),

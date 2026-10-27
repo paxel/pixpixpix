@@ -151,8 +151,10 @@ const THUMBNAIL_THREADS: usize = 4;
 
 /// One copy to the clipboard.
 enum CopyJob {
-    /// One `c`: the file, if any, and its pixels as shown.
-    Shown(Option<PathBuf>, DecodedImage, Rotation, Vec<Shape>),
+    /// One `c`: the pixels as shown.
+    Shown(DecodedImage, Rotation, Vec<Shape>),
+    /// One `Shift`+`c`: the file.
+    File(PathBuf),
     /// The pixels of an export, without a file.
     Export(DecodedImage, Rotation, Vec<Shape>, Region, Export),
     /// Only these pixels, without a file.
@@ -360,13 +362,20 @@ impl Worker {
                 });
             }
             Command::Copy {
-                path,
                 image,
                 rotation,
                 shapes,
             } => {
-                let job = CopyJob::Shown(path.clone(), image.clone(), *rotation, shapes.clone());
+                let job = CopyJob::Shown(image.clone(), *rotation, shapes.clone());
                 if self.copier().send(job).is_err() {
+                    // The app may already be gone; nothing to report to then.
+                    let _ = self.events.send(Event::Copied(Err(
+                        "Cannot copy: the clipboard stopped".to_owned(),
+                    )));
+                }
+            }
+            Command::CopyFile(path) => {
+                if self.copier().send(CopyJob::File(path.clone())).is_err() {
                     // The app may already be gone; nothing to report to then.
                     let _ = self.events.send(Event::Copied(Err(
                         "Cannot copy: the clipboard stopped".to_owned(),
@@ -574,13 +583,12 @@ impl Worker {
                 let mut clipboard = Clipboard::default();
                 for job in inbox {
                     let result = match job {
-                        CopyJob::Shown(path, image, rotation, shapes) => {
-                            annotate::render(&image, &shapes).and_then(|image| match &path {
-                                Some(path) => clipboard.copy(path, &image, rotation),
-                                None => clipboard::turned(&image, rotation)
-                                    .and_then(|image| clipboard.copy_pixels(&image)),
-                            })
+                        CopyJob::Shown(image, rotation, shapes) => {
+                            annotate::render(&image, &shapes)
+                                .and_then(|image| clipboard::turned(&image, rotation))
+                                .and_then(|image| clipboard.copy_pixels(&image))
                         }
+                        CopyJob::File(path) => clipboard.copy_file(&path),
                         CopyJob::Export(image, rotation, shapes, area, export) => {
                             annotate::exported(&image, rotation, &shapes, area, &export)
                                 .and_then(|image| clipboard.copy_pixels(&image))
@@ -713,6 +721,7 @@ impl App {
                 | Command::Export { .. }
                 | Command::CopyExport { .. }
                 | Command::CopyReport { .. }
+                | Command::CopyFile(_)
                 | Command::CopyText(_)
                 | Command::ProbeLibraries
                 | Command::ReadDefaults { .. }

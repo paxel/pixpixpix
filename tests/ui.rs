@@ -751,19 +751,24 @@ fn x_reaches_the_core_and_a_failure_shows_in_the_key_line() {
 fn c_reaches_the_core_and_the_outcome_shows_in_the_key_line() {
     let mut h = harness(browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]));
     h.run();
-    h.get_by_label("C");
-    h.get_by_label("copy");
+    h.get_by_label("C/Shift+C");
+    h.get_by_label("copy picture/file");
     h.key_press(egui::Key::R);
     h.key_press(egui::Key::C);
     h.run();
     assert!(matches!(
         h.state().commands.last(),
         Some(Command::Copy {
-            path,
             rotation: pixpixpix::rotate::Rotation::Right,
             ..
-        }) if path.as_deref() == Some(Path::new("/p/a.jpg"))
+        })
     ));
+    h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::C);
+    h.run();
+    assert_eq!(
+        h.state().commands.last(),
+        Some(&Command::CopyFile(PathBuf::from("/p/a.jpg")))
+    );
     h.state_mut().core.handle(Event::Copied(Ok(())));
     h.run();
     h.get_by_label("copied");

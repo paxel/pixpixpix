@@ -42,9 +42,8 @@ fn browsing(start: &str, names: &[&str]) -> Core {
     core
 }
 
-fn copy(name: &str, rotation: Rotation) -> Command {
+fn copy(rotation: Rotation) -> Command {
     Command::Copy {
-        path: Some(p(name)),
         image: image(),
         rotation,
         shapes: Vec::new(),
@@ -52,19 +51,25 @@ fn copy(name: &str, rotation: Rotation) -> Command {
 }
 
 #[test]
-fn c_copies_the_shown_image_and_its_file() {
+fn c_copies_the_shown_picture_and_shift_c_the_file() {
     let mut core = browsing("a.jpg", &["a.jpg", "b.jpg"]);
-    assert_eq!(press(&mut core, Key::C), [copy("a.jpg", Rotation::None)]);
+    assert_eq!(press(&mut core, Key::C), [copy(Rotation::None)]);
+    let mut shift_c = KeyPress::plain(Key::C);
+    shift_c.shift = true;
+    assert_eq!(
+        core.handle(Event::Key(shift_c)),
+        [Command::CopyFile(p("a.jpg"))]
+    );
 }
 
 #[test]
 fn the_copy_carries_the_pending_rotation() {
     let mut core = browsing("a.jpg", &["a.jpg"]);
     press(&mut core, Key::R);
-    assert_eq!(press(&mut core, Key::C), [copy("a.jpg", Rotation::Right)]);
+    assert_eq!(press(&mut core, Key::C), [copy(Rotation::Right)]);
     press(&mut core, Key::L);
     press(&mut core, Key::L);
-    assert_eq!(press(&mut core, Key::C), [copy("a.jpg", Rotation::Left)]);
+    assert_eq!(press(&mut core, Key::C), [copy(Rotation::Left)]);
 }
 
 #[test]
@@ -72,7 +77,7 @@ fn a_rotation_being_written_is_still_copied_as_shown() {
     let mut core = browsing("a.jpg", &["a.jpg"]);
     press(&mut core, Key::R);
     press(&mut core, Key::Enter);
-    assert_eq!(press(&mut core, Key::C), [copy("a.jpg", Rotation::Right)]);
+    assert_eq!(press(&mut core, Key::C), [copy(Rotation::Right)]);
 }
 
 #[test]

@@ -2,11 +2,9 @@
 //! references. Owning the system clipboard needs a display and is not tested
 //! here.
 
-use std::io::Cursor;
 use std::path::Path;
 use std::sync::Arc;
 
-use image::ImageFormat;
 use pixpixpix::clipboard::{self, Content};
 use pixpixpix::decode::DecodedImage;
 use pixpixpix::rotate::Rotation;
@@ -73,25 +71,14 @@ fn pixels_that_do_not_fit_the_size_are_an_error() {
 }
 
 #[test]
-fn content_holds_the_turned_pixels_as_png_and_the_file() {
+fn file_content_holds_only_the_file() {
     let Content {
         png,
         uri_list,
         gnome_files,
         text,
-    } = clipboard::content(Path::new("/p/cat.jpg"), &numbered(), Rotation::Right).unwrap();
-    assert_eq!(image::guess_format(&png).unwrap(), ImageFormat::Png);
-    let decoded = image::load(Cursor::new(&png), ImageFormat::Png)
-        .unwrap()
-        .into_rgba8();
-    assert_eq!((decoded.width(), decoded.height()), (2, 3));
-    assert_eq!(
-        decoded.into_raw(),
-        clipboard::turned(&numbered(), Rotation::Right)
-            .unwrap()
-            .rgba
-            .as_ref()
-    );
+    } = clipboard::file_content(Path::new("/p/cat.jpg")).unwrap();
+    assert!(png.is_empty());
     assert_eq!(uri_list, "file:///p/cat.jpg\r\n");
     assert_eq!(gnome_files, "copy\nfile:///p/cat.jpg");
     assert_eq!(text, "");

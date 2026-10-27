@@ -492,7 +492,7 @@ impl Core {
     }
 
     /// The file of the selected tile.
-    fn selected_path(&self) -> Option<PathBuf> {
+    pub(super) fn selected_path(&self) -> Option<PathBuf> {
         let overview = self.view.overview.as_ref()?;
         let tile = overview.tiles.get(overview.selected?)?;
         Some(tile.path.clone())
@@ -631,7 +631,6 @@ impl Core {
         }
         if let Some(Ok(image)) = self.cache.get(&path) {
             commands.push(Command::Copy {
-                path: Some(path.clone()),
                 image: image.clone(),
                 rotation: Rotation::None,
                 shapes: Vec::new(),
@@ -664,7 +663,6 @@ impl Core {
         self.gallery.copying = None;
         match result {
             Ok(image) => vec![Command::Copy {
-                path: Some(path.to_path_buf()),
                 image: image.clone(),
                 rotation: Rotation::None,
                 shapes: Vec::new(),

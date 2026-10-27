@@ -1,6 +1,5 @@
-//! The clipboard: puts the shown pixels and the file itself on it in one go,
-//! so pasting into an image app gives the picture and pasting into a file
-//! manager copies the file. On Linux pixpixpix owns the X11 clipboard from a
+//! The clipboard: puts the shown picture on it for image apps, or the file
+//! itself for file managers. On Linux pixpixpix owns the X11 clipboard from a
 //! window of its own and serves it as long as it runs; Wayland sessions reach
 //! it through XWayland. On macOS both go on the general pasteboard.
 
@@ -27,12 +26,11 @@ pub struct Content {
     pub text: String,
 }
 
-/// The clipboard content for the file at `path` shown as `image` turned by
-/// `rotation`.
-pub fn content(path: &Path, image: &DecodedImage, rotation: Rotation) -> Result<Content, String> {
+/// The clipboard content for the file at `path` itself, for file managers.
+pub fn file_content(path: &Path) -> Result<Content, String> {
     let uri = file_uri(path)?;
     Ok(Content {
-        png: png(&turned(image, rotation)?)?,
+        png: Vec::new(),
         uri_list: format!("{uri}\r\n"),
         gnome_files: format!("copy\n{uri}"),
         text: String::new(),
@@ -86,23 +84,17 @@ pub struct Clipboard {
 }
 
 impl Clipboard {
-    /// Puts the file at `path`, shown as `image` turned by `rotation`, on the
-    /// clipboard. The error names the file and is meant to be shown to the
-    /// user as is.
-    pub fn copy(
-        &mut self,
-        path: &Path,
-        image: &DecodedImage,
-        rotation: Rotation,
-    ) -> Result<(), String> {
-        content(path, image, rotation)
+    /// Puts the file at `path` on the clipboard, for pasting into a file
+    /// manager. The error names the file and is meant to be shown to the user
+    /// as is.
+    pub fn copy_file(&mut self, path: &Path) -> Result<(), String> {
+        file_content(path)
             .and_then(|content| self.set(content))
             .map_err(|e| format!("Cannot copy {}: {e}", folder::file_name(path)))
     }
 
-    /// Puts only `image` on the clipboard, without a file: the pixels of an
-    /// export or an edited video frame. The error is meant to be shown to the
-    /// user as is.
+    /// Puts only `image` on the clipboard: the picture as shown, or an
+    /// export. The error is meant to be shown to the user as is.
     pub fn copy_pixels(&mut self, image: &DecodedImage) -> Result<(), String> {
         png(image)
             .map(|png| Content {

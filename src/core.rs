@@ -372,11 +372,12 @@ pub enum Command {
     },
     /// Move the file to the system trash, answered by [`Event::Trashed`].
     Trash(PathBuf),
-    /// Put the file and its pixels, with `shapes` drawn into them and turned
-    /// by `rotation`, on the clipboard, answered by [`Event::Copied`]. Without
-    /// a file only the pixels go: an edited video frame is not the video.
+    /// Put the file itself on the clipboard, for file managers; answered by
+    /// [`Event::Copied`].
+    CopyFile(PathBuf),
+    /// Put the pixels, with `shapes` drawn into them and turned by
+    /// `rotation`, on the clipboard, answered by [`Event::Copied`].
     Copy {
-        path: Option<PathBuf>,
         image: DecodedImage,
         rotation: Rotation,
         shapes: Vec<Shape>,
@@ -704,8 +705,8 @@ const IMAGE_VIEW_KEYS: &[KeyHint] = &[
         action: "write rotation",
     },
     KeyHint {
-        keys: "C",
-        action: "copy",
+        keys: "C/Shift+C",
+        action: "copy picture/file",
     },
     KeyHint {
         keys: "O",
@@ -921,8 +922,8 @@ const GALLERY_KEYS: &[KeyHint] = &[
         action: "thumbnail size",
     },
     KeyHint {
-        keys: "C",
-        action: "copy",
+        keys: "C/Shift+C",
+        action: "copy picture/file",
     },
     KeyHint {
         keys: "O",
@@ -2482,6 +2483,13 @@ impl Core {
                 self.change_settings(settings)
             }
             (Key::G, false) => self.toggle_overview(),
+            (Key::C, false) if key.shift && self.view.overview.is_some() => {
+                if self.view.focus == Focus::Image {
+                    self.copy_file()
+                } else {
+                    Vec::new()
+                }
+            }
             _ if self.view.overview.is_some() && key.command => Vec::new(),
             _ if self.view.overview.is_some() => self.overview_key(key.key),
             (Key::N, false) => self.toggle_column(),
@@ -2519,6 +2527,7 @@ impl Core {
             }
             (_, true) => Vec::new(),
             (Key::Period, false) if key.shift && self.view.focus == Focus::Dirs => self.keep_dots(),
+            (Key::C, false) if key.shift && self.view.focus == Focus::Image => self.copy_file(),
             _ => match self.view.focus {
                 Focus::Dirs => self.dir_key(key.key),
                 Focus::Image => self.image_key(key.key),
@@ -3006,7 +3015,7 @@ impl Core {
     /// and edits included. A file that does not show as an image has nothing
     /// to copy.
     fn copy(&mut self) -> Vec<Command> {
-        let Screen::Image { path, image } = &self.screen else {
+        let Screen::Image { image, .. } = &self.screen else {
             return Vec::new();
         };
         let shapes = self
@@ -3016,7 +3025,6 @@ impl Core {
             .map(|e| e.shapes.clone())
             .unwrap_or_default();
         let command = Command::Copy {
-            path: copied_file(path, &shapes),
             image: image.clone(),
             rotation: self.rotation,
             shapes,
@@ -3024,6 +3032,22 @@ impl Core {
         self.view.key_line.notice = None;
         self.view.copy_error = None;
         vec![command]
+    }
+
+    /// `Shift`+`c`: the file shown, or selected in the overview, goes on the
+    /// clipboard as a file, unedited.
+    pub(super) fn copy_file(&mut self) -> Vec<Command> {
+        let path = if self.view.overview.is_some() {
+            self.selected_path()
+        } else {
+            self.current.clone()
+        };
+        let Some(path) = path else {
+            return Vec::new();
+        };
+        self.view.key_line.notice = None;
+        self.view.copy_error = None;
+        vec![Command::CopyFile(path)]
     }
 
     /// A trashed file is gone from the folder and the overview for good. A
@@ -3383,13 +3407,6 @@ impl Core {
 /// The message for a folder that cannot be read.
 fn cannot_read(dir: &Path, message: &str) -> String {
     format!("Cannot read {}: {message}", dir.display())
-}
-
-/// The file a copy of `path` with `shapes` drawn in puts on the clipboard
-/// beside the pixels: none for an edited video frame, whose pixels the video
-/// file does not hold.
-fn copied_file(path: &Path, shapes: &[Shape]) -> Option<PathBuf> {
-    (shapes.is_empty() || !folder::is_video(path)).then(|| path.to_path_buf())
 }
 
 fn screen(path: &Path, result: Result<DecodedImage, String>) -> Screen {

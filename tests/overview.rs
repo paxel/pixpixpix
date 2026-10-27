@@ -127,7 +127,18 @@ const QUIT: &str = if cfg!(target_os = "macos") {
     "Ctrl+Q"
 };
 
-const GALLERY_KEYS: [&str; 10] = ["Arrows", "Enter", "+/-", "C", "O", "X", "G", "S", "F", QUIT];
+const GALLERY_KEYS: [&str; 10] = [
+    "Arrows",
+    "Enter",
+    "+/-",
+    "C/Shift+C",
+    "O",
+    "X",
+    "G",
+    "S",
+    "F",
+    QUIT,
+];
 
 #[test]
 fn g_opens_the_overview_of_the_current_folder_and_closes_it() {
@@ -633,7 +644,6 @@ fn c_copies_a_cached_file_at_once_and_decodes_another_first() {
     assert_eq!(
         commands,
         [Command::Copy {
-            path: Some(p("b.jpg")),
             image: image(),
             rotation: Rotation::None,
             shapes: Vec::new(),
@@ -650,7 +660,6 @@ fn c_copies_a_cached_file_at_once_and_decodes_another_first() {
     assert_eq!(
         commands,
         [Command::Copy {
-            path: Some(c.clone()),
             image: image(),
             rotation: Rotation::None,
             shapes: Vec::new(),
@@ -896,7 +905,6 @@ fn c_on_a_file_the_image_view_decodes_copies_even_when_the_view_drops_it() {
     assert_eq!(
         decoded(&mut core, p("f.jpg")),
         [Command::Copy {
-            path: Some(p("f.jpg")),
             image: image(),
             rotation: Rotation::None,
             shapes: Vec::new(),
@@ -970,4 +978,19 @@ fn g_out_shows_the_selected_tile_and_the_overview_is_tagged_while_open() {
         &core.view().screen,
         Screen::Image { path, .. } if *path == p("b.jpg")
     ));
+}
+
+#[test]
+fn shift_c_copies_the_selected_file() {
+    let mut core = browsing();
+    let commands = press(&mut core, Key::G);
+    let (scan, _, _) = scan_of(&commands).unwrap();
+    section(&mut core, scan, "/p", &["/p/a.jpg", "/p/b.jpg"]);
+    press(&mut core, Key::Right);
+    let mut shift_c = KeyPress::plain(Key::C);
+    shift_c.shift = true;
+    assert_eq!(
+        core.handle(Event::Key(shift_c)),
+        [Command::CopyFile(p("b.jpg"))]
+    );
 }

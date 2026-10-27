@@ -256,24 +256,22 @@ fn an_export_of_a_frame_offers_no_overwrite() {
 }
 
 #[test]
-fn an_edited_frame_is_copied_without_the_video_file() {
+fn a_frame_is_copied_as_a_picture_and_shift_c_copies_the_video_file() {
     let mut core = edited();
     assert!(matches!(
         press(&mut core, Key::C).as_slice(),
-        [Command::Copy { path: None, .. }]
+        [Command::Copy { .. }]
     ));
     press(&mut core, Key::Enter);
     assert!(matches!(
         core.handle(Event::SaveChoice(SaveChoice::Copy)).as_slice(),
-        [Command::Copy { path: None, .. }]
+        [Command::Copy { .. }]
     ));
-}
-
-#[test]
-fn an_unedited_frame_is_copied_with_the_video_file() {
     let mut core = browsing("clip.mp4", &["clip.mp4"]);
-    assert!(matches!(
-        press(&mut core, Key::C).as_slice(),
-        [Command::Copy { path: Some(path), .. }] if *path == p("clip.mp4")
-    ));
+    let mut shift_c = KeyPress::plain(Key::C);
+    shift_c.shift = true;
+    assert_eq!(
+        core.handle(Event::Key(shift_c)),
+        [Command::CopyFile(p("clip.mp4"))]
+    );
 }

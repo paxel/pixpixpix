@@ -71,7 +71,8 @@ while it is closed.
 | `1`                    | 100 %                                            |
 | `l` / `r`              | turn a quarter left / right, on screen only      |
 | `Enter`                | write the turn into the file                     |
-| `c`                    | copy the image and the file to the clipboard     |
+| `c`                    | copy the picture to the clipboard                |
+| `Shift`+`c`            | copy the file to the clipboard                   |
 | `o`                    | open in another app                              |
 | `i`                    | metadata panel                                   |
 | `x`                    | move to the trash                                |
@@ -132,7 +133,7 @@ The key line tags what is on.
 | arrows                  | move the selection                                |
 | `Enter`, click          | show the file in the image view                   |
 | `+` / `-`, `Ctrl`+wheel | thumbnail size                                    |
-| `c`                     | copy                                              |
+| `c` / `Shift`+`c`       | copy the picture / the file                       |
 | `o`                     | open in another app                               |
 | `x`                     | move to the trash                                 |
 | `g`                     | close, showing the selected file                  |

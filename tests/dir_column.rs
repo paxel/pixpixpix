@@ -388,7 +388,7 @@ fn the_key_line_lists_the_keys_of_the_focused_area() {
             "1",
             "L/R",
             "Enter",
-            "C",
+            "C/Shift+C",
             "O",
             "I",
             "X",
