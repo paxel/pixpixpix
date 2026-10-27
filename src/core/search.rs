@@ -186,6 +186,7 @@ impl Core {
                         Some(Thumb {
                             path: path.clone(),
                             image,
+                            loading: false,
                             current: path == first,
                             animated: false,
                             images: 1,

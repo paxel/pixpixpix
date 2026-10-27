@@ -1836,3 +1836,58 @@ fn remove_location_in_the_metadata_view_goes_through_the_save_dialog() {
         }]
     );
 }
+
+#[test]
+fn files_still_loading_stand_in_the_band_as_placeholders() {
+    let core = browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg", "/p/c.jpg"]);
+    let mut h = harness(core);
+    h.run();
+    h.get_by_role_and_label(Role::Button, "b.jpg (loading)");
+    h.get_by_role_and_label(Role::Button, "c.jpg (loading)");
+}
+
+#[test]
+fn the_current_thumb_is_in_the_middle_of_the_band() {
+    let files = ["/p/a.jpg", "/p/b.jpg", "/p/c.jpg", "/p/d.jpg", "/p/e.jpg"];
+    let mut core = browsing("/p/a.jpg", &files);
+    for name in &files[1..] {
+        decoded(&mut core, name);
+    }
+    core.handle(Event::Show(PathBuf::from("/p/c.jpg")));
+    let mut h = harness(core);
+    h.run();
+    let middle = h.ctx.content_rect().center().x;
+    let x = |name: &str| {
+        h.get_by_role_and_label(Role::Button, name)
+            .rect()
+            .center()
+            .x
+    };
+    assert!(
+        (x("c.jpg") - middle).abs() < 1.0,
+        "{} vs {middle}",
+        x("c.jpg")
+    );
+    assert!(x("b.jpg") < x("c.jpg") && x("c.jpg") < x("d.jpg"));
+}
+
+#[test]
+fn at_the_first_file_the_left_of_the_band_stays_empty() {
+    let mut core = browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]);
+    decoded(&mut core, "/p/b.jpg");
+    let mut h = harness(core);
+    h.run();
+    let middle = h.ctx.content_rect().center().x;
+    let a = h.get_by_role_and_label(Role::Button, "a.jpg").rect();
+    let b = h.get_by_role_and_label(Role::Button, "b.jpg").rect();
+    assert!((a.center().x - middle).abs() < 1.0);
+    assert!(b.min.x > a.max.x);
+}
+
+#[test]
+fn the_band_key_is_named_preloaded_files() {
+    let mut h = harness(browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]));
+    h.run();
+    // B and Tab both lead there.
+    assert_eq!(h.query_all_by_label("preloaded files").count(), 2);
+}

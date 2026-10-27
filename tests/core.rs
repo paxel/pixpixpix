@@ -506,7 +506,13 @@ fn images_leaving_the_window_are_dropped_from_the_cache() {
         press(&mut core, Key::Right);
     }
     // On f06: f00 left the window and is not in the band any more.
-    let names: Vec<String> = band(&core).into_iter().map(|(n, _)| n).collect();
+    let names: Vec<String> = core
+        .view()
+        .band
+        .iter()
+        .filter(|t| !t.loading)
+        .map(|t| folder::file_name(&t.path))
+        .collect();
     assert_eq!(
         names,
         ["f01.jpg", "f02.jpg", "f03.jpg", "f04.jpg", "f05.jpg"]
@@ -522,7 +528,17 @@ fn images_leaving_the_window_are_dropped_from_the_cache() {
 fn band_shows_the_cached_images_in_folder_order_with_the_current_one_marked() {
     let mut core = browsing("/p/b.jpg", &["/p/a.jpg", "/p/b.jpg", "/p/c.jpg"]);
     decoded(&mut core, "b.jpg");
-    assert_eq!(band(&core), [("b.jpg".to_owned(), true)]);
+    // The neighbours stand in as placeholders until decoded.
+    assert_eq!(
+        band(&core),
+        [
+            ("a.jpg".to_owned(), false),
+            ("b.jpg".to_owned(), true),
+            ("c.jpg".to_owned(), false)
+        ]
+    );
+    let loading: Vec<bool> = core.view().band.iter().map(|t| t.loading).collect();
+    assert_eq!(loading, [true, false, true]);
     decoded(&mut core, "c.jpg");
     decoded(&mut core, "a.jpg");
     assert_eq!(
@@ -538,6 +554,7 @@ fn band_shows_the_cached_images_in_folder_order_with_the_current_one_marked() {
         Some(&Thumb {
             path: p("a.jpg"),
             image: Some(image()),
+            loading: false,
             current: false,
             animated: false,
             images: 1,
@@ -564,6 +581,7 @@ fn broken_files_are_in_the_band_without_an_image() {
         Some(&Thumb {
             path: p("b.jpg"),
             image: None,
+            loading: false,
             current: false,
             animated: false,
             images: 1,

@@ -17,7 +17,7 @@ neighbours are preloaded so the next image is already there.
 ## What it does
 
 - **Browse.** Left and Right step through the folder in natural name order (`img2`
-  before `img10`), with a thumbnail band of the neighbours. Files other programs add,
+  before `img10`), with a band of the preloaded neighbours, the current file in its middle. Files other programs add,
   remove or rename show up on their own.
 - **Move through folders.** A dir column lists the subfolders and previews the first
   image of the highlighted one; it can also search the subfolders for the nearest
@@ -74,7 +74,7 @@ while it is closed.
 | `p`                    | tools (annotation toolbar)                       |
 | `g`                    | overview                                         |
 | `n`                    | dir column                                       |
-| `b`                    | focus the band                                   |
+| `b`                    | focus the preloaded files                        |
 | `Up` / `Down`          | previous / next image inside a multi-image file  |
 | `Space`                | play / pause a video, Live Photo or Motion Photo |
 | click                  | play / pause a video                             |
@@ -107,7 +107,7 @@ In the save dialog, `Enter` saves as a new file and `Esc` goes back to editing.
 | `Shift`+`r`                  | find images below every folder you enter, until `r`            |
 | `g`                          | overview of the highlighted folder                             |
 | `n`                          | close                                                          |
-| `b`                          | focus the band                                                 |
+| `b`                          | focus the preloaded files                                      |
 
 The key line tags what is on.
 

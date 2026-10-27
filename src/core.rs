@@ -616,11 +616,11 @@ const IMAGE_VIEW_KEYS: &[KeyHint] = &[
     },
     KeyHint {
         keys: "B",
-        action: "band",
+        action: "preloaded files",
     },
     KeyHint {
         keys: "Tab",
-        action: "band",
+        action: "preloaded files",
     },
 ];
 
@@ -742,7 +742,7 @@ const DIR_COLUMN_KEYS: &[KeyHint] = &[
     },
     KeyHint {
         keys: "B",
-        action: "band",
+        action: "preloaded files",
     },
     KeyHint {
         keys: "Tab",
@@ -923,8 +923,10 @@ pub struct DirColumn {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Thumb {
     pub path: PathBuf,
-    /// Absent when the file failed to decode.
+    /// Absent when the file failed to decode or is still loading.
     pub image: Option<DecodedImage>,
+    /// The file is not decoded yet; a placeholder stands in for it.
+    pub loading: bool,
     pub current: bool,
     /// The file is an animation.
     pub animated: bool,
@@ -1400,6 +1402,7 @@ impl Nav {
                 vec![Thumb {
                     path: path.clone(),
                     image: result.as_ref().ok().cloned(),
+                    loading: false,
                     current: true,
                     animated: false,
                     images: 1,
@@ -3240,17 +3243,18 @@ impl Core {
         }
         self.band = window
             .into_iter()
-            .filter_map(|path| {
-                let image = self.cache.get(&path)?.as_ref().ok().cloned();
-                Some(Thumb {
-                    image,
+            .map(|path| {
+                let cached = self.cache.get(&path);
+                Thumb {
+                    image: cached.and_then(|r| r.as_ref().ok()).cloned(),
+                    loading: cached.is_none(),
                     current: self.current.as_ref() == Some(&path),
                     path,
                     animated: false,
                     images: 1,
                     video: false,
                     motion: None,
-                })
+                }
             })
             .collect();
         commands

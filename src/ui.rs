@@ -30,6 +30,8 @@ const CURRENT_MARK: Color32 = Color32::from_rgb(0xff, 0xd5, 0x80);
 /// The highlighted thumb while the band has the focus, around the current mark.
 const BAND_HIGHLIGHT: Color32 = Color32::from_rgb(0x7c, 0xc4, 0xff);
 const BROKEN_TILE: Color32 = Color32::from_rgb(0x3a, 0x1e, 0x1c);
+/// A band thumb still loading.
+const PLACEHOLDER_TILE: Color32 = Color32::from_rgb(0x24, 0x24, 0x28);
 /// The badge of an animated or multi-image thumb and its marks.
 const ANIMATED_BADGE: Color32 = Color32::from_rgba_premultiplied(0x12, 0x12, 0x14, 0xc0);
 const ANIMATED_MARK: Color32 = Color32::from_rgb(0xe8, 0xe8, 0xea);
@@ -299,9 +301,10 @@ fn shown(view: &View, path: &Path) -> bool {
     current || view.overview.is_some() || view.band.iter().any(|t| t.path == path)
 }
 
-/// The cached files as small thumbs, broken ones as a marked tile, animated
-/// ones with a badge, the current one framed and the highlighted one framed
-/// wider; a click on a thumb asks the core to show it.
+/// The files around the current one as small thumbs, the current one in the
+/// middle: ones still loading as a plain placeholder, broken ones as a marked
+/// tile, animated ones with a badge, the current one framed and the
+/// highlighted one framed wider; a click on a thumb asks the core to show it.
 fn show_band(
     ui: &mut egui::Ui,
     band: &[Thumb],
@@ -309,80 +312,100 @@ fn show_band(
     textures: &mut Textures,
     events: &mut Vec<Event>,
 ) {
-    ui.horizontal(|ui| {
-        for (index, thumb) in band.iter().enumerate() {
-            let name = folder::file_name(&thumb.path);
-            let (rect, response, label) = match &thumb.image {
-                Some(image) => {
-                    let texture = textures.get(ui.ctx(), &thumb.path, image);
-                    let pixels = egui::vec2(image.width as f32, image.height as f32);
-                    let size = fit(pixels, egui::vec2(THUMB_HEIGHT * 2.0, THUMB_HEIGHT));
-                    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
-                    egui::Image::new(&texture).paint_at(ui, rect);
-                    if thumb.video {
-                        paint_play(ui.painter(), rect.center(), THUMB_HEIGHT / 5.0);
-                        (rect, response, format!("{name} (video)"))
-                    } else if thumb.animated {
-                        paint_animated_badge(ui.painter(), rect);
-                        (rect, response, format!("{name} (animated)"))
-                    } else if let Some(kind) = thumb.motion {
-                        paint_motion_badge(ui.painter(), rect, kind);
-                        let kind = motion_name(kind).to_lowercase();
-                        (rect, response, format!("{name} ({kind})"))
-                    } else if thumb.images > 1 {
-                        paint_images_badge(ui.painter(), rect, thumb.images);
-                        (rect, response, format!("{name} ({} images)", thumb.images))
-                    } else {
-                        (rect, response, name)
-                    }
+    let (area, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), THUMB_HEIGHT),
+        egui::Sense::hover(),
+    );
+    let sizes: Vec<egui::Vec2> = band
+        .iter()
+        .map(|thumb| match &thumb.image {
+            Some(image) => fit(
+                egui::vec2(image.width as f32, image.height as f32),
+                egui::vec2(THUMB_HEIGHT * 2.0, THUMB_HEIGHT),
+            ),
+            None => egui::Vec2::splat(THUMB_HEIGHT),
+        })
+        .collect();
+    let gap = ui.spacing().item_spacing.x;
+    // The current thumb is centred; the others line up beside it, so the ends
+    // of a folder leave their side empty.
+    let current = band.iter().position(|t| t.current).unwrap_or(0);
+    let before: f32 = sizes.iter().take(current).map(|s| s.x + gap).sum();
+    let current_width = sizes.get(current).map_or(0.0, |s| s.x);
+    let mut left = area.center().x - current_width / 2.0 - before;
+    for (index, (thumb, size)) in band.iter().zip(sizes).enumerate() {
+        let rect = egui::Rect::from_min_size(egui::pos2(left, area.min.y), size);
+        left += size.x + gap;
+        let response = ui.interact(
+            rect,
+            ui.id().with(("thumb", &thumb.path)),
+            egui::Sense::click(),
+        );
+        let name = folder::file_name(&thumb.path);
+        let painter = ui.painter_at(area);
+        let label = match &thumb.image {
+            Some(image) => {
+                let texture = textures.get(ui.ctx(), &thumb.path, image);
+                egui::Image::new(&texture).paint_at(ui, rect);
+                if thumb.video {
+                    paint_play(&painter, rect.center(), THUMB_HEIGHT / 5.0);
+                    format!("{name} (video)")
+                } else if thumb.animated {
+                    paint_animated_badge(&painter, rect);
+                    format!("{name} (animated)")
+                } else if let Some(kind) = thumb.motion {
+                    paint_motion_badge(&painter, rect, kind);
+                    let kind = motion_name(kind).to_lowercase();
+                    format!("{name} ({kind})")
+                } else if thumb.images > 1 {
+                    paint_images_badge(&painter, rect, thumb.images);
+                    format!("{name} ({} images)", thumb.images)
+                } else {
+                    name
                 }
-                None => {
-                    let size = egui::Vec2::splat(THUMB_HEIGHT);
-                    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
-                    let painter = ui.painter();
-                    painter.rect_filled(rect, 2.0, BROKEN_TILE);
-                    painter.text(
-                        rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        "!",
-                        egui::FontId::proportional(32.0),
-                        ERROR_TEXT,
-                    );
-                    (rect, response, format!("{name} (error)"))
-                }
-            };
-            if thumb.current {
-                ui.painter().rect_stroke(
-                    rect.expand(2.0),
-                    2.0,
-                    egui::Stroke::new(2.0, CURRENT_MARK),
-                    egui::StrokeKind::Outside,
+            }
+            None if thumb.loading => {
+                painter.rect_filled(rect, 2.0, PLACEHOLDER_TILE);
+                format!("{name} (loading)")
+            }
+            None => {
+                painter.rect_filled(rect, 2.0, BROKEN_TILE);
+                painter.text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "!",
+                    egui::FontId::proportional(32.0),
+                    ERROR_TEXT,
                 );
+                format!("{name} (error)")
             }
-            let highlighted = highlight == Some(index);
-            if highlighted {
-                ui.painter().rect_stroke(
-                    rect.expand(4.0),
-                    3.0,
-                    egui::Stroke::new(2.0, BAND_HIGHLIGHT),
-                    egui::StrokeKind::Outside,
-                );
-            }
-            response.widget_info(|| {
-                egui::WidgetInfo::selected(
-                    egui::WidgetType::Button,
-                    true,
-                    thumb.current,
-                    label.clone(),
-                )
-            });
-            ui.ctx()
-                .accesskit_node_builder(response.id, |node| node.set_selected(highlighted));
-            if response.clicked() {
-                events.push(Event::Show(thumb.path.clone()));
-            }
+        };
+        if thumb.current {
+            painter.rect_stroke(
+                rect.expand(2.0),
+                2.0,
+                egui::Stroke::new(2.0, CURRENT_MARK),
+                egui::StrokeKind::Outside,
+            );
         }
-    });
+        let highlighted = highlight == Some(index);
+        if highlighted {
+            painter.rect_stroke(
+                rect.expand(4.0),
+                3.0,
+                egui::Stroke::new(2.0, BAND_HIGHLIGHT),
+                egui::StrokeKind::Outside,
+            );
+        }
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(egui::WidgetType::Button, true, thumb.current, label.clone())
+        });
+        ui.ctx()
+            .accesskit_node_builder(response.id, |node| node.set_selected(highlighted));
+        if response.clicked() {
+            events.push(Event::Show(thumb.path.clone()));
+        }
+    }
 }
 
 /// The badge of an animated thumb in its bottom left corner: a row of film
