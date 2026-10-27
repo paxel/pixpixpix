@@ -1174,7 +1174,8 @@ fn show_hint(ui: &mut egui::Ui, index: usize, hint: &KeyHint, events: &mut Vec<E
     // starts a new line when it does not fit whole.
     let width = plain.size().x + text_width(ui, &action);
     let needed = width + ui.spacing().item_spacing.x;
-    if ui.available_width() < needed && ui.cursor().min.x > ui.max_rect().min.x {
+    // What is left of the line; `available_width` is the whole line.
+    if ui.available_size_before_wrap().x < needed && ui.cursor().min.x > ui.max_rect().min.x {
         ui.end_row();
     }
     let presses = hint.presses();

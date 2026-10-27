@@ -22,6 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A hint at the end of a key line no longer breaks between its key and what it does.
 - A click on the `?` that stands for hidden hints brings them back.
 
 ---

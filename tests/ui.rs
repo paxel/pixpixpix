@@ -1939,6 +1939,26 @@ fn the_key_line_wraps_in_a_narrow_window() {
 }
 
 #[test]
+fn a_hint_never_breaks_between_its_key_and_its_action() {
+    for width in (420..1200).step_by(23) {
+        let mut h = harness(browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]));
+        h.set_size(egui::vec2(width as f32, 600.0));
+        h.run();
+        let hints = h.state().core.view().key_line.keys.clone();
+        for hint in hints {
+            let key = h.get_by_label(hint.keys).rect();
+            assert!(
+                h.query_all_by_label(hint.action)
+                    .any(|action| (action.rect().center().y - key.center().y).abs() < 1.0),
+                "{} and {} on different lines at {width}",
+                hint.keys,
+                hint.action
+            );
+        }
+    }
+}
+
+#[test]
 fn question_mark_hides_the_hints_but_not_the_tags_and_is_saved() {
     let mut h = column_open();
     h.key_press(egui::Key::Period);
