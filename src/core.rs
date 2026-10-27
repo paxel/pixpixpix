@@ -1967,8 +1967,13 @@ impl Core {
             thumb.motion = kind;
         }
         if self.view.overview.is_some() && !self.view.settings_open {
-            self.view.key_line.keys =
-                overview_keys(self.view.focus, self.view.dir_column.is_some());
+            let mut keys = overview_keys(self.view.focus, self.view.dir_column.is_some());
+            if !self.trashed.is_empty()
+                && let Some(at) = keys.iter().position(|k| k.keys == "X")
+            {
+                keys.insert(at.saturating_add(1), UNDO_TRASH_KEY);
+            }
+            self.view.key_line.keys = keys;
         } else if self.view.focus == Focus::Image && !self.view.settings_open {
             let mut keys = focus_keys(Focus::Image, self.view.dir_column.is_some());
             if self.view.inner.is_some() {
@@ -3176,7 +3181,7 @@ impl Core {
     }
 
     /// `u`: the files of the last trashing go back where they were.
-    fn undo_trash(&mut self) -> Vec<Command> {
+    pub(super) fn undo_trash(&mut self) -> Vec<Command> {
         let Some(files) = self.trashed.pop() else {
             return Vec::new();
         };
@@ -3191,11 +3196,18 @@ impl Core {
             self.view.trash_error = Some(message);
             return Vec::new();
         }
-        let Some(first) = paths.into_iter().next() else {
+        let Some(first) = paths.first().cloned() else {
             return Vec::new();
         };
         let same_folder = first.parent() == self.dir.as_deref();
-        let mut commands = self.opened(first);
+        if self.view.overview.is_some() {
+            let mut commands = self.overview_restored(&paths);
+            if same_folder && let Some(dir) = self.dir.clone() {
+                commands.push(Command::ListFolder(dir));
+            }
+            return commands;
+        }
+        let mut commands = self.opened(first.clone());
         if same_folder && let Some(dir) = self.dir.clone() {
             commands.push(Command::ListFolder(dir));
         }

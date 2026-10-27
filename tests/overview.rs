@@ -1016,3 +1016,74 @@ fn esc_in_the_gallery_or_its_column_shows_the_selected_tile_in_the_image_view() 
         ));
     }
 }
+
+/// The gallery of `/p` with `/p` holding a.jpg, b.jpg, c.jpg and `/p/x`
+/// holding 1.jpg, b.jpg selected.
+fn gallery_with_sections() -> Core {
+    let mut core = browsing();
+    let commands = press(&mut core, Key::G);
+    let (scan, _, _) = scan_of(&commands).unwrap_or_default();
+    section(&mut core, scan, "/p", &["/p/a.jpg", "/p/b.jpg", "/p/c.jpg"]);
+    section(&mut core, scan, "/p/x", &["/p/x/1.jpg"]);
+    press(&mut core, Key::Right);
+    core
+}
+
+fn tile_names(core: &Core) -> Vec<String> {
+    overview(core)
+        .map(|o| {
+            o.tiles
+                .iter()
+                .map(|t| pixpixpix::folder::file_name(&t.path))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[test]
+fn u_in_the_gallery_puts_the_tile_back_in_its_section_selected() {
+    let mut core = gallery_with_sections();
+    press(&mut core, Key::X);
+    core.handle(Event::Trashed {
+        path: p("b.jpg"),
+        result: Ok(()),
+    });
+    assert_eq!(tile_names(&core), ["a.jpg", "c.jpg", "1.jpg"]);
+    assert_eq!(
+        press(&mut core, Key::U),
+        [Command::Restore(vec![p("b.jpg")])]
+    );
+    core.handle(Event::Restored {
+        paths: vec![p("b.jpg")],
+        result: Ok(()),
+    });
+    let open = overview(&core).unwrap();
+    assert_eq!(tile_names(&core), ["a.jpg", "b.jpg", "c.jpg", "1.jpg"]);
+    assert_eq!(open.selected, Some(1));
+    assert_eq!(open.sections[0].tiles, 0..3);
+    assert_eq!(open.sections[1].tiles, 3..4);
+}
+
+#[test]
+fn a_restored_tile_brings_back_the_section_its_folder_lost() {
+    let mut core = gallery_with_sections();
+    for _ in 0..2 {
+        press(&mut core, Key::Right);
+    }
+    press(&mut core, Key::X);
+    core.handle(Event::Trashed {
+        path: PathBuf::from("/p/x/1.jpg"),
+        result: Ok(()),
+    });
+    assert_eq!(overview(&core).unwrap().sections.len(), 1);
+    press(&mut core, Key::U);
+    core.handle(Event::Restored {
+        paths: vec![PathBuf::from("/p/x/1.jpg")],
+        result: Ok(()),
+    });
+    let open = overview(&core).unwrap();
+    assert_eq!(open.sections.len(), 2);
+    assert_eq!(open.sections[1].dir, PathBuf::from("/p/x"));
+    assert_eq!(open.sections[1].tiles, 3..4);
+    assert_eq!(open.selected, Some(3));
+}

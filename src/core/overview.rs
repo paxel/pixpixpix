@@ -429,6 +429,7 @@ impl Core {
             Key::Minus => self.resize_thumbnails(false),
             Key::X => self.trash_selected(),
             Key::C => self.copy_selected(),
+            Key::U => self.undo_trash(),
             Key::O => {
                 let path = self.selected_path();
                 self.open_externally(path)
@@ -574,7 +575,93 @@ impl Core {
         let mov = self.gallery.live.get(&path).cloned();
         let files = [vec![path], mov.into_iter().collect()].concat();
         self.trashing.extend(files.iter().cloned());
+        self.trashed.push(files.clone());
         files.into_iter().map(Command::Trash).collect()
+    }
+
+    /// Files are back from the trash while the overview is open: the first,
+    /// with its Live Photo's MOV, is a tile in its section again, selected,
+    /// in a section of its own where its folder had none left. A file outside
+    /// the root changes nothing here.
+    pub(super) fn overview_restored(&mut self, paths: &[PathBuf]) -> Vec<Command> {
+        let Some(first) = paths.first().cloned() else {
+            return Vec::new();
+        };
+        let Some(dir) = first.parent().map(Path::to_path_buf) else {
+            return Vec::new();
+        };
+        let mov = paths.get(1).cloned();
+        let Some(overview) = self.view.overview.as_mut() else {
+            return Vec::new();
+        };
+        if !dir.starts_with(&overview.root) {
+            return Vec::new();
+        }
+        let name = folder::file_name(&first);
+        let index = match overview.sections.iter().position(|s| s.dir == dir) {
+            Some(section) => {
+                let tiles = overview
+                    .sections
+                    .get(section)
+                    .map_or(0..0, |s| s.tiles.clone());
+                let after = overview.tiles.get(tiles.clone()).and_then(|tiles| {
+                    tiles.iter().position(|t| {
+                        folder::natural_cmp(&folder::file_name(&t.path), &name).is_gt()
+                    })
+                });
+                let index = tiles.start.saturating_add(after.unwrap_or(tiles.len()));
+                if let Some(section) = overview.sections.get_mut(section) {
+                    section.tiles.end = section.tiles.end.saturating_add(1);
+                }
+                index
+            }
+            None => {
+                let at = overview
+                    .sections
+                    .iter()
+                    .position(|s| scan_order(&s.dir, &dir).is_gt())
+                    .unwrap_or(overview.sections.len());
+                let index = overview
+                    .sections
+                    .get(at)
+                    .map_or(overview.tiles.len(), |s| s.tiles.start);
+                overview.sections.insert(
+                    at,
+                    Section {
+                        title: title(&overview.root, &dir),
+                        dir: dir.clone(),
+                        tiles: index..index,
+                    },
+                );
+                if let Some(section) = overview.sections.get_mut(at) {
+                    section.tiles.end = index.saturating_add(1);
+                }
+                index
+            }
+        };
+        let later = |i: usize| if i >= index { i.saturating_add(1) } else { i };
+        for section in overview.sections.iter_mut().filter(|s| s.dir != dir) {
+            section.tiles = later(section.tiles.start)..later(section.tiles.end);
+        }
+        overview.tiles.insert(
+            index,
+            Tile {
+                video: folder::is_video(&first),
+                motion: mov.as_ref().map(|_| MotionKind::LivePhoto),
+                path: first.clone(),
+                thumbnail: None,
+            },
+        );
+        overview.selected = Some(index);
+        overview.reveal = Some(Reveal::Tile(index));
+        self.gallery.loaded = self.gallery.loaded.iter().map(|i| later(*i)).collect();
+        for i in self.gallery.decoding.values_mut() {
+            *i = later(*i);
+        }
+        if let Some(mov) = mov {
+            self.gallery.live.insert(first, mov);
+        }
+        self.overview_refresh()
     }
 
     /// A file is in the trash: its tile goes, the selection moves on to the
@@ -724,6 +811,27 @@ fn row_above(sections: &[Section], columns: usize, index: usize) -> Option<usize
 
 /// The heading of the section of `dir`: its path relative to `root`, with
 /// `/` between folders; the root's own name for the root.
+/// How the scan orders the folders `a` and `b`: a folder before the folders
+/// below it, folders of a level in natural order.
+fn scan_order(a: &Path, b: &Path) -> std::cmp::Ordering {
+    let mut a = a.components();
+    let mut b = b.components();
+    loop {
+        match (a.next(), b.next()) {
+            (Some(x), Some(y)) if x == y => {}
+            (Some(x), Some(y)) => {
+                return folder::natural_cmp(
+                    &x.as_os_str().to_string_lossy(),
+                    &y.as_os_str().to_string_lossy(),
+                );
+            }
+            (None, Some(_)) => return std::cmp::Ordering::Less,
+            (Some(_), None) => return std::cmp::Ordering::Greater,
+            (None, None) => return std::cmp::Ordering::Equal,
+        }
+    }
+}
+
 fn title(root: &Path, dir: &Path) -> String {
     match dir.strip_prefix(root) {
         Ok(relative) if !relative.as_os_str().is_empty() => relative

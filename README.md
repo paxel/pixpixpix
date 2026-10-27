@@ -141,6 +141,7 @@ The key line tags what is on.
 | `c` / `Shift`+`c`       | copy the picture / the file                       |
 | `o`                     | open in another app                               |
 | `x`                     | move to the trash                                 |
+| `u`                     | put the last trashed file back, selected          |
 | `g` / `Esc`             | close, showing the selected file                  |
 | `Tab`                   | switch between gallery and dir column             |
 
