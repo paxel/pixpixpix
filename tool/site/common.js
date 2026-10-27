@@ -6,6 +6,9 @@ import { escapeHtml } from "./html.js";
 
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
+/** Where the latest release's site is published. */
+export const SITE_URL = "https://paxel.github.io/pixpixpix/";
+
 export { escapeHtml };
 
 const NAMED_ENTITIES = {

@@ -16,7 +16,7 @@ import {
   readVersion,
   versionHref,
 } from "./build.js";
-import { generatedPages, latestNews, parseChangelog } from "./generated.js";
+import { generatedPages, inline, latestNews, parseChangelog } from "./generated.js";
 import { buildAll, compareVersions, planVersions } from "./build-all.js";
 import { execFileSync } from "node:child_process";
 
@@ -198,4 +198,16 @@ test("build-all writes the latest at the root, every release with pages under it
   assert.equal(fs.readFileSync(path.join(out, "assets", "screenshots", "a.png"), "utf8"), "the app of 0.4.0");
   const versions = JSON.parse(fs.readFileSync(path.join(out, "versions.json"), "utf8"));
   assert.deepEqual(versions.map((v) => v.version), ["0.4.0", "0.3.0"]);
+});
+
+test("a link to the site in a changelog entry leads to that page of the version built", () => {
+  assert.equal(
+    inline("See [the trash](https://paxel.github.io/pixpixpix/trash-and-undo.html#undo)."),
+    'See <a href="trash-and-undo.html#undo">the trash</a>.',
+  );
+  assert.equal(inline("[docs](https://paxel.github.io/pixpixpix/)"), '<a href="index.html">docs</a>');
+  assert.equal(inline("[GitHub](https://github.com/paxel)"), '<a href="https://github.com/paxel">GitHub</a>');
+  // A page or an anchor the version lacks fails the build.
+  const files = new Map([["whats-new.html", inline("[gone](https://paxel.github.io/pixpixpix/index.html#nowhere)")], ["index.html", ""]]);
+  assert.throws(() => checkLinks(files), /missing anchor #nowhere/);
 });

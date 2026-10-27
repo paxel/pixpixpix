@@ -12,10 +12,9 @@ import os from "node:os";
 import path from "node:path";
 import http from "node:http";
 import { fileURLToPath } from "node:url";
-import { REPO_ROOT, decodeEntities, escapeHtml, readVersion, slugify, stripTags } from "./common.js";
+import { REPO_ROOT, SITE_URL, decodeEntities, escapeHtml, readVersion, slugify, stripTags } from "./common.js";
 import { generatedPages, latestNews } from "./generated.js";
 export const REPO_URL = "https://github.com/paxel/pixpixpix";
-export const SITE_URL = "https://paxel.github.io/pixpixpix/";
 
 /** The sections of the navigation. */
 export const TRACKS = [
@@ -67,7 +66,7 @@ const FRONT_MATTER_KEYS = ["title", "track", "order", "summary"];
 const FONTS_HREF =
   "https://fonts.googleapis.com/css2?family=Noto+Sans:ital,wght@0,400;0,600;1,400&family=Noto+Serif:wght@400;600&display=swap";
 
-export { REPO_ROOT, escapeHtml, decodeEntities, stripTags, slugify, readVersion };
+export { REPO_ROOT, SITE_URL, escapeHtml, decodeEntities, stripTags, slugify, readVersion };
 
 function collectIds(html) {
   const ids = new Set();

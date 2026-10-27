@@ -3,14 +3,21 @@
 // the current release on the overview.
 import fs from "node:fs";
 import path from "node:path";
-import { REPO_ROOT, escapeHtml } from "./common.js";
+import { REPO_ROOT, SITE_URL, escapeHtml } from "./common.js";
 
-/** Markdown inline: `code`, **bold**, _em_ and [text](url). */
+/**
+ * Markdown inline: `code`, **bold**, _em_ and [text](url). A link to the
+ * site becomes a link to the same page of the version being built: What's
+ * new and the overview stand at a version's root, so the path after the
+ * site's address is that page; the link check then fails on a page or an
+ * anchor the version lacks.
+ */
 export function inline(text) {
+  const href = (url) => (url.startsWith(SITE_URL) ? url.slice(SITE_URL.length) || "index.html" : url);
   return escapeHtml(text)
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '<a href="$2">$1</a>')
+    .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, (_, label, url) => `<a href="${href(url)}">${label}</a>`)
     .replace(/(^|\s)_([^_]+)_(?=[\s.,;:]|$)/g, "$1<em>$2</em>");
 }
 
