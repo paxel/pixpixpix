@@ -121,9 +121,16 @@ pub fn load(names: &[&str]) -> Result<TurboJpeg, String> {
         }
     }
     Err(format!(
-        "Lossless JPEG rotation needs libturbojpeg (libjpeg-turbo), which was not found: {reason}"
+        "Lossless JPEG rotation needs libturbojpeg (libjpeg-turbo), which was not found: {reason}. {INSTALL_HINT}"
     ))
 }
+
+/// How to get libturbojpeg, after it was not found.
+pub const INSTALL_HINT: &str = if cfg!(target_os = "macos") {
+    "Install jpeg-turbo with Homebrew."
+} else {
+    "Install libturbojpeg on Debian or Ubuntu, turbojpeg on Fedora, or libjpeg-turbo on Arch."
+};
 
 fn functions(library: Library) -> Result<TurboJpeg, String> {
     let missing = |e: libloading::Error| {

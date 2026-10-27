@@ -116,12 +116,12 @@ pub(super) fn show_overview(
     );
     if overview.sections.is_empty() {
         let text = match (overview.scanning, overview.bin) {
-            (true, false) => "Scanning…",
-            (false, false) => "No images",
-            (true, true) => "Reading the trash…",
-            (false, true) => "No images in the trash",
+            (true, false) => "Scanning…".to_owned(),
+            (false, false) => "No images".to_owned(),
+            (true, true) => reading_the_trash(ui),
+            (false, true) => "No images in the trash".to_owned(),
         };
-        show_status(ui, text);
+        show_status(ui, &text);
         return;
     }
     let side = side as f32;
@@ -198,6 +198,25 @@ pub(super) fn show_overview(
 
 /// Where `reveal` lies from the top left of the content and how to align it:
 /// a tile, as little as needed.
+/// "Reading the trash…" with the seconds it has taken so far, counting up
+/// as a sign of life: the trash is read in one call that tells no progress.
+fn reading_the_trash(ui: &egui::Ui) -> String {
+    // When the reading was first shown, and when last; a gap means a new one.
+    let id = egui::Id::new("reading the trash since");
+    let now = ui.input(|i| i.time);
+    let (since, _) = ui
+        .data(|d| d.get_temp::<(f64, f64)>(id))
+        .filter(|(_, last)| now - last < 2.0)
+        .unwrap_or((now, now));
+    ui.data_mut(|d| d.insert_temp(id, (since, now)));
+    ui.ctx()
+        .request_repaint_after(std::time::Duration::from_secs(1));
+    match (now - since).floor() {
+        0.0 => "Reading the trash…".to_owned(),
+        seconds => format!("Reading the trash… {seconds} s"),
+    }
+}
+
 fn revealed(
     overview: &Overview,
     grid: Grid,

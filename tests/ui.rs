@@ -2316,6 +2316,22 @@ fn the_question_before_trashing_a_folder_answers_by_click() {
 }
 
 #[test]
+fn reading_the_trash_counts_the_seconds() {
+    let mut h = harness(browsing("/p/a.jpg", &["/p/a.jpg"]));
+    h.run();
+    h.input_mut().time = Some(100.0);
+    h.key_press(egui::Key::T);
+    h.run();
+    h.get_by_label("Reading the trash\u{2026}");
+    // A frame a second, as the repaint the text asks for gives.
+    for second in 1..=14 {
+        h.input_mut().time = Some(100.5 + f64::from(second));
+        h.step();
+    }
+    h.get_by_label("Reading the trash\u{2026} 14 s");
+}
+
+#[test]
 fn t_shows_the_trash_and_enter_a_file_of_it_large() {
     let mut h = harness(browsing("/p/a.jpg", &["/p/a.jpg"]));
     h.run();

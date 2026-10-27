@@ -187,6 +187,17 @@ fn a_missing_libturbojpeg_is_an_error_naming_it() {
         error.starts_with("Lossless JPEG rotation needs libturbojpeg"),
         "{error}"
     );
+    assert!(error.ends_with(turbojpeg::INSTALL_HINT), "{error}");
+}
+
+#[test]
+fn the_install_hint_names_the_package_of_this_system() {
+    let package = if cfg!(target_os = "macos") {
+        "jpeg-turbo"
+    } else {
+        "turbojpeg on Fedora"
+    };
+    assert!(turbojpeg::INSTALL_HINT.contains(package));
 }
 
 /// What a lossless transform does to the stored pixels, done with `image`.

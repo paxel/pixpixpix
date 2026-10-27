@@ -1,6 +1,6 @@
 [package]
 name = "pixpixpix"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "Fast keyboard-first image and video viewer for Linux and macOS"
 license = "MIT"
