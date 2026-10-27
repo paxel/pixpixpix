@@ -63,12 +63,12 @@ fn a_trashed_file_is_put_back_unless_its_place_is_taken() {
         let file = dir.join("a b.jpg");
         std::fs::write(&file, b"first").unwrap();
         trash::move_to_trash(&file).unwrap();
-        trash::restore(&[file.clone()]).unwrap();
+        trash::restore(std::slice::from_ref(&file)).unwrap();
         assert_eq!(std::fs::read(&file).unwrap(), b"first");
         // Trashed again, and the place taken meanwhile: it stays in the trash.
         trash::move_to_trash(&file).unwrap();
         std::fs::write(&file, b"second").unwrap();
-        let error = trash::restore(&[file.clone()]).unwrap_err();
+        let error = trash::restore(std::slice::from_ref(&file)).unwrap_err();
         assert!(error.starts_with("Cannot restore a b.jpg: "), "{error}");
         assert_eq!(std::fs::read(&file).unwrap(), b"second");
         return;
