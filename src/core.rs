@@ -735,8 +735,12 @@ const IMAGE_VIEW_KEYS: &[KeyHint] = &[
         action: "write rotation",
     },
     KeyHint {
-        keys: "C/Shift+C",
-        action: "copy picture/file",
+        keys: "C",
+        action: "copy picture",
+    },
+    KeyHint {
+        keys: "Shift+C",
+        action: "copy file",
     },
     KeyHint {
         keys: "O",
@@ -931,8 +935,12 @@ const DIR_COLUMN_KEYS: &[KeyHint] = &[
         action: "first subfolder",
     },
     KeyHint {
-        keys: "./Shift+.",
+        keys: ".",
         action: "dot entries",
+    },
+    KeyHint {
+        keys: "Shift+.",
+        action: "keep dot entries",
     },
     KeyHint {
         keys: "G",
@@ -1014,8 +1022,12 @@ const GALLERY_KEYS: &[KeyHint] = &[
         action: "thumbnail size",
     },
     KeyHint {
-        keys: "C/Shift+C",
-        action: "copy picture/file",
+        keys: "C",
+        action: "copy picture",
+    },
+    KeyHint {
+        keys: "Shift+C",
+        action: "copy file",
     },
     KeyHint {
         keys: "L/R",

@@ -127,19 +127,8 @@ const QUIT: &str = if cfg!(target_os = "macos") {
     "Ctrl+Q"
 };
 
-const GALLERY_KEYS: [&str; 12] = [
-    "Arrows",
-    "Enter",
-    "+/-",
-    "C/Shift+C",
-    "L/R",
-    "O",
-    "X",
-    "G",
-    "Esc",
-    "S",
-    "F",
-    QUIT,
+const GALLERY_KEYS: [&str; 13] = [
+    "Arrows", "Enter", "+/-", "C", "Shift+C", "L/R", "O", "X", "G", "Esc", "S", "F", QUIT,
 ];
 
 #[test]

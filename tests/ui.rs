@@ -761,8 +761,10 @@ fn x_reaches_the_core_and_a_failure_shows_in_the_key_line() {
 fn c_reaches_the_core_and_the_outcome_shows_in_the_key_line() {
     let mut h = harness(browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]));
     h.run();
-    h.get_by_label("C/Shift+C");
-    h.get_by_label("copy picture/file");
+    h.get_by_label("C");
+    h.get_by_label("Shift+C");
+    h.get_by_label("copy picture");
+    h.get_by_label("copy file");
     h.key_press(egui::Key::R);
     h.key_press(egui::Key::C);
     h.run();
@@ -2027,6 +2029,18 @@ fn a_clickable_key_under_the_pointer_shows_a_hand() {
     assert_ne!(
         h.output().platform_output.cursor_icon,
         egui::CursorIcon::PointingHand
+    );
+}
+
+#[test]
+fn copy_file_has_its_own_clickable_hint() {
+    let mut h = harness(browsing("/p/a.jpg", &["/p/a.jpg"]));
+    h.run();
+    let rect = h.get_by_label("copy file").rect();
+    click_at(&mut h, rect.center());
+    assert_eq!(
+        h.state().commands.last(),
+        Some(&Command::CopyFile(PathBuf::from("/p/a.jpg")))
     );
 }
 
