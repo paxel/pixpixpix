@@ -127,8 +127,8 @@ const QUIT: &str = if cfg!(target_os = "macos") {
     "Ctrl+Q"
 };
 
-const GALLERY_KEYS: [&str; 13] = [
-    "Arrows", "Enter", "+/-", "C", "Shift+C", "L/R", "O", "X", "G", "Esc", "S", "F", QUIT,
+const GALLERY_KEYS: [&str; 14] = [
+    "Arrows", "Enter", "+/-", "C", "Shift+C", "L/R", "O", "X", "G", "Esc", "S", "F", QUIT, "?",
 ];
 
 #[test]
@@ -773,7 +773,7 @@ fn the_overview_takes_the_focus_and_gives_it_back() {
 #[test]
 fn tab_moves_between_dir_column_and_gallery_and_the_key_line_follows() {
     let (mut core, _) = contents();
-    assert_eq!(key_names(&core).last(), Some(&QUIT));
+    assert_eq!(key_names(&core).last(), Some(&"?"));
     assert!(key_names(&core).contains(&"Tab"));
     press(&mut core, Key::Tab);
     assert_eq!(core.view().focus, Focus::Dirs);
@@ -788,7 +788,8 @@ fn tab_moves_between_dir_column_and_gallery_and_the_key_line_follows() {
             "Tab",
             "S",
             "F",
-            QUIT
+            QUIT,
+            "?"
         ]
     );
     press(&mut core, Key::Tab);

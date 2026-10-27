@@ -193,7 +193,17 @@ fn the_key_line_lists_the_band_keys_while_it_has_the_focus() {
     press(&mut core, Key::B);
     assert_eq!(
         key_names(&core),
-        ["Left/Right", "Enter", "Esc", "B", "Tab", "S", "F", quit]
+        [
+            "Left/Right",
+            "Enter",
+            "Esc",
+            "B",
+            "Tab",
+            "S",
+            "F",
+            quit,
+            "?"
+        ]
     );
     assert_eq!(core.view().key_line.keys[3].action, "hide preloaded files");
     assert_eq!(core.view().key_line.keys[4].action, "image view");

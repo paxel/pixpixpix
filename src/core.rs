@@ -855,6 +855,12 @@ const UNDO_TRASH_KEY: KeyHint = KeyHint {
     action: "undo trash",
 };
 
+/// Last in every key line whose keys `?` reaches.
+const HIDE_HINTS_KEY: KeyHint = KeyHint {
+    keys: "?",
+    action: "hide hints",
+};
+
 /// What `Enter` does in the image view while edits are unsaved.
 const SAVE_KEY: KeyHint = KeyHint {
     keys: "Enter",
@@ -2144,6 +2150,13 @@ impl Core {
                 BIN_KEYS.to_vec()
             };
             self.view.key_line.keys.extend_from_slice(GLOBAL_KEYS);
+        }
+        let hideable =
+            !self.view.settings_open && self.dialog.is_none() && self.view.trash_section.is_none();
+        let keys = &mut self.view.key_line.keys;
+        keys.retain(|k| *k != HIDE_HINTS_KEY);
+        if hideable {
+            keys.push(HIDE_HINTS_KEY);
         }
         self.publish_edits();
         self.publish_info();

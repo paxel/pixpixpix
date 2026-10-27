@@ -1959,7 +1959,21 @@ fn question_mark_hides_the_hints_but_not_the_tags_and_is_saved() {
     h.key_press(egui::Key::Questionmark);
     h.run();
     h.get_by_label("Up/Down");
-    assert!(h.query_by_label("?").is_none());
+    h.get_by_label("hide hints");
+}
+
+#[test]
+fn the_hints_hide_and_come_back_by_click() {
+    let mut h = harness(browsing("/p/a.jpg", &["/p/a.jpg"]));
+    h.run();
+    let rect = h.get_by_label("hide hints").rect();
+    click_at(&mut h, rect.center());
+    assert!(h.state().core.view().settings.hints_hidden);
+    assert!(h.query_by_label("Left/Right").is_none());
+    let rect = h.get_by_label("?").rect();
+    click_at(&mut h, rect.center());
+    assert!(!h.state().core.view().settings.hints_hidden);
+    h.get_by_label("Left/Right");
 }
 
 #[test]

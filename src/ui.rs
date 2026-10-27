@@ -10,8 +10,8 @@ use egui::{Color32, ColorImage, RichText, TextureHandle, TextureOptions};
 
 use crate::core::{
     About, BinPreview, DefaultRow, Defaults, DirColumn, EditsView, Event, ExportView, Focus,
-    InnerImages, Key, KeyPress, MetadataView, MotionKind, Notice, Points, Region, Screen, Thumb,
-    Toggle, TrashSection, Video, VideoStep, View, Zoom, unturned,
+    InnerImages, Key, KeyHint, KeyPress, MetadataView, MotionKind, Notice, Points, Region, Screen,
+    Thumb, Toggle, TrashSection, Video, VideoStep, View, Zoom, unturned,
 };
 use crate::decode::DecodedImage;
 use crate::folder;
@@ -1165,6 +1165,105 @@ fn text_width(ui: &egui::Ui, text: &RichText) -> f32 {
     galley.size().x
 }
 
+/// One hint of the key line: its keys, each clickable key lit under the
+/// pointer and flashing when clicked, then what they do.
+fn show_hint(ui: &mut egui::Ui, index: usize, hint: &KeyHint, events: &mut Vec<Event>) {
+    let action = RichText::new(hint.action).color(DIM_TEXT);
+    let plain = key_galley(ui, hint.keys, None);
+    // A hint never breaks between its key and its action: it
+    // starts a new line when it does not fit whole.
+    let width = plain.size().x + text_width(ui, &action);
+    let needed = width + ui.spacing().item_spacing.x;
+    if ui.available_width() < needed && ui.cursor().min.x > ui.max_rect().min.x {
+        ui.end_row();
+    }
+    let presses = hint.presses();
+    let one = match presses.as_slice() {
+        [(_, Some(press))] => Some(*press),
+        _ => None,
+    };
+    let (rect, key) = ui.allocate_exact_size(plain.size(), egui::Sense::CLICK);
+    key.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, hint.keys));
+    let sense = if one.is_some() {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    };
+    let action = ui.add(
+        egui::Label::new(action)
+            .wrap_mode(egui::TextWrapMode::Extend)
+            .sense(sense),
+    );
+    // The key under the pointer, or a one-key hint's key while
+    // its action is under it: the one a click presses.
+    let at = key.hover_pos().map(|pos| {
+        let at = plain
+            .cursor_from_pos(egui::vec2(pos.x - rect.min.x, pos.y - rect.min.y))
+            .index
+            .0;
+        presses
+            .iter()
+            .position(|(chars, _)| chars.contains(&at))
+            .unwrap_or(presses.len().saturating_sub(1))
+    });
+    let lit = at
+        .or_else(|| (action.hovered() && one.is_some()).then_some(0))
+        .filter(|&at| matches!(presses.get(at), Some((_, Some(_)))));
+    let pressed = match (key.clicked(), action.clicked()) {
+        (true, _) => lit,
+        (false, true) => one.map(|_| 0),
+        (false, false) => None,
+    };
+    let flash_id = ui.id().with(("key flash", index));
+    let now = ui.input(|i| i.time);
+    if let Some(at) = pressed {
+        ui.data_mut(|d| d.insert_temp(flash_id, (at, now)));
+        events.extend(
+            presses
+                .get(at)
+                .and_then(|(_, press)| *press)
+                .map(Event::Key),
+        );
+    }
+    let flash = ui
+        .data(|d| d.get_temp::<(usize, f64)>(flash_id))
+        .filter(|(_, since)| now - since < FLASH_SECONDS);
+    if flash.is_some() {
+        ui.ctx().request_repaint();
+    }
+    if lit.is_some() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    let marked = flash
+        .map(|(at, _)| (at, KEY_FLASH))
+        .or(lit.map(|at| (at, HIGHLIGHT)));
+    if let Some((at, fill)) = marked
+        && let Some((chars, _)) = presses.get(at)
+    {
+        let left = plain
+            .pos_from_cursor(egui::text::CCursor::new(chars.start))
+            .min
+            .x;
+        let right = plain
+            .pos_from_cursor(egui::text::CCursor::new(chars.end))
+            .min
+            .x;
+        let pill = egui::Rect::from_x_y_ranges(
+            rect.min.x + left - 3.0..=rect.min.x + right + 3.0,
+            rect.y_range(),
+        );
+        ui.painter().rect_filled(pill, 4.0, fill);
+    }
+    let galley = key_galley(
+        ui,
+        hint.keys,
+        marked
+            .and_then(|(at, _)| presses.get(at))
+            .map(|(chars, _)| chars.clone()),
+    );
+    ui.painter().galley(rect.min, galley, TEXT);
+}
+
 fn show_key_line(ui: &mut egui::Ui, view: &View, events: &mut Vec<Event>) {
     let key_line = &view.key_line;
     ui.horizontal_wrapped(|ui| {
@@ -1176,107 +1275,20 @@ fn show_key_line(ui: &mut egui::Ui, view: &View, events: &mut Vec<Event>) {
         );
         ui.add_space(12.0);
         if view.settings.hints_hidden {
-            // Where the hints were: `?` brings them back.
-            ui.label(RichText::new("?").color(DIM_TEXT).strong());
+            // Where the hints were: `?` brings them back, by click too.
+            show_hint(
+                ui,
+                0,
+                &KeyHint {
+                    keys: "?",
+                    action: "",
+                },
+                events,
+            );
             ui.add_space(12.0);
         } else {
             for (index, hint) in key_line.keys.iter().enumerate() {
-                let action = RichText::new(hint.action).color(DIM_TEXT);
-                let plain = key_galley(ui, hint.keys, None);
-                // A hint never breaks between its key and its action: it
-                // starts a new line when it does not fit whole.
-                let width = plain.size().x + text_width(ui, &action);
-                let needed = width + ui.spacing().item_spacing.x;
-                if ui.available_width() < needed && ui.cursor().min.x > ui.max_rect().min.x {
-                    ui.end_row();
-                }
-                let presses = hint.presses();
-                let one = match presses.as_slice() {
-                    [(_, Some(press))] => Some(*press),
-                    _ => None,
-                };
-                let (rect, key) = ui.allocate_exact_size(plain.size(), egui::Sense::click());
-                key.widget_info(|| {
-                    egui::WidgetInfo::labeled(egui::WidgetType::Label, true, hint.keys)
-                });
-                let sense = if one.is_some() {
-                    egui::Sense::click()
-                } else {
-                    egui::Sense::hover()
-                };
-                let action = ui.add(
-                    egui::Label::new(action)
-                        .wrap_mode(egui::TextWrapMode::Extend)
-                        .sense(sense),
-                );
-                // The key under the pointer, or a one-key hint's key while
-                // its action is under it: the one a click presses.
-                let at = key.hover_pos().map(|pos| {
-                    let at = plain
-                        .cursor_from_pos(egui::vec2(pos.x - rect.min.x, pos.y - rect.min.y))
-                        .index
-                        .0;
-                    presses
-                        .iter()
-                        .position(|(chars, _)| chars.contains(&at))
-                        .unwrap_or(presses.len().saturating_sub(1))
-                });
-                let lit = at
-                    .or_else(|| (action.hovered() && one.is_some()).then_some(0))
-                    .filter(|&at| matches!(presses.get(at), Some((_, Some(_)))));
-                let pressed = match (key.clicked(), action.clicked()) {
-                    (true, _) => lit,
-                    (false, true) => one.map(|_| 0),
-                    (false, false) => None,
-                };
-                let flash_id = ui.id().with(("key flash", index));
-                let now = ui.input(|i| i.time);
-                if let Some(at) = pressed {
-                    ui.data_mut(|d| d.insert_temp(flash_id, (at, now)));
-                    events.extend(
-                        presses
-                            .get(at)
-                            .and_then(|(_, press)| *press)
-                            .map(Event::Key),
-                    );
-                }
-                let flash = ui
-                    .data(|d| d.get_temp::<(usize, f64)>(flash_id))
-                    .filter(|(_, since)| now - since < FLASH_SECONDS);
-                if flash.is_some() {
-                    ui.ctx().request_repaint();
-                }
-                if lit.is_some() {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                }
-                let marked = flash
-                    .map(|(at, _)| (at, KEY_FLASH))
-                    .or(lit.map(|at| (at, HIGHLIGHT)));
-                if let Some((at, fill)) = marked
-                    && let Some((chars, _)) = presses.get(at)
-                {
-                    let left = plain
-                        .pos_from_cursor(egui::text::CCursor::new(chars.start))
-                        .min
-                        .x;
-                    let right = plain
-                        .pos_from_cursor(egui::text::CCursor::new(chars.end))
-                        .min
-                        .x;
-                    let pill = egui::Rect::from_x_y_ranges(
-                        rect.min.x + left - 3.0..=rect.min.x + right + 3.0,
-                        rect.y_range(),
-                    );
-                    ui.painter().rect_filled(pill, 4.0, fill);
-                }
-                let galley = key_galley(
-                    ui,
-                    hint.keys,
-                    marked
-                        .and_then(|(at, _)| presses.get(at))
-                        .map(|(chars, _)| chars.clone()),
-                );
-                ui.painter().galley(rect.min, galley, TEXT);
+                show_hint(ui, index, hint, events);
                 ui.add_space(12.0);
             }
         }
