@@ -127,11 +127,12 @@ const QUIT: &str = if cfg!(target_os = "macos") {
     "Ctrl+Q"
 };
 
-const GALLERY_KEYS: [&str; 11] = [
+const GALLERY_KEYS: [&str; 12] = [
     "Arrows",
     "Enter",
     "+/-",
     "C/Shift+C",
+    "L/R",
     "O",
     "X",
     "G",
@@ -1138,4 +1139,47 @@ fn shift_x_trashes_only_the_folder_and_one_u_brings_it_all_back() {
     assert_eq!(open.selected, Some(0));
     assert_eq!(open.sections[0].tiles, 0..3);
     assert_eq!(open.sections[1].tiles, 3..4);
+}
+
+#[test]
+fn l_and_r_in_the_gallery_write_the_turn_and_redraw_the_tile() {
+    let mut core = gallery_with_sections();
+    visible(&mut core, 0..4);
+    assert_eq!(
+        press(&mut core, Key::R),
+        [Command::WriteRotation {
+            path: p("b.jpg"),
+            rotation: Rotation::Right
+        }]
+    );
+    assert_eq!(
+        press(&mut core, Key::L),
+        [Command::WriteRotation {
+            path: p("b.jpg"),
+            rotation: Rotation::Left
+        }]
+    );
+    let commands = core.handle(Event::RotationWritten {
+        path: p("b.jpg"),
+        result: Ok(()),
+    });
+    assert!(
+        commands
+            .iter()
+            .any(|c| matches!(c, Command::DecodeThumbnail { path, .. } if *path == p("b.jpg"))),
+        "{commands:?}"
+    );
+}
+
+#[test]
+fn a_video_in_the_gallery_cannot_be_turned() {
+    let mut core = browsing();
+    let commands = press(&mut core, Key::G);
+    let (scan, _, _) = scan_of(&commands).unwrap();
+    section(&mut core, scan, "/p", &["/p/v.mp4"]);
+    assert!(press(&mut core, Key::R).is_empty());
+    assert_eq!(
+        core.view().rotation_error.as_deref(),
+        Some("Cannot rotate v.mp4: a video cannot be turned")
+    );
 }

@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `l` and `r` in the overview turn the selected file and write the turn at once, losslessly for JPEG.
 - `t` opens a view of every trash, the home wastebin and those of mounted drives, by the day the files were trashed; `Enter` shows a file large and `u` puts it back.
 - `Shift`+`x` in the overview trashes every file of the selected file's folder, its subfolders left, after asking; one `u` brings them all back.
 - `u` puts trashed files back, newest first, as long as pixpixpix runs, and shows each in its folder; it also finds files trashed on drives such as pCloud, which go into the drive's own trash folder. In the overview the file is back as a tile in its section, selected.

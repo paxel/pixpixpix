@@ -139,6 +139,7 @@ The key line tags what is on.
 | `Enter`, click          | show the file in the image view                   |
 | `+` / `-`, `Ctrl`+wheel | thumbnail size                                    |
 | `c` / `Shift`+`c`       | copy the picture / the file                       |
+| `l` / `r`               | turn a quarter left / right, written at once      |
 | `o`                     | open in another app                               |
 | `x`                     | move to the trash                                 |
 | `Shift`+`x`             | trash the selected file's folder, after asking    |

@@ -1018,6 +1018,10 @@ const GALLERY_KEYS: &[KeyHint] = &[
         action: "copy picture/file",
     },
     KeyHint {
+        keys: "L/R",
+        action: "turn",
+    },
+    KeyHint {
         keys: "O",
         action: "open in another app",
     },
@@ -3396,6 +3400,9 @@ impl Core {
     /// write keeps the rotation pending and says why.
     fn rotation_written(&mut self, path: PathBuf, result: Result<(), String>) -> Vec<Command> {
         let mut commands = Vec::new();
+        if result.is_ok() {
+            commands.extend(self.overview_rotated(&path));
+        }
         match result {
             Ok(()) if self.cache.contains_key(&path) && self.decoding.insert(path.clone()) => {
                 commands.push(Command::Decode(path.clone()));

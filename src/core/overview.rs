@@ -441,6 +441,8 @@ impl Core {
             Key::X => self.trash_selected(),
             Key::C => self.copy_selected(),
             Key::U => self.undo_trash(),
+            Key::L => self.turn_selected(Rotation::Left),
+            Key::R => self.turn_selected(Rotation::Right),
             Key::O => {
                 let path = self.selected_path();
                 self.open_externally(path)
@@ -742,6 +744,44 @@ impl Core {
         {
             commands.push(Command::ListFolder(dir.to_path_buf()));
         }
+        commands
+    }
+
+    /// `l`/`r` in the gallery: the selected file is turned a quarter and
+    /// written at once; a video cannot be.
+    fn turn_selected(&mut self, rotation: Rotation) -> Vec<Command> {
+        let Some(path) = self.selected_path() else {
+            return Vec::new();
+        };
+        self.view.rotation_error = None;
+        if folder::is_video(&path) {
+            self.view.rotation_error = Some(format!(
+                "Cannot rotate {}: a video cannot be turned",
+                folder::file_name(&path)
+            ));
+            return Vec::new();
+        }
+        vec![Command::WriteRotation { path, rotation }]
+    }
+
+    /// A rotation was written: the file's tile is drawn anew from it.
+    pub(super) fn overview_rotated(&mut self, path: &Path) -> Vec<Command> {
+        let Some(overview) = self.view.overview.as_mut() else {
+            return Vec::new();
+        };
+        let Some(index) = overview.tiles.iter().position(|t| t.path == path) else {
+            return Vec::new();
+        };
+        if let Some(tile) = overview.tiles.get_mut(index) {
+            tile.thumbnail = None;
+        }
+        self.gallery.loaded.remove(&index);
+        // A thumbnail on its way is of the file before the turn.
+        let mut commands = Vec::new();
+        if self.gallery.decoding.remove(path).is_some() {
+            commands.push(Command::CancelThumbnail(path.to_path_buf()));
+        }
+        commands.extend(self.overview_refresh());
         commands
     }
 
