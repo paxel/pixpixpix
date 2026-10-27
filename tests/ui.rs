@@ -621,6 +621,16 @@ fn the_settings_screen_shows_why_the_file_is_unusable() {
     h.key_press(egui::Key::S);
     h.run();
     h.get_by_label("Cannot read settings.toml: bad");
+    h.state_mut().commands.clear();
+    h.get_by_role_and_label(Role::Button, "Copy").click();
+    h.run();
+    assert_eq!(
+        h.state().commands,
+        [Command::CopyReport {
+            message: "Cannot read settings.toml: bad".into(),
+            path: None,
+        }]
+    );
 }
 
 #[test]

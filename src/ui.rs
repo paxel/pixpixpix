@@ -741,6 +741,7 @@ fn settings_body(
     if let Some(error) = error {
         ui.add_space(12.0);
         ui.label(RichText::new(error).color(ERROR_TEXT));
+        copy_button(ui, error, None, events);
     }
     settings_section(ui, "Default apps", |ui| {
         show_defaults(ui, defaults, &values.earlier_defaults, events);
