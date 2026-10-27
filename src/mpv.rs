@@ -143,6 +143,9 @@ const COMMAND_ID: u64 = 3;
 const POSITION_ID: u64 = 4;
 /// The `reply_userdata` of the observed rotation the file asks for.
 const ROTATION_ID: u64 = 5;
+/// The `reply_userdata` of the observed track list, read for the codec of
+/// the video track.
+const CODEC_ID: u64 = 6;
 
 type Handle = *mut c_void;
 type RenderContext = *mut c_void;
@@ -196,8 +199,22 @@ pub fn load<P: AsRef<OsStr>>(names: &[P]) -> Result<Mpv, String> {
             Err(e) => reason = e.to_string(),
         }
     }
-    Err(format!("Videos need libmpv, which was not found: {reason}"))
+    let tried: Vec<_> = names
+        .iter()
+        .map(|name| name.as_ref().to_string_lossy())
+        .collect();
+    Err(format!(
+        "Videos need libmpv, which was not found (tried {}: {reason}). {INSTALL_HINT}",
+        tried.join(", ")
+    ))
 }
+
+/// How to get libmpv, after it was not found.
+pub const INSTALL_HINT: &str = if cfg!(target_os = "macos") {
+    "Install mpv with Homebrew."
+} else {
+    "Install libmpv2 on Debian or Ubuntu, mpv-libs on Fedora, or mpv on Arch."
+};
 
 fn functions(library: Library) -> Result<Mpv, String> {
     let missing = |e: libloading::Error| format!("Videos need libmpv 0.34 or newer: {e}");
@@ -262,6 +279,8 @@ pub enum PlayerEvent {
     Height(Option<u32>),
     /// The playback position changed; absent while unknown.
     Position(Option<Duration>),
+    /// The codec of the video track, as `h264`.
+    Codec(String),
     /// The file asks for its picture to be turned clockwise by these
     /// degrees, which [`Player::render`] does not do.
     Rotation(u32),
@@ -339,6 +358,12 @@ impl Mpv {
                 POSITION_ID,
                 c"time-pos".as_ptr(),
                 FORMAT_DOUBLE,
+            ))?;
+            self.check((self.observe)(
+                handle,
+                CODEC_ID,
+                c"track-list".as_ptr(),
+                FORMAT_STRING,
             ))?;
             let mut params = [
                 RenderParam {
@@ -457,6 +482,20 @@ impl Player {
                         .and_then(|seconds| Duration::try_from_secs_f64(seconds).ok());
                     Some(PlayerEvent::Position(position))
                 }
+                EVENT_PROPERTY_CHANGE
+                    if !event.data.is_null() && event.reply_userdata == CODEC_ID =>
+                {
+                    let property = &*event.data.cast::<EventProperty>();
+                    // A string property's data points to the string.
+                    let text = (property.format == FORMAT_STRING && !property.data.is_null())
+                        .then(|| *property.data.cast::<*const c_char>())
+                        .filter(|text| !text.is_null())
+                        .map(|text| CStr::from_ptr(text).to_string_lossy().into_owned());
+                    // The list empties once the file ends; the codec stays
+                    // as last known then.
+                    let codec = text.as_deref().and_then(video_codec);
+                    Some(codec.map_or(PlayerEvent::Other, PlayerEvent::Codec))
+                }
                 EVENT_PROPERTY_CHANGE if !event.data.is_null() => {
                     let property = &*event.data.cast::<EventProperty>();
                     let value = (property.format == FORMAT_INT64 && !property.data.is_null())
@@ -547,6 +586,17 @@ impl Drop for Player {
             (self.mpv.terminate_destroy)(self.handle);
         }
     }
+}
+
+/// The codec of the first video track in mpv's track list, which a string
+/// property gives as JSON: `[{"id":1,"type":"video",…,"codec":"h264",…}]`.
+fn video_codec(track_list: &str) -> Option<String> {
+    let track = track_list
+        .split("{\"id\":")
+        .find(|track| track.contains("\"type\":\"video\""))?;
+    let (_, rest) = track.split_once("\"codec\":\"")?;
+    let (codec, _) = rest.split_once('"')?;
+    Some(codec.to_owned())
 }
 
 fn c_string(text: &str) -> Result<CString, String> {

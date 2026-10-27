@@ -39,12 +39,18 @@ fn libmpv_is_never_loaded_into_the_app() {
 }
 
 #[test]
-fn a_missing_libmpv_says_so_with_the_reason() {
-    let Err(error) = mpv::load(&["/nonexistent/libmpv.so.2"]) else {
+fn a_missing_libmpv_names_every_library_tried_and_how_to_install_it() {
+    let Err(error) = mpv::load(&["/nonexistent/libmpv.so.2", "/nonexistent/libmpv.so.1"]) else {
         panic!("loaded a library that does not exist");
     };
     assert!(
-        error.starts_with("Videos need libmpv, which was not found: /nonexistent/libmpv.so.2"),
+        error.starts_with(
+            "Videos need libmpv, which was not found (tried /nonexistent/libmpv.so.2, /nonexistent/libmpv.so.1: "
+        ),
+        "{error}"
+    );
+    assert!(
+        error.ends_with("Install libmpv2 on Debian or Ubuntu, mpv-libs on Fedora, or mpv on Arch."),
         "{error}"
     );
 }

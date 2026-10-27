@@ -13,6 +13,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A video that cannot be decoded names its codec, also when only its sound plays.
+- Without libmpv, the message names every library file tried and the package to install.
 - Videos with a rotation flag, as iPhones record them, play and preview upright instead of crashing pixpixpix.
 
 ---

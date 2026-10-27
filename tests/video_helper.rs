@@ -129,3 +129,15 @@ fn dropping_the_playback_ends_the_helper_without_a_failure() {
     }
     assert!(reports.recv_timeout(Duration::from_millis(500)).is_err());
 }
+
+#[test]
+fn a_video_whose_codec_fails_names_the_codec_when_played() {
+    let (_playback, reports) = play(real_helper(), fixture("undecodable.mp4"));
+    let seen = until_over(&reports);
+    let message = failure(&seen).unwrap();
+    assert!(
+        message.starts_with("The hevc video cannot be decoded")
+            || message.starts_with("Videos need libmpv"),
+        "{message}"
+    );
+}

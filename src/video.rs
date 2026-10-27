@@ -36,12 +36,13 @@ const MAX_SIDE: u32 = 1920;
 const POLL: Duration = Duration::from_millis(50);
 
 /// The display size of the video once known, the size frames are drawn at,
-/// and how they are turned then.
+/// how they are turned then, and the codec to name when they cannot be.
 #[derive(Default)]
 struct Size {
     width: Option<u32>,
     height: Option<u32>,
     rotation: Rotation,
+    codec: Option<String>,
 }
 
 impl Size {
@@ -58,6 +59,7 @@ impl Size {
                     _ => Rotation::None,
                 };
             }
+            PlayerEvent::Codec(codec) => self.codec = Some(codec.clone()),
             PlayerEvent::Ended(_)
             | PlayerEvent::Position(_)
             | PlayerEvent::Restarted
@@ -82,6 +84,19 @@ impl Size {
             scaled.unwrap_or(MAX_SIDE).max(1)
         };
         Some((scale(width), scale(height)))
+    }
+
+    /// Why the video ended without a picture, from mpv's `message`: once
+    /// the codec is known, the file was read and its codec failed.
+    fn failure(&self, message: Option<String>) -> String {
+        match (&self.codec, message) {
+            (Some(codec), Some(message)) => {
+                format!("The {codec} video cannot be decoded: {message}")
+            }
+            (Some(codec), None) => format!("The {codec} video cannot be decoded"),
+            (None, Some(message)) => message,
+            (None, None) => "the file has no picture".to_owned(),
+        }
     }
 
     /// Draws the current frame at [`Size::target`], turned upright.
@@ -127,11 +142,8 @@ pub fn grab_here(path: &Path, cancel: &AtomicBool) -> Option<Result<DecodedImage
             return None;
         }
         while let Some(event) = player.next_event() {
-            if let PlayerEvent::Ended(error) = &event {
-                let message = error
-                    .clone()
-                    .unwrap_or_else(|| "the file has no picture".into());
-                return Some(Err(message));
+            if let PlayerEvent::Ended(error) = event {
+                return Some(Err(size.failure(error)));
             }
             size.update(&event);
         }
@@ -491,11 +503,13 @@ fn play(
         }
         while let Some(event) = player.next_event() {
             match event {
+                // Only the sound played: the picture could not be decoded.
+                PlayerEvent::Ended(None) if !drawn => return Err(size.failure(None)),
                 PlayerEvent::Ended(None) => {
                     report(Report::Ended);
                     return Ok(());
                 }
-                PlayerEvent::Ended(Some(message)) => return Err(message),
+                PlayerEvent::Ended(Some(message)) => return Err(size.failure(Some(message))),
                 PlayerEvent::Restarted if seeking == Some(Awaiting::Restart) => {
                     seeking = Some(Awaiting::Frame);
                 }

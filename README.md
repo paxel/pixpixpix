@@ -181,6 +181,14 @@ aom plugin. Some distributions package these separately.
 | Fedora         | `libheif mpv-libs turbojpeg`                                                              |
 | macOS (brew)   | `libheif mpv jpeg-turbo`                                                                  |
 
+Fedora ships `ffmpeg-free`, which cannot decode H.264 and HEVC, the codecs of most
+phone videos; such a video then says its codec cannot be decoded. The full ffmpeg
+from [RPM Fusion](https://rpmfusion.org/Configuration) decodes them:
+
+```sh
+sudo dnf swap ffmpeg-free ffmpeg --allowerasing
+```
+
 ## Install
 
 ### Homebrew (macOS and Linux)

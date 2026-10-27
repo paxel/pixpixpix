@@ -181,3 +181,17 @@ fn a_rotated_video_gives_its_first_frame_upright() {
     let mean = difference / image.rgba.len() as u64;
     assert!(mean < 24, "mean difference {mean}");
 }
+
+#[test]
+fn a_video_whose_codec_fails_names_the_codec() {
+    // `clip.mp4` with its H.264 track labelled HEVC.
+    let results = grab_all(|_| real_helper(), &[fixture("undecodable.mp4")]);
+    let Some(Err(message)) = &results[0] else {
+        panic!("{results:?}");
+    };
+    assert!(
+        message.starts_with("The hevc video cannot be decoded")
+            || message.starts_with("Videos need libmpv"),
+        "{message}"
+    );
+}
