@@ -98,14 +98,17 @@ export function buildAll({ repoRoot = REPO_ROOT, outDir = path.join(REPO_ROOT, "
   const plan = planVersions({ tags: listReleaseTags(repoRoot), workingVersion });
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "pixpixpix-site-releases-"));
   try {
+    const folderOf = (entry) => (entry.latest ? base : `${base}v${entry.version}/`);
     for (const entry of plan) {
+      // What's new links each release's entries into that release's docs.
+      const releases = new Map(plan.map((other) => [other.version, other === entry ? "" : folderOf(other)]));
       entry.root = entry.source === "tag" ? path.join(scratch, entry.tag) : repoRoot;
       if (entry.source === "tag") extractTag(repoRoot, entry.tag, entry.root);
       entry.srcDir = path.join(entry.root, "site");
       try {
         entry.pages = collectPages({
           srcDir: entry.srcDir,
-          generated: generatedPages(entry.root),
+          generated: generatedPages(entry.root, releases),
           news: latestNews(entry.version, entry.root),
         });
       } catch (err) {
@@ -114,7 +117,7 @@ export function buildAll({ repoRoot = REPO_ROOT, outDir = path.join(REPO_ROOT, "
     }
     const versions = plan.map((entry) => ({
       version: entry.version,
-      base: entry.latest ? base : `${base}v${entry.version}/`,
+      base: folderOf(entry),
       pages: entry.pages.map((page) => page.url),
       latest: entry.latest,
     }));

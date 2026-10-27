@@ -177,6 +177,11 @@ function releasedRepo() {
   run("tag", "v0.3.0");
   release("0.4.0");
   fs.rmSync(path.join(dir, "site/pages/old.html"));
+  // 0.3.0's entry, now older, links to a page only 0.3.0 has.
+  write(
+    "OLDER_CHANGES.md",
+    "# Older changes\n\n## [0.3.0] - 2026-11-01\n\n### Added\n\n- [Old](https://paxel.github.io/pixpixpix/old.html) things.\n",
+  );
   write("site/assets/screenshots/a.png", "the app of 0.4.0");
   return dir;
 }
@@ -193,6 +198,9 @@ test("build-all writes the latest at the root, every release with pages under it
   // The menu sends the old page to the latest overview, which lacks it.
   assert.match(old, /href="\/pixpixpix\/index\.html">v0\.4\.0 \(latest\)/);
   assert.ok(!fs.existsSync(path.join(out, "v0.2.0")));
+  // An older release's entry leads to its own docs.
+  const news = fs.readFileSync(path.join(out, "whats-new.html"), "utf8");
+  assert.match(news, /<a href="\/pixpixpix\/v0\.3\.0\/old\.html">Old<\/a>/);
   // Each version shows its own app.
   assert.equal(fs.readFileSync(path.join(out, "v0.3.0", "assets", "screenshots", "a.png"), "utf8"), "the app of 0.3.0");
   assert.equal(fs.readFileSync(path.join(out, "assets", "screenshots", "a.png"), "utf8"), "the app of 0.4.0");
@@ -207,6 +215,9 @@ test("a link to the site in a changelog entry leads to that page of the version 
   );
   assert.equal(inline("[docs](https://paxel.github.io/pixpixpix/)"), '<a href="index.html">docs</a>');
   assert.equal(inline("[GitHub](https://github.com/paxel)"), '<a href="https://github.com/paxel">GitHub</a>');
+  // Another release's folder, or the latest site for a release without docs.
+  assert.equal(inline("[t](https://paxel.github.io/pixpixpix/a.html)", "/pixpixpix/v0.3.0/"), '<a href="/pixpixpix/v0.3.0/a.html">t</a>');
+  assert.equal(inline("[t](https://paxel.github.io/pixpixpix/a.html)", null), '<a href="https://paxel.github.io/pixpixpix/a.html">t</a>');
   // A page or an anchor the version lacks fails the build.
   const files = new Map([["whats-new.html", inline("[gone](https://paxel.github.io/pixpixpix/index.html#nowhere)")], ["index.html", ""]]);
   assert.throws(() => checkLinks(files), /missing anchor #nowhere/);

@@ -7,13 +7,18 @@ import { REPO_ROOT, SITE_URL, escapeHtml } from "./common.js";
 
 /**
  * Markdown inline: `code`, **bold**, _em_ and [text](url). A link to the
- * site becomes a link to the same page of the version being built: What's
- * new and the overview stand at a version's root, so the path after the
- * site's address is that page; the link check then fails on a page or an
- * anchor the version lacks.
+ * site becomes a link to the page with that path in `docs`, the folder of
+ * the entry's own release: "" for the version being built (What's new and
+ * the overview stand at its root), or another release's folder. Without a
+ * folder, as for releases older than the site, it stays a link to the
+ * latest site. The link check then fails on a page or an anchor the release
+ * lacks.
  */
-export function inline(text) {
-  const href = (url) => (url.startsWith(SITE_URL) ? url.slice(SITE_URL.length) || "index.html" : url);
+export function inline(text, docs = "") {
+  const href = (url) => {
+    if (!url.startsWith(SITE_URL) || docs === null) return url;
+    return `${docs}${url.slice(SITE_URL.length) || "index.html"}`;
+  };
   return escapeHtml(text)
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
@@ -65,22 +70,28 @@ export function readChangelogs(repoRoot = REPO_ROOT) {
 /** The id of a release's heading on the What's new page. */
 export const releaseId = (version) => `v${version.replace(/\./g, "-")}`;
 
-function renderCategories(section, level) {
+function renderCategories(section, level, docs = "") {
   return section.categories
     .filter((c) => c.items.length)
     .map(
       (c) =>
         `<h${level}>${escapeHtml(c.name)}</h${level}>\n<ul>\n` +
-        `${c.items.map((i) => `<li>${inline(i)}</li>`).join("\n")}\n</ul>`,
+        `${c.items.map((i) => `<li>${inline(i, docs)}</li>`).join("\n")}\n</ul>`,
     )
     .join("\n");
 }
 
-/** The What's new page: every release, newest first. */
-export function whatsNewPage(repoRoot = REPO_ROOT) {
+/**
+ * The What's new page: every release, newest first. `releases` gives each
+ * release's docs folder, as `inline` takes it: the build of one version
+ * leaves it empty, so every entry links into that version; build-all names
+ * the folder of every release that has docs.
+ */
+export function whatsNewPage(repoRoot = REPO_ROOT, releases = new Map()) {
   const parts = readChangelogs(repoRoot).map((section) => {
     const date = section.date ? ` <small>${escapeHtml(section.date)}</small>` : "";
-    return `<h2 id="${releaseId(section.version)}">${escapeHtml(section.version)}${date}</h2>\n${renderCategories(section, 3)}`;
+    const docs = releases.size ? (releases.get(section.version) ?? null) : "";
+    return `<h2 id="${releaseId(section.version)}">${escapeHtml(section.version)}${date}</h2>\n${renderCategories(section, 3, docs)}`;
   });
   return {
     path: "whats-new.html",
@@ -106,6 +117,6 @@ export function latestNews(version, repoRoot = REPO_ROOT) {
   );
 }
 
-export function generatedPages(repoRoot = REPO_ROOT) {
-  return [whatsNewPage(repoRoot)];
+export function generatedPages(repoRoot = REPO_ROOT, releases = new Map()) {
+  return [whatsNewPage(repoRoot, releases)];
 }

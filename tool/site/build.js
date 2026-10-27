@@ -493,6 +493,8 @@ function guardOutDir(outDir, srcDir) {
 /** Every page of the site in nav order and checked, What's new of `version` on the overview. */
 export function collectPages({ srcDir = path.join(REPO_ROOT, "site"), generated = [], news = "" } = {}) {
   const pages = loadPages(srcDir);
+  // Generated pages may link into another release's folder, by its absolute path.
+  for (const page of pages) rejectRootRelativeLinks(page);
   for (const page of generated) {
     if (pages.some((p) => p.url === page.url)) {
       throw new Error(`${page.url}: an authored page shadows the generated page`);
@@ -506,7 +508,6 @@ export function collectPages({ srcDir = path.join(REPO_ROOT, "site"), generated 
     if (!overview.body.includes(WHATS_NEW_MARK)) throw new Error(`index.html: no ${WHATS_NEW_MARK}`);
     overview.body = overview.body.replace(WHATS_NEW_MARK, news);
   }
-  for (const page of pages) rejectRootRelativeLinks(page);
   return pages;
 }
 
