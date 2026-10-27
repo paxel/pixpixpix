@@ -114,3 +114,24 @@ fn thumbnail_size_steps_through_its_sizes_and_stops_at_the_ends() {
     assert_eq!(settings::step_thumbnail_size(170, true), 200);
     assert_eq!(settings::step_thumbnail_size(170, false), 160);
 }
+
+#[test]
+fn remembered_default_apps_and_hidden_parts_load_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.toml");
+    let saved = Settings {
+        earlier_defaults: [
+            (
+                "HEIC/HEIF".to_owned(),
+                "org.kde.gwenview.desktop".to_owned(),
+            ),
+            ("MPEG-TS".to_owned(), "vlc.desktop".to_owned()),
+        ]
+        .into(),
+        hints_hidden: true,
+        band_hidden: true,
+        ..Settings::default()
+    };
+    settings::save(&path, &saved).unwrap();
+    assert_eq!(settings::load(&path), Ok(saved));
+}

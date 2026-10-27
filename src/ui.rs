@@ -688,45 +688,63 @@ fn show_settings(
         )
         .show(ctx, |ui| {
             ui.set_width(SETTINGS_WIDTH);
-            ui.label(RichText::new("Settings").color(TEXT).strong().size(20.0));
-            ui.add_space(8.0);
-            let mut changed = values.clone();
-            settings_section(ui, "Browsing", |ui| {
-                settings_grid(ui, "browsing", |ui| {
-                    let label = ui.label(RichText::new(CACHE_LABEL).color(TEXT));
-                    ui.add(egui::Slider::new(
-                        &mut changed.cache_per_side,
-                        settings::CACHE_PER_SIDE,
-                    ))
-                    .labelled_by(label.id);
-                    ui.end_row();
-                });
-            });
-            settings_section(ui, "Other apps", |ui| {
-                settings_grid(ui, "apps", |ui| {
-                    app_field(ui, IMAGE_APP_LABEL, &mut changed.image_app);
-                    app_field(ui, VIDEO_APP_LABEL, &mut changed.video_app);
-                });
-                ui.add_space(6.0);
-                ui.label(RichText::new(APP_HINT).color(DIM_TEXT));
-            });
-            if changed != *values {
-                events.push(Event::SettingsChanged(changed));
-            }
-            if let Some(error) = error {
-                ui.add_space(12.0);
-                ui.label(RichText::new(error).color(ERROR_TEXT));
-            }
-            settings_section(ui, "Default apps", |ui| {
-                show_defaults(ui, defaults, &values.earlier_defaults, events);
-            });
-            settings_section(ui, "About", |ui| {
-                let link = egui::Button::new(RichText::new("About pixpixpix").color(TEXT));
-                if ui.add(link).clicked() {
-                    events.push(Event::OpenAbout);
-                }
-            });
+            // Taller than a small window: the whole screen scrolls.
+            let height = ui.ctx().content_rect().height() - 64.0;
+            egui::ScrollArea::vertical()
+                .max_height(height.max(120.0))
+                .min_scrolled_height(height.max(120.0))
+                .show(ui, |ui| settings_body(ui, values, error, defaults, events));
         });
+}
+
+/// The content of the settings screen.
+fn settings_body(
+    ui: &mut egui::Ui,
+    values: &Settings,
+    error: Option<&str>,
+    defaults: Option<&Defaults>,
+    events: &mut Vec<Event>,
+) {
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Settings").color(TEXT).strong().size(20.0));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let link = egui::Button::new(RichText::new("About pixpixpix").color(TEXT));
+            if ui.add(link).clicked() {
+                events.push(Event::OpenAbout);
+            }
+        });
+    });
+    ui.add_space(8.0);
+    let mut changed = values.clone();
+    settings_section(ui, "Browsing", |ui| {
+        settings_grid(ui, "browsing", |ui| {
+            let label = ui.label(RichText::new(CACHE_LABEL).color(TEXT));
+            ui.add(egui::Slider::new(
+                &mut changed.cache_per_side,
+                settings::CACHE_PER_SIDE,
+            ))
+            .labelled_by(label.id);
+            ui.end_row();
+        });
+    });
+    settings_section(ui, "Other apps", |ui| {
+        settings_grid(ui, "apps", |ui| {
+            app_field(ui, IMAGE_APP_LABEL, &mut changed.image_app);
+            app_field(ui, VIDEO_APP_LABEL, &mut changed.video_app);
+        });
+        ui.add_space(6.0);
+        ui.label(RichText::new(APP_HINT).color(DIM_TEXT));
+    });
+    if changed != *values {
+        events.push(Event::SettingsChanged(changed));
+    }
+    if let Some(error) = error {
+        ui.add_space(12.0);
+        ui.label(RichText::new(error).color(ERROR_TEXT));
+    }
+    settings_section(ui, "Default apps", |ui| {
+        show_defaults(ui, defaults, &values.earlier_defaults, events);
+    });
 }
 
 /// The default app of every file type: switches for all images and all
@@ -777,7 +795,7 @@ fn show_defaults(
             .unwrap_or_else(|| app.clone())
     };
     egui::ScrollArea::vertical()
-        .max_height(220.0)
+        .max_height(150.0)
         .show(ui, |ui| {
             settings_grid(ui, "defaults", |ui| {
                 for row in &defaults.rows {

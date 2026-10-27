@@ -2117,8 +2117,14 @@ fn the_settings_link_to_an_about_page_that_lists_and_copies_the_libraries() {
     h.key_press(egui::Key::S);
     h.run();
     h.state_mut().commands.clear();
-    h.get_by_role_and_label(Role::Button, "About pixpixpix")
-        .click();
+    let about = h.get_by_role_and_label(Role::Button, "About pixpixpix");
+    assert!(
+        h.ctx.content_rect().contains_rect(about.rect()),
+        "{:?}",
+        about.rect()
+    );
+    about.click();
+    h.run();
     h.run();
     assert_eq!(h.state().commands, [Command::ProbeLibraries]);
     h.get_by_label("pixpixpix");
@@ -2216,4 +2222,48 @@ fn a_hidden_band_gives_its_space_to_the_image() {
     assert!(h.query_by_role_and_label(Role::Button, "b.jpg").is_none());
     let after = h.get_by_role_and_label(Role::Image, "a.jpg").rect();
     assert!(after.height() >= before.height());
+}
+
+#[test]
+fn the_settings_screen_fits_the_window_with_every_default_app_listed() {
+    let mut h = harness(shown("/p/cat.jpg"));
+    h.run();
+    h.key_press(egui::Key::S);
+    h.run();
+    let rows = pixpixpix::associations::TYPES
+        .iter()
+        .map(|t| pixpixpix::core::DefaultRow {
+            name: t.name.into(),
+            video: t.video,
+            current: None,
+            ours: false,
+        })
+        .collect();
+    h.state_mut()
+        .core
+        .handle(Event::DefaultsRead(pixpixpix::core::Defaults {
+            rows,
+            names: Default::default(),
+            ours: "io.github.paxel.pixpixpix.desktop".into(),
+            read_only: false,
+            error: None,
+        }));
+    h.run();
+    // Reachable: pointer clicks on the last switch and the About link work.
+    h.state_mut().commands.clear();
+    h.get_by_role_and_label(Role::CheckBox, "pixpixpix for all videos")
+        .click();
+    h.run();
+    assert!(
+        h.state()
+            .commands
+            .iter()
+            .any(|c| matches!(c, Command::SetDefaults { .. })),
+        "{:?}",
+        h.state().commands
+    );
+    h.get_by_role_and_label(Role::Button, "About pixpixpix")
+        .click();
+    h.run();
+    assert!(h.state().commands.contains(&Command::ProbeLibraries));
 }
