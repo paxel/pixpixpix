@@ -3,13 +3,14 @@
 //! window exists, so decoding and GL context creation overlap.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use crate::associations::{self, Opener};
 use crate::clipboard::{self, Clipboard};
 use crate::core::{Command, Core, Event, Export, Region, Screen, Shape};
 use crate::decode::DecodedImage;
@@ -293,23 +294,42 @@ impl Worker {
                 let _ = self.events.send(Event::SettingsSaved(result));
                 self.ctx.request_repaint();
             }
-            Command::OpenExternally { path, app } => {
+            Command::OpenExternally { path, app, earlier } => {
                 let events = self.events.clone();
                 let ctx = self.ctx.clone();
-                let exited = move |result: Result<(), String>| {
-                    if let Err(message) = result {
-                        // The app may already be gone; nothing to report to then.
-                        let _ = events.send(Event::OpenFailed(message));
-                        ctx.request_repaint();
-                    }
-                };
-                if let Err(message) =
-                    external::launch(external::command(path, app.as_deref()), exited)
-                {
-                    // The app may already be gone; nothing to report to then.
-                    let _ = self.events.send(Event::OpenFailed(message));
-                    self.ctx.request_repaint();
-                }
+                let (path, app, earlier) = (path.clone(), app.clone(), earlier.clone());
+                // Asking the system for the default app takes a moment.
+                self.run(move || {
+                    let exited = move |result: Result<(), String>| {
+                        if let Err(message) = result {
+                            // The app may already be gone; nothing to report to then.
+                            let _ = events.send(Event::OpenFailed(message));
+                            ctx.request_repaint();
+                        }
+                    };
+                    let command = match app {
+                        Some(app) => Ok(external::command(&path, Some(&app))),
+                        None => default_opener(&path, earlier.as_deref()),
+                    };
+                    let started = command.and_then(|command| external::launch(command, exited));
+                    started.err().map(Event::OpenFailed)
+                });
+            }
+            Command::ReadDefaults { known } => {
+                let known = known.clone();
+                self.run(move || {
+                    let backend = associations::system();
+                    Some(Event::DefaultsRead(associations::read(&*backend, &known)))
+                });
+            }
+            Command::SetDefaults { names, app } => {
+                let (names, app) = (names.clone(), app.clone());
+                self.run(move || {
+                    let backend = associations::system();
+                    Some(Event::DefaultsSet(associations::set(
+                        &*backend, &names, &app,
+                    )))
+                });
             }
             Command::WriteRotation { path, rotation } => {
                 let (path, rotation) = (path.clone(), *rotation);
@@ -695,6 +715,8 @@ impl App {
                 | Command::CopyReport { .. }
                 | Command::CopyText(_)
                 | Command::ProbeLibraries
+                | Command::ReadDefaults { .. }
+                | Command::SetDefaults { .. }
                 | Command::DecodeFrames(_)
                 | Command::CancelFrames
                 | Command::DecodeInner { .. }
@@ -781,5 +803,26 @@ impl eframe::App for App {
             // Losing the window size is not worth an error at exit.
             let _ = geometry::save(path, geometry);
         }
+    }
+}
+
+/// The command that opens `path` without an app named in the settings: the
+/// system default, or `earlier` while pixpixpix is the default.
+fn default_opener(path: &Path, earlier: Option<&str>) -> Result<std::process::Command, String> {
+    let backend = associations::system();
+    let Some(file_type) = associations::type_of(path) else {
+        return Ok(external::command(path, None));
+    };
+    let default = file_type
+        .ids()
+        .first()
+        .and_then(|id| backend.default_for(id));
+    match associations::opener(default.as_deref(), &backend.ours(), earlier) {
+        Opener::System => Ok(external::command(path, None)),
+        Opener::Earlier(app) => backend.open_with(&app, path),
+        Opener::None => Err(format!(
+            "pixpixpix is the default app for {}, and no other app is known: name one in the settings",
+            file_type.name
+        )),
     }
 }

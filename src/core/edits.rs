@@ -1310,7 +1310,7 @@ impl Core {
             ToolbarClick::Size(size) => self.toolbar.size = size,
             ToolbarClick::Undo => self.undo(),
             ToolbarClick::Redo => self.redo(),
-            ToolbarClick::Settings => self.open_settings(),
+            ToolbarClick::Settings => return self.open_settings(),
             ToolbarClick::ExportWidth(width) => export.width = side(width),
             ToolbarClick::ExportHeight(height) => export.height = side(height),
             ToolbarClick::ExportLocked(locked) => export.locked = locked,

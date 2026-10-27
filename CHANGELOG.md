@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- The settings can make pixpixpix the default app per file type, or for all images or videos, and give each type back to the app it replaced; `o` then opens files in that app. The Flatpak only shows the defaults.
 - An About page, linked from the settings, shows the version, the license and links, and which optional libraries were found where, with install hints for missing ones and a Copy button.
 - Every error has a Copy button that copies the message with the file, the version, the system and the install method, for a search or a bug report.
 - The key line names the area that has the focus, and every area shows a diode in its bottom right corner that lights while it has it.

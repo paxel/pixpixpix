@@ -1,6 +1,7 @@
 //! The egui layer: draws the core's [`View`] and turns input into core
 //! [`Event`]s. It holds no behaviour of its own.
 
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -8,9 +9,9 @@ use std::sync::Arc;
 use egui::{Color32, ColorImage, RichText, TextureHandle, TextureOptions};
 
 use crate::core::{
-    About, DirColumn, EditsView, Event, ExportView, Focus, InnerImages, Key, KeyPress,
-    MetadataView, MotionKind, Notice, Points, Region, Screen, Thumb, Toggle, Video, VideoStep,
-    View, Zoom, unturned,
+    About, DefaultRow, Defaults, DirColumn, EditsView, Event, ExportView, Focus, InnerImages, Key,
+    KeyPress, MetadataView, MotionKind, Notice, Points, Region, Screen, Thumb, Toggle, Video,
+    VideoStep, View, Zoom, unturned,
 };
 use crate::decode::DecodedImage;
 use crate::folder;
@@ -296,6 +297,7 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
             ui.ctx(),
             &view.settings,
             view.settings_error.as_deref(),
+            view.defaults.as_ref(),
             &mut events,
         );
     }
@@ -674,6 +676,7 @@ fn show_settings(
     ctx: &egui::Context,
     values: &Settings,
     error: Option<&str>,
+    defaults: Option<&Defaults>,
     events: &mut Vec<Event>,
 ) {
     egui::Modal::new(egui::Id::new("settings"))
@@ -714,6 +717,9 @@ fn show_settings(
                 ui.add_space(12.0);
                 ui.label(RichText::new(error).color(ERROR_TEXT));
             }
+            settings_section(ui, "Default apps", |ui| {
+                show_defaults(ui, defaults, &values.earlier_defaults, events);
+            });
             settings_section(ui, "About", |ui| {
                 let link = egui::Button::new(RichText::new("About pixpixpix").color(TEXT));
                 if ui.add(link).clicked() {
@@ -721,6 +727,99 @@ fn show_settings(
                 }
             });
         });
+}
+
+/// The default app of every file type: switches for all images and all
+/// videos, then a row per type offering pixpixpix or the app it replaced.
+fn show_defaults(
+    ui: &mut egui::Ui,
+    defaults: Option<&Defaults>,
+    earlier: &BTreeMap<String, String>,
+    events: &mut Vec<Event>,
+) {
+    let Some(defaults) = defaults else {
+        ui.label(RichText::new("Looking\u{2026}").color(DIM_TEXT));
+        return;
+    };
+    if defaults.read_only {
+        ui.label(
+            RichText::new("The Flatpak cannot change default apps; the system settings can.")
+                .color(DIM_TEXT),
+        );
+    }
+    let enabled = !defaults.read_only;
+    ui.horizontal(|ui| {
+        for (video, label) in [
+            (false, "pixpixpix for all images"),
+            (true, "pixpixpix for all videos"),
+        ] {
+            let rows: Vec<&DefaultRow> =
+                defaults.rows.iter().filter(|r| r.video == video).collect();
+            let mut all = rows.iter().all(|r| r.ours);
+            let response = ui.add_enabled(
+                enabled,
+                egui::Checkbox::new(&mut all, RichText::new(label).color(TEXT)),
+            );
+            if response.changed() {
+                events.push(Event::SetDefaults {
+                    names: rows.iter().map(|r| r.name.clone()).collect(),
+                    ours: all,
+                });
+            }
+        }
+    });
+    ui.add_space(6.0);
+    let name = |app: &String| {
+        defaults
+            .names
+            .get(app)
+            .cloned()
+            .unwrap_or_else(|| app.clone())
+    };
+    egui::ScrollArea::vertical()
+        .max_height(220.0)
+        .show(ui, |ui| {
+            settings_grid(ui, "defaults", |ui| {
+                for row in &defaults.rows {
+                    let label = ui.label(RichText::new(&row.name).color(TEXT));
+                    let shown = match (&row.current, row.ours) {
+                        (_, true) => "pixpixpix".to_owned(),
+                        (Some(app), false) => name(app),
+                        (None, false) => "none".to_owned(),
+                    };
+                    let other = earlier.get(&row.name).filter(|_| row.ours).map(name);
+                    ui.add_enabled_ui(enabled, |ui| {
+                        egui::ComboBox::from_id_salt(("default", &row.name))
+                            .selected_text(RichText::new(&shown).color(TEXT))
+                            .width(220.0)
+                            .show_ui(ui, |ui| {
+                                if ui.selectable_label(row.ours, "pixpixpix").clicked() && !row.ours
+                                {
+                                    events.push(Event::SetDefaults {
+                                        names: vec![row.name.clone()],
+                                        ours: true,
+                                    });
+                                }
+                                if let Some(other) = &other
+                                    && ui.selectable_label(false, other).clicked()
+                                {
+                                    events.push(Event::SetDefaults {
+                                        names: vec![row.name.clone()],
+                                        ours: false,
+                                    });
+                                }
+                            })
+                            .response
+                            .labelled_by(label.id);
+                    });
+                    ui.end_row();
+                }
+            });
+        });
+    if let Some(error) = &defaults.error {
+        ui.label(RichText::new(error).color(ERROR_TEXT));
+        copy_button(ui, error, None, events);
+    }
 }
 
 /// Where pixpixpix lives.

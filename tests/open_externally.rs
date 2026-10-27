@@ -47,6 +47,7 @@ fn open(path: &str, app: Option<&str>) -> Command {
     Command::OpenExternally {
         path: PathBuf::from(path),
         app: app.map(str::to_owned),
+        earlier: None,
     }
 }
 
@@ -141,5 +142,22 @@ fn changing_an_app_only_saves_the_settings() {
     assert_eq!(
         core.handle(Event::SettingsChanged(changed.clone())),
         [Command::SaveSettings(changed)]
+    );
+}
+
+#[test]
+fn o_hands_over_the_app_pixpixpix_replaced_for_the_type() {
+    let mut core = showing();
+    core.handle(Event::SettingsLoaded(Ok(Settings {
+        earlier_defaults: [("JPEG".to_owned(), "gwenview.desktop".to_owned())].into(),
+        ..Settings::default()
+    })));
+    assert_eq!(
+        press(&mut core, Key::O),
+        [Command::OpenExternally {
+            path: PathBuf::from("/p/a.jpg"),
+            app: None,
+            earlier: Some("gwenview.desktop".into()),
+        }]
     );
 }

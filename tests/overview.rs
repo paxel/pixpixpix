@@ -679,6 +679,7 @@ fn o_opens_the_selected_file_in_the_app_for_its_kind() {
         [Command::OpenExternally {
             path: p("v.mp4"),
             app: Some("vlc".into()),
+            earlier: None,
         }]
     );
 }

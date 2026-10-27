@@ -150,6 +150,12 @@ goes to.
 The settings are kept in `settings.toml` in the platform config directory and may be
 edited by hand.
 
+Under "Default apps" the settings make pixpixpix the default app for a file type, or for
+all images or all videos at once, and give the type back to the app it replaced, which
+they remember. pixpixpix becomes a default only there, never by being installed. While
+it is the default, `o` opens files in the app it replaced. On Linux this goes through
+`xdg-mime`, on macOS through Launch Services; the Flatpak can only show the defaults.
+
 ## Formats
 
 | Kind                | Formats                                                               |

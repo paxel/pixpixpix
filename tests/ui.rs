@@ -592,6 +592,7 @@ fn the_cache_size_is_changed_on_the_settings_screen() {
     h.run();
     h.key_press(egui::Key::S);
     h.run();
+    h.state_mut().commands.clear();
     h.get_by_role_and_label(Role::Slider, CACHE_LABEL).focus();
     h.run();
     h.key_press(egui::Key::ArrowRight);
@@ -633,7 +634,8 @@ fn o_reaches_the_core_and_a_failure_shows_in_the_key_line() {
         h.state().commands,
         [Command::OpenExternally {
             path: PathBuf::from("/p/cat.jpg"),
-            app: None
+            app: None,
+            earlier: None,
         }]
     );
     let commands = h
@@ -2149,4 +2151,47 @@ fn the_settings_link_to_an_about_page_that_lists_and_copies_the_libraries() {
     h.key_press(egui::Key::S);
     h.run();
     assert!(h.query_by_label("Browsing").is_none());
+}
+
+#[test]
+fn the_settings_choose_pixpixpix_as_the_default_app_of_a_type_or_of_all() {
+    let mut h = harness(shown("/p/cat.jpg"));
+    h.run();
+    h.key_press(egui::Key::S);
+    h.run();
+    h.get_by_label("Default apps");
+    let ours = "io.github.paxel.pixpixpix.desktop";
+    h.state_mut()
+        .core
+        .handle(Event::DefaultsRead(pixpixpix::core::Defaults {
+            rows: vec![
+                pixpixpix::core::DefaultRow {
+                    name: "JPEG".into(),
+                    video: false,
+                    current: Some("gwenview.desktop".into()),
+                    ours: false,
+                },
+                pixpixpix::core::DefaultRow {
+                    name: "PNG".into(),
+                    video: false,
+                    current: None,
+                    ours: false,
+                },
+            ],
+            names: [("gwenview.desktop".to_owned(), "Gwenview".to_owned())].into(),
+            ours: ours.into(),
+            read_only: false,
+            error: None,
+        }));
+    h.run();
+    let jpeg = h.get_by_role_and_label(Role::ComboBox, "JPEG");
+    assert_eq!(jpeg.accesskit_node().value().as_deref(), Some("Gwenview"));
+    h.state_mut().commands.clear();
+    h.get_by_role_and_label(Role::CheckBox, "pixpixpix for all images")
+        .click();
+    h.run();
+    assert!(h.state().commands.contains(&Command::SetDefaults {
+        names: vec!["JPEG".into(), "PNG".into()],
+        app: ours.into(),
+    }));
 }

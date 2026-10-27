@@ -15,6 +15,7 @@
 
 pub mod annotate;
 pub mod app;
+pub mod associations;
 pub mod clipboard;
 pub mod core;
 pub mod decode;

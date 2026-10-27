@@ -3,6 +3,7 @@
 //! Missing fields take their defaults and unknown ones are ignored, so files
 //! of older and newer versions both load.
 
+use std::collections::BTreeMap;
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 
@@ -38,6 +39,10 @@ pub struct Settings {
     pub export_height: u32,
     /// `?` hid the key hints of the key line.
     pub hints_hidden: bool,
+    /// The app that was the default for a file type before pixpixpix became
+    /// it, by the type's name in the settings; `o` opens with it, and the
+    /// settings can make it the default again.
+    pub earlier_defaults: BTreeMap<String, String>,
 }
 
 impl Default for Settings {
@@ -50,6 +55,7 @@ impl Default for Settings {
             export_width: 1920,
             export_height: 1080,
             hints_hidden: false,
+            earlier_defaults: BTreeMap::new(),
         }
     }
 }

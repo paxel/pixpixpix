@@ -8,11 +8,11 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use crate::decode::{DecodedImage, Frame};
-use crate::folder;
 use crate::metadata::{Metadata, Strip};
 use crate::rotate::Rotation;
 use crate::settings::Settings;
 use crate::startup::NoFile;
+use crate::{associations, folder};
 
 mod edits;
 mod info;
@@ -178,6 +178,16 @@ pub enum Event {
     },
     /// A [`Command::Copy`] finished.
     Copied(Result<(), String>),
+    /// The [`Command::ReadDefaults`] found these.
+    DefaultsRead(Defaults),
+    /// A default app was chosen on the settings screen: pixpixpix, or the
+    /// app that was the default before it, for the types named.
+    SetDefaults {
+        names: Vec<String>,
+        ours: bool,
+    },
+    /// A [`Command::SetDefaults`] finished.
+    DefaultsSet(Result<(), String>),
     /// The About page's link on the settings screen was clicked.
     OpenAbout,
     /// The About page's back button was clicked.
@@ -349,6 +359,10 @@ pub enum Command {
     OpenExternally {
         path: PathBuf,
         app: Option<String>,
+        /// Without `app`: the app that was the default for the file's type
+        /// before pixpixpix became it, which opens the file while pixpixpix
+        /// is the default.
+        earlier: Option<String>,
     },
     /// Turn the image in the file by `rotation` from how it is shown,
     /// answered by [`Event::RotationWritten`].
@@ -483,6 +497,17 @@ pub enum Command {
     /// Put only these pixels on the clipboard, without the file; answered
     /// by [`Event::Copied`].
     CopyPixels(DecodedImage),
+    /// Read the default apps of the file types, the names of the apps
+    /// `known` too; answered by [`Event::DefaultsRead`].
+    ReadDefaults {
+        known: Vec<String>,
+    },
+    /// Make `app` the default for the file types named; answered by
+    /// [`Event::DefaultsSet`].
+    SetDefaults {
+        names: Vec<String>,
+        app: String,
+    },
     /// Look for the optional libraries without loading them into the app,
     /// answered by [`Event::LibrariesProbed`].
     ProbeLibraries,
@@ -984,6 +1009,32 @@ const ABOUT_KEYS: &[KeyHint] = &[
     },
 ];
 
+/// The default apps of the file types pixpixpix opens.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Defaults {
+    pub rows: Vec<DefaultRow>,
+    /// What to call the apps, by id.
+    pub names: BTreeMap<String, String>,
+    /// pixpixpix's own id.
+    pub ours: String,
+    /// The defaults can be read but not changed, as in the Flatpak.
+    pub read_only: bool,
+    /// Why the last change failed.
+    pub error: Option<String>,
+}
+
+/// The default app of one file type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DefaultRow {
+    /// The type, as the settings call it.
+    pub name: String,
+    pub video: bool,
+    /// The id of the default app, if there is one.
+    pub current: Option<String>,
+    /// pixpixpix is the default.
+    pub ours: bool,
+}
+
 /// The About page.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct About {
@@ -1245,6 +1296,9 @@ pub struct View {
     pub settings_open: bool,
     /// The About page, opened from the settings screen.
     pub about: Option<About>,
+    /// The default apps of the file types, once read for the settings
+    /// screen.
+    pub defaults: Option<Defaults>,
     /// Why the settings file could not be read or written; the defaults are
     /// in effect after a failed read.
     pub settings_error: Option<String>,
@@ -1508,6 +1562,7 @@ impl Core {
                 settings: Settings::default(),
                 settings_open: false,
                 about: None,
+                defaults: None,
                 settings_error: None,
                 open_error: None,
                 rotation: Rotation::None,
@@ -1647,6 +1702,17 @@ impl Core {
             Event::CopyError { message, path } => vec![Command::CopyReport { message, path }],
             Event::CopyText(text) => vec![Command::CopyText(text)],
             Event::OpenAbout => self.open_about(),
+            Event::DefaultsRead(defaults) => {
+                self.view.defaults = Some(defaults);
+                Vec::new()
+            }
+            Event::SetDefaults { names, ours } => self.set_defaults(names, ours),
+            Event::DefaultsSet(result) => {
+                if let (Err(message), Some(defaults)) = (&result, self.view.defaults.as_mut()) {
+                    defaults.error = Some(message.clone());
+                }
+                vec![self.read_defaults()]
+            }
             Event::CloseAbout => {
                 self.close_about();
                 Vec::new()
@@ -2405,10 +2471,7 @@ impl Core {
         }
         match (key.key, key.command) {
             (Key::Q, true) => vec![Command::Quit],
-            (Key::S, false) => {
-                self.open_settings();
-                Vec::new()
-            }
+            (Key::S, false) => self.open_settings(),
             (Key::F, false) => {
                 self.view.fullscreen = !self.view.fullscreen;
                 vec![Command::SetFullscreen(self.view.fullscreen)]
@@ -2482,9 +2545,61 @@ impl Core {
         self.view.key_line.keys = SETTINGS_KEYS.to_vec();
     }
 
-    fn open_settings(&mut self) {
+    fn open_settings(&mut self) -> Vec<Command> {
         self.view.settings_open = true;
         self.view.key_line.keys = SETTINGS_KEYS.to_vec();
+        vec![self.read_defaults()]
+    }
+
+    /// Reads the default apps, the names of the earlier ones too.
+    fn read_defaults(&self) -> Command {
+        Command::ReadDefaults {
+            known: self
+                .view
+                .settings
+                .earlier_defaults
+                .values()
+                .cloned()
+                .collect(),
+        }
+    }
+
+    /// Makes pixpixpix the default for the types `names`, remembering the
+    /// app it replaces, or the remembered app again. Types without one stay.
+    fn set_defaults(&mut self, names: Vec<String>, ours: bool) -> Vec<Command> {
+        let Some(defaults) = self.view.defaults.as_ref().filter(|d| !d.read_only) else {
+            return Vec::new();
+        };
+        let mut settings = self.view.settings.clone();
+        let mut commands = Vec::new();
+        if ours {
+            for row in defaults.rows.iter().filter(|r| names.contains(&r.name)) {
+                if let Some(current) = row.current.as_ref().filter(|_| !row.ours) {
+                    settings
+                        .earlier_defaults
+                        .insert(row.name.clone(), current.clone());
+                }
+            }
+            commands.push(Command::SetDefaults {
+                names,
+                app: defaults.ours.clone(),
+            });
+        } else {
+            let mut by_app: BTreeMap<String, Vec<String>> = BTreeMap::new();
+            for name in names {
+                if let Some(app) = settings.earlier_defaults.get(&name) {
+                    by_app.entry(app.clone()).or_default().push(name);
+                }
+            }
+            commands.extend(
+                by_app
+                    .into_iter()
+                    .map(|(app, names)| Command::SetDefaults { names, app }),
+            );
+        }
+        let mut all = self.change_settings(settings);
+        all.extend(commands);
+        all
     }
 
     fn set_focus(&mut self, focus: Focus) {
@@ -3021,7 +3136,10 @@ impl Core {
             &settings.image_app
         };
         let app = (!app.trim().is_empty()).then(|| app.clone());
-        vec![Command::OpenExternally { path, app }]
+        let earlier = associations::type_of(&path)
+            .and_then(|t| settings.earlier_defaults.get(t.name))
+            .cloned();
+        vec![Command::OpenExternally { path, app, earlier }]
     }
 
     /// The size of the image on screen as shown, if it and the viewport have

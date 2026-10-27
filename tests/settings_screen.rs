@@ -75,7 +75,11 @@ fn settings_are_read_only_after_the_first_frame() {
 fn s_opens_and_closes_the_settings_screen() {
     let mut core = browsing();
     assert!(!core.view().settings_open);
-    assert!(press(&mut core, Key::S).is_empty());
+    // Opening reads the default apps for their section.
+    assert!(matches!(
+        press(&mut core, Key::S).as_slice(),
+        [Command::ReadDefaults { .. }]
+    ));
     assert!(core.view().settings_open);
     assert_eq!(key_names(&core), ["S/Esc", QUIT]);
     press(&mut core, Key::S);
