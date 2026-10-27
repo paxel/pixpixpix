@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- `Esc` always leads back to the image view: it closes the dir column and the overview (showing the selected file), and leaves the band keeping the file shown. `Left` and `Backspace` still go up a folder.
 - A new icon: a pig face in front of three stacked pictures, also on the window.
 - `c` copies only the picture, for chats and image apps; `Shift`+`c` copies the file, for file managers.
 - The settings screen is laid out in sections with dividers, its labels and controls lined up.

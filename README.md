@@ -40,6 +40,8 @@ The [CHANGELOG](CHANGELOG.md) describes every feature in detail.
 
 ## Keys
 
+`Esc` always leads back to the image view, the main screen.
+
 The bottom line of the window names the area that has the focus, which also shows a lit
 diode in its bottom right corner, and lists its keys, on as many
 lines as it needs; `?` hides them and brings them back. A click on a key in that line does what
@@ -105,7 +107,8 @@ In the save dialog, `Enter` saves as a new file and `Esc` goes back to editing.
 |------------------------------|----------------------------------------------------------------|
 | `Up` / `Down`                | go to the folder above or below                                |
 | `Right` / `Enter`            | go into the first subfolder                                    |
-| `Left` / `Esc` / `Backspace` | go to the parent                                               |
+| `Left` / `Backspace`         | go to the parent                                               |
+| `Esc`                        | close, back to the image view                                  |
 | `.`                          | show dot files and dot folders until you leave the level       |
 | `Shift`+`.`                  | show dot files and dot folders in every folder, until `.`      |
 | `g`                          | overview of the current folder                                 |
@@ -123,7 +126,7 @@ The key line tags what is on.
 |------------------|--------------------------------------------|
 | `Left` / `Right` | move the highlight                         |
 | `Enter`          | show the highlighted image                 |
-| `Esc`            | back to the image view                     |
+| `Esc`            | back to the image view, the file kept      |
 | click            | show the clicked image (also without `b`)  |
 
 ### Overview (`g`)
@@ -136,7 +139,7 @@ The key line tags what is on.
 | `c` / `Shift`+`c`       | copy the picture / the file                       |
 | `o`                     | open in another app                               |
 | `x`                     | move to the trash                                 |
-| `g`                     | close, showing the selected file                  |
+| `g` / `Esc`             | close, showing the selected file                  |
 | `Tab`                   | switch between gallery and dir column             |
 
 The dir column works the same in the overview: the overview follows the folder it

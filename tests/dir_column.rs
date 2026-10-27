@@ -284,8 +284,8 @@ fn a_folder_without_media_says_so() {
 }
 
 #[test]
-fn left_escape_and_backspace_go_to_the_parent_highlighting_it() {
-    for key in [Key::Left, Key::Escape, Key::Backspace] {
+fn left_and_backspace_go_to_the_parent_highlighting_it() {
+    for key in [Key::Left, Key::Backspace] {
         let mut core = column_open();
         press(&mut core, Key::Right);
         assert_eq!(
@@ -366,7 +366,8 @@ fn the_key_line_lists_the_keys_of_the_focused_area() {
         key_names(&core),
         [
             "Up/Down",
-            "Left/Esc/Backspace",
+            "Left/Backspace",
+            "Esc",
             "Right/Enter",
             "./Shift+.",
             "G",
@@ -451,4 +452,13 @@ fn the_up_row_goes_to_the_parent() {
             Command::ListDirs(PathBuf::from("/")),
         ]
     );
+}
+
+#[test]
+fn escape_closes_the_column_for_the_image_view() {
+    let mut core = column_open();
+    press(&mut core, Key::Escape);
+    assert_eq!(core.view().dir_column, None);
+    assert_eq!(core.view().focus, Focus::Image);
+    assert!(shows_image(&core, "/p/a.jpg"));
 }

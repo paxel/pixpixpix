@@ -164,15 +164,21 @@ fn tab_cycles_column_image_view_and_band() {
 }
 
 #[test]
-fn escape_returns_to_the_area_the_band_was_focused_from() {
-    let mut core = column_open();
-    press(&mut core, Key::B);
-    press(&mut core, Key::Escape);
-    assert_eq!(core.view().focus, Focus::Dirs);
-    press(&mut core, Key::Tab);
-    press(&mut core, Key::B);
-    press(&mut core, Key::Escape);
-    assert_eq!(core.view().focus, Focus::Image);
+fn escape_returns_to_the_image_view_keeping_the_file_and_the_band() {
+    for from_column in [true, false] {
+        let mut core = column_open();
+        if !from_column {
+            press(&mut core, Key::Tab);
+        }
+        let shown = core.view().screen.clone();
+        press(&mut core, Key::B);
+        press(&mut core, Key::Right);
+        press(&mut core, Key::Escape);
+        assert_eq!(core.view().focus, Focus::Image, "{from_column}");
+        assert_eq!(core.view().screen, shown, "{from_column}");
+        assert_eq!(core.view().band_highlight, None, "{from_column}");
+        assert!(!core.view().band.is_empty(), "{from_column}");
+    }
 }
 
 #[test]

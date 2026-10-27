@@ -835,8 +835,12 @@ const DIR_COLUMN_KEYS: &[KeyHint] = &[
         action: "go to folder",
     },
     KeyHint {
-        keys: "Left/Esc/Backspace",
+        keys: "Left/Backspace",
         action: "parent",
+    },
+    KeyHint {
+        keys: "Esc",
+        action: "image view",
     },
     KeyHint {
         keys: "Right/Enter",
@@ -875,7 +879,7 @@ const BAND_KEYS: &[KeyHint] = &[
     },
     KeyHint {
         keys: "Esc",
-        action: "back",
+        action: "image view",
     },
 ];
 
@@ -937,6 +941,10 @@ const GALLERY_KEYS: &[KeyHint] = &[
         keys: "G",
         action: "close overview",
     },
+    KeyHint {
+        keys: "Esc",
+        action: "image view",
+    },
 ];
 
 /// The keys of the dir column while the overview is open.
@@ -946,8 +954,12 @@ const CONTENTS_KEYS: &[KeyHint] = &[
         action: "go to folder",
     },
     KeyHint {
-        keys: "Left/Esc/Backspace",
+        keys: "Left/Backspace",
         action: "parent",
+    },
+    KeyHint {
+        keys: "Esc",
+        action: "image view",
     },
     KeyHint {
         keys: "Right/Enter",
@@ -1378,8 +1390,6 @@ pub struct Core {
     decoding: BTreeSet<PathBuf>,
     /// The folder given on the command line when it had no file to show.
     start_dir: Option<PathBuf>,
-    /// The area that had the focus before the band, which `Esc` returns to.
-    band_from: Focus,
     /// The highlighted file of the band while it has the focus; the current
     /// one when unset or no longer in the band.
     band_highlight: Option<PathBuf>,
@@ -1597,7 +1607,6 @@ impl Core {
             cache: BTreeMap::new(),
             decoding,
             start_dir,
-            band_from: Focus::Image,
             band_highlight: None,
             rotation: Rotation::None,
             writing: None,
@@ -2620,14 +2629,13 @@ impl Core {
     /// Gives the band the focus, its highlight on the current file.
     fn focus_band(&mut self) {
         if self.view.focus != Focus::Band {
-            self.band_from = self.view.focus;
             self.set_focus(Focus::Band);
         }
     }
 
     /// Keys of the band: the arrows move the highlight, `Enter` shows the
     /// highlighted file like a click and returns to the image view, `Esc`
-    /// returns to the area the band was focused from.
+    /// returns to it without, the highlight dropped.
     fn band_key(&mut self, key: Key) -> Vec<Command> {
         let index = self.view.band_highlight;
         let target = match key {
@@ -2642,7 +2650,9 @@ impl Core {
                 return commands;
             }
             Key::Escape => {
-                self.set_focus(self.band_from);
+                // Back to the main screen; the shown file stays.
+                self.band_highlight = None;
+                self.set_focus(Focus::Image);
                 return Vec::new();
             }
             _ => None,
@@ -2772,11 +2782,12 @@ impl Core {
             let dots = !self.dots;
             return self.set_dots(dots);
         }
+        // Back to the main screen, the column closed.
+        if key == Key::Escape {
+            return self.toggle_column();
+        }
         let mut commands = self.move_in_column(key);
-        if matches!(
-            key,
-            Key::Left | Key::Right | Key::Enter | Key::Escape | Key::Backspace
-        ) {
+        if matches!(key, Key::Left | Key::Right | Key::Enter | Key::Backspace) {
             commands.extend(self.reset_one_shot());
         }
         commands
@@ -2829,7 +2840,7 @@ impl Core {
                 };
                 return self.go_to_sibling(sibling);
             }
-            Key::Left | Key::Escape | Key::Backspace => self
+            Key::Left | Key::Backspace => self
                 .dir
                 .as_deref()
                 .and_then(Path::parent)

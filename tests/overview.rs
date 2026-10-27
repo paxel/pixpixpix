@@ -127,7 +127,7 @@ const QUIT: &str = if cfg!(target_os = "macos") {
     "Ctrl+Q"
 };
 
-const GALLERY_KEYS: [&str; 10] = [
+const GALLERY_KEYS: [&str; 11] = [
     "Arrows",
     "Enter",
     "+/-",
@@ -135,6 +135,7 @@ const GALLERY_KEYS: [&str; 10] = [
     "O",
     "X",
     "G",
+    "Esc",
     "S",
     "F",
     QUIT,
@@ -790,7 +791,8 @@ fn tab_moves_between_dir_column_and_gallery_and_the_key_line_follows() {
         key_names(&core),
         [
             "Up/Down",
-            "Left/Esc/Backspace",
+            "Left/Backspace",
+            "Esc",
             "Right/Enter",
             "G",
             "Tab",
@@ -993,4 +995,24 @@ fn shift_c_copies_the_selected_file() {
         core.handle(Event::Key(shift_c)),
         [Command::CopyFile(p("b.jpg"))]
     );
+}
+
+#[test]
+fn esc_in_the_gallery_or_its_column_shows_the_selected_tile_in_the_image_view() {
+    for in_column in [false, true] {
+        let (mut core, scan) = contents();
+        section(&mut core, scan, "/p", &["/p/a.jpg", "/p/b.jpg"]);
+        press(&mut core, Key::Right);
+        if in_column {
+            press(&mut core, Key::Tab);
+            assert_eq!(core.view().focus, Focus::Dirs);
+        }
+        press(&mut core, Key::Escape);
+        assert!(overview(&core).is_none(), "{in_column}");
+        assert_eq!(core.view().focus, Focus::Image, "{in_column}");
+        assert!(matches!(
+            &core.view().screen,
+            Screen::Image { path, .. } if *path == p("b.jpg")
+        ));
+    }
 }

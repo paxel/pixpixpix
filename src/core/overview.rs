@@ -179,6 +179,13 @@ impl Core {
         commands
     }
 
+    /// `Esc` in the overview: as `g`, but the image view gets the focus.
+    fn escape_overview(&mut self) -> Vec<Command> {
+        let commands = self.leave_overview();
+        self.set_focus(Focus::Image);
+        commands
+    }
+
     /// Drops the overview, cancelling its scan and thumbnail decodes; the
     /// view behind it shows again as it was, with the focus it had.
     pub(super) fn close_overview(&mut self) -> Vec<Command> {
@@ -417,6 +424,7 @@ impl Core {
                 Vec::new()
             }
             Key::Enter => self.open_selected(),
+            Key::Escape => self.escape_overview(),
             Key::Plus => self.resize_thumbnails(true),
             Key::Minus => self.resize_thumbnails(false),
             Key::X => self.trash_selected(),
@@ -433,13 +441,10 @@ impl Core {
     /// `.` does nothing.
     fn contents_key(&mut self, key: Key) -> Vec<Command> {
         match key {
-            Key::Up
-            | Key::Down
-            | Key::Left
-            | Key::Right
-            | Key::Enter
-            | Key::Escape
-            | Key::Backspace => self.column_action(|core| core.dir_key(key)),
+            Key::Up | Key::Down | Key::Left | Key::Right | Key::Enter | Key::Backspace => {
+                self.column_action(|core| core.dir_key(key))
+            }
+            Key::Escape => self.escape_overview(),
             _ => Vec::new(),
         }
     }
