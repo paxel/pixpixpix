@@ -40,7 +40,8 @@ The [CHANGELOG](CHANGELOG.md) describes every feature in detail.
 
 ## Keys
 
-`Esc` always leads back to the image view, the main screen.
+`Esc` always leads back to the image view, the main screen. A hidden band of preloaded files comes
+back with `b`, and stays hidden across starts until then.
 
 The bottom line of the window names the area that has the focus, which also shows a lit
 diode in its bottom right corner, and lists its keys, on as many
@@ -81,7 +82,7 @@ while it is closed.
 | `p`                    | tools (annotation toolbar)                       |
 | `g`                    | overview, the file shown selected                |
 | `n`                    | dir column                                       |
-| `b`                    | focus the preloaded files                        |
+| `b`                    | focus the preloaded files; there, hide them      |
 | `Up` / `Down`          | previous / next image inside a multi-image file  |
 | `Space`                | play / pause a video, Live Photo or Motion Photo |
 | click                  | play / pause a video                             |
@@ -113,7 +114,7 @@ In the save dialog, `Enter` saves as a new file and `Esc` goes back to editing.
 | `Shift`+`.`                  | show dot files and dot folders in every folder, until `.`      |
 | `g`                          | overview of the current folder                                 |
 | `n`                          | close                                                          |
-| `b`                          | focus the preloaded files                                      |
+| `b`                          | focus the preloaded files; there, hide them                    |
 
 A click on a folder goes there, a double-click goes into its first subfolder, and the
 `..` row on top goes to the parent.

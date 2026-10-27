@@ -881,6 +881,10 @@ const BAND_KEYS: &[KeyHint] = &[
         keys: "Esc",
         action: "image view",
     },
+    KeyHint {
+        keys: "B",
+        action: "hide preloaded files",
+    },
 ];
 
 /// Band keys while the dir column is open.
@@ -1971,6 +1975,9 @@ impl Core {
             }
             self.view.key_line.keys = keys;
         }
+        if !self.view.settings_open && self.view.overview.is_none() {
+            self.publish_band_keys();
+        }
         if self.dialog.is_some() {
             self.view.key_line.keys = SAVE_DIALOG_KEYS.to_vec();
         }
@@ -2502,13 +2509,16 @@ impl Core {
             _ if self.view.overview.is_some() && key.command => Vec::new(),
             _ if self.view.overview.is_some() => self.overview_key(key.key),
             (Key::N, false) => self.toggle_column(),
-            (Key::B, false) => {
-                self.focus_band();
-                Vec::new()
-            }
+            (Key::B, false) => self.toggle_band(),
             (Key::Tab, false) => {
                 match self.view.focus {
                     Focus::Dirs => self.set_focus(Focus::Image),
+                    // A hidden band is skipped.
+                    Focus::Image if self.view.settings.band_hidden => {
+                        if self.view.dir_column.is_some() {
+                            self.set_focus(Focus::Dirs);
+                        }
+                    }
                     Focus::Image => self.focus_band(),
                     Focus::Band if self.view.dir_column.is_some() => self.set_focus(Focus::Dirs),
                     Focus::Band => self.set_focus(Focus::Image),
@@ -2624,6 +2634,46 @@ impl Core {
         self.view.focus = focus;
         self.band_highlight = None;
         self.view.key_line.keys = focus_keys(focus, self.view.dir_column.is_some());
+    }
+
+    /// `b`: focuses the band, hides it from inside, or shows and focuses it
+    /// when hidden; hidden or shown is saved.
+    fn toggle_band(&mut self) -> Vec<Command> {
+        let mut settings = self.view.settings.clone();
+        if settings.band_hidden {
+            settings.band_hidden = false;
+            let commands = self.change_settings(settings);
+            self.focus_band();
+            commands
+        } else if self.view.focus == Focus::Band {
+            settings.band_hidden = true;
+            let commands = self.change_settings(settings);
+            self.set_focus(Focus::Image);
+            commands
+        } else {
+            self.focus_band();
+            Vec::new()
+        }
+    }
+
+    /// Fits the key hints of `b` and `Tab` to the band being hidden or
+    /// focused.
+    fn publish_band_keys(&mut self) {
+        let hidden = self.view.settings.band_hidden;
+        let focus = self.view.focus;
+        let column = self.view.dir_column.is_some();
+        let keys = &mut self.view.key_line.keys;
+        for key in keys.iter_mut() {
+            match key.keys {
+                "B" if hidden => key.action = "show preloaded files",
+                "B" if focus == Focus::Band => key.action = "hide preloaded files",
+                "Tab" if hidden && focus == Focus::Image && column => key.action = "folders",
+                _ => {}
+            }
+        }
+        if hidden && focus == Focus::Image && !column {
+            keys.retain(|k| k.keys != "Tab");
+        }
     }
 
     /// Gives the band the focus, its highlight on the current file.

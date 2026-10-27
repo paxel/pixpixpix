@@ -39,6 +39,8 @@ pub struct Settings {
     pub export_height: u32,
     /// `?` hid the key hints of the key line.
     pub hints_hidden: bool,
+    /// `b` hid the band of preloaded files.
+    pub band_hidden: bool,
     /// The app that was the default for a file type before pixpixpix became
     /// it, by the type's name in the settings; `o` opens with it, and the
     /// settings can make it the default again.
@@ -55,6 +57,7 @@ impl Default for Settings {
             export_width: 1920,
             export_height: 1080,
             hints_hidden: false,
+            band_hidden: false,
             earlier_defaults: BTreeMap::new(),
         }
     }

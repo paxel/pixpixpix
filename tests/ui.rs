@@ -2200,3 +2200,20 @@ fn the_settings_choose_pixpixpix_as_the_default_app_of_a_type_or_of_all() {
         app: ours.into(),
     }));
 }
+
+#[test]
+fn a_hidden_band_gives_its_space_to_the_image() {
+    let mut core = browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]);
+    decoded(&mut core, "/p/b.jpg");
+    let mut h = harness(core);
+    h.run();
+    let before = h.get_by_role_and_label(Role::Image, "a.jpg").rect();
+    h.get_by_role_and_label(Role::Button, "b.jpg");
+    h.key_press(egui::Key::B);
+    h.run();
+    h.key_press(egui::Key::B);
+    h.run();
+    assert!(h.query_by_role_and_label(Role::Button, "b.jpg").is_none());
+    let after = h.get_by_role_and_label(Role::Image, "a.jpg").rect();
+    assert!(after.height() >= before.height());
+}

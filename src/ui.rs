@@ -192,7 +192,7 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
         .show(ui, |ui| {
             show_key_line(ui, view, &mut events);
         });
-    if !view.band.is_empty() && view.overview.is_none() {
+    if !view.band.is_empty() && view.overview.is_none() && !view.settings.band_hidden {
         egui::Panel::bottom("band")
             .resizable(false)
             .show_separator_line(false)

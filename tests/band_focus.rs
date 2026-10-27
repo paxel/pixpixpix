@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use pixpixpix::core::{Command, Core, Event, Focus, Key, KeyPress, Screen};
 use pixpixpix::decode::DecodedImage;
+use pixpixpix::settings::Settings;
 
 fn image() -> DecodedImage {
     DecodedImage {
@@ -192,10 +193,71 @@ fn the_key_line_lists_the_band_keys_while_it_has_the_focus() {
     press(&mut core, Key::B);
     assert_eq!(
         key_names(&core),
-        ["Left/Right", "Enter", "Esc", "Tab", "S", "F", quit]
+        ["Left/Right", "Enter", "Esc", "B", "Tab", "S", "F", quit]
     );
-    assert_eq!(core.view().key_line.keys[3].action, "image view");
+    assert_eq!(core.view().key_line.keys[3].action, "hide preloaded files");
+    assert_eq!(core.view().key_line.keys[4].action, "image view");
     let mut core = column_open();
     press(&mut core, Key::B);
-    assert_eq!(core.view().key_line.keys[3].action, "folders");
+    assert_eq!(core.view().key_line.keys[4].action, "folders");
+}
+
+fn action_of(core: &Core, keys: &str) -> Option<&'static str> {
+    core.view()
+        .key_line
+        .keys
+        .iter()
+        .find(|k| k.keys == keys)
+        .map(|k| k.action)
+}
+
+fn band_hidden(hidden: bool) -> Command {
+    Command::SaveSettings(Settings {
+        band_hidden: hidden,
+        ..Settings::default()
+    })
+}
+
+#[test]
+fn b_in_the_band_hides_it_and_b_again_shows_and_focuses_it() {
+    let mut core = browsing();
+    press(&mut core, Key::B);
+    assert_eq!(press(&mut core, Key::B), [band_hidden(true)]);
+    assert!(core.view().settings.band_hidden);
+    assert_eq!(core.view().focus, Focus::Image);
+    assert_eq!(action_of(&core, "B"), Some("show preloaded files"));
+    assert_eq!(press(&mut core, Key::B), [band_hidden(false)]);
+    assert!(!core.view().settings.band_hidden);
+    assert_eq!(core.view().focus, Focus::Band);
+}
+
+#[test]
+fn tab_skips_a_hidden_band() {
+    let mut core = browsing();
+    press(&mut core, Key::B);
+    press(&mut core, Key::B);
+    press(&mut core, Key::Tab);
+    assert_eq!(core.view().focus, Focus::Image);
+    assert_eq!(action_of(&core, "Tab"), None);
+    let mut core = column_open();
+    core.handle(Event::SettingsLoaded(Ok(Settings {
+        band_hidden: true,
+        ..Settings::default()
+    })));
+    press(&mut core, Key::Tab);
+    assert_eq!(core.view().focus, Focus::Image);
+    assert_eq!(action_of(&core, "Tab"), Some("folders"));
+    press(&mut core, Key::Tab);
+    assert_eq!(core.view().focus, Focus::Dirs);
+}
+
+#[test]
+fn a_band_hidden_before_stays_hidden_after_a_restart() {
+    let mut core = browsing();
+    core.handle(Event::SettingsLoaded(Ok(Settings {
+        band_hidden: true,
+        ..Settings::default()
+    })));
+    assert!(core.view().settings.band_hidden);
+    assert_eq!(action_of(&core, "B"), Some("show preloaded files"));
 }

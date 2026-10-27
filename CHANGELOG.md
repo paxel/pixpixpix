@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `b` in the band hides it, and `b` brings it back; a hidden band stays hidden across starts, and `Tab` skips it.
 - The settings can make pixpixpix the default app per file type, or for all images or videos, and give each type back to the app it replaced; `o` then opens files in that app. The Flatpak only shows the defaults.
 - An About page, linked from the settings, shows the version, the license and links, and which optional libraries were found where, with install hints for missing ones and a Copy button.
 - Every error has a Copy button that copies the message with the file, the version, the system and the install method, for a search or a bug report.
