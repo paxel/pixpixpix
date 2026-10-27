@@ -40,19 +40,19 @@ fn an_app_gets_the_file_last() {
 #[cfg(unix)]
 #[test]
 fn the_program_runs_with_the_file_and_success_is_reported() {
-    use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let out = dir.path().join("out");
     let script = dir.path().join("viewer");
     std::fs::write(
         &script,
-        format!("#!/bin/sh\nprintf '%s' \"$1\" > '{}'\n", out.display()),
+        format!("printf '%s' \"$1\" > '{}'\n", out.display()),
     )
     .unwrap();
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
     let file = dir.path().join("a b.jpg");
-    let mut command = std::process::Command::new(&script);
-    command.arg(&file);
+    // `sh` reads the script instead of executing it: a just-written file can
+    // still be open in a child another test is forking ("Text file busy").
+    let mut command = std::process::Command::new("sh");
+    command.arg(&script).arg(&file);
     let (sender, exited) = channel();
     external::launch(command, move |result| sender.send(result).unwrap()).unwrap();
     assert_eq!(exited.recv_timeout(Duration::from_secs(10)), Ok(Ok(())));
