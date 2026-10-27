@@ -1,16 +1,19 @@
 //! Videos through libmpv, loaded on the first one: the first frame of a file,
-//! and playback that reports frame after frame. The video of a Motion Photo
+//! and playback in a helper process that reports frame after frame. The video of a Motion Photo
 //! plays from a copy in the cache folder, removed when it stops.
 
+use std::cell::RefCell;
 use std::ffi::CString;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::process::{Command, ExitCode};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::core::VideoStep;
 use crate::decode::DecodedImage;
+use crate::helper::{self, Reader, Writer};
 use crate::mpv::{self, Mpv, Player, PlayerEvent};
 use crate::{folder, motion};
 
@@ -130,6 +133,12 @@ pub enum Report {
 
 /// Asks of the thread driving the player.
 enum Ask {
+    /// What to play; the first message to a helper.
+    Start {
+        path: PathBuf,
+        muted: bool,
+        paused: bool,
+    },
     /// News from mpv.
     Wake,
     Pause(bool),
@@ -147,30 +156,104 @@ enum Awaiting {
     Frame,
 }
 
-/// A video playing on its own thread; dropping it stops the video.
+/// A video playing in a helper process; dropping it stops the video and
+/// ends the helper.
 pub struct Playback {
     asks: Sender<Ask>,
+    /// Set once dropped, so the helper ending then is no failure.
+    stopped: Arc<AtomicBool>,
 }
 
 impl Playback {
     /// Plays the video at `path` from the start, or shows its first frame if
-    /// `paused`, with sound unless `muted`, reporting to `report` from the
-    /// playing thread until stopped, the end or a failure. A photo at `path`
-    /// plays the video of the Motion Photo it is.
+    /// `paused`, with sound unless `muted`, reporting to `report` from
+    /// another thread until stopped, the end or a failure. A photo at `path`
+    /// plays the video of the Motion Photo it is. libmpv runs in a helper
+    /// process, so a crash in it fails only this video.
     pub fn start(
         path: PathBuf,
         muted: bool,
         paused: bool,
         report: impl Fn(Report) + Send + 'static,
     ) -> Self {
+        match helper::command(helper::PLAY) {
+            Ok(command) => Self::start_with(command, path, muted, paused, report),
+            Err(error) => {
+                report(Report::Failed(format!(
+                    "the video player cannot start: {error}"
+                )));
+                Self::stopped()
+            }
+        }
+    }
+
+    /// [`Playback::start`] with `command` as the helper.
+    pub fn start_with(
+        command: Command,
+        path: PathBuf,
+        muted: bool,
+        paused: bool,
+        report: impl Fn(Report) + Send + 'static,
+    ) -> Self {
+        let mut child = match helper::spawn(command) {
+            Ok(child) => child,
+            Err(error) => {
+                report(Report::Failed(format!(
+                    "the video player cannot start: {error}"
+                )));
+                return Self::stopped();
+            }
+        };
+        let (Some(mut stdin), Some(mut stdout)) = (child.stdin.take(), child.stdout.take()) else {
+            report(Report::Failed("the video player cannot start".to_owned()));
+            return Self::stopped();
+        };
         let (asks, inbox) = channel();
-        let wakeup = asks.clone();
+        // The start goes first; the helper has nothing to do before it.
+        let _ = asks.send(Ask::Start {
+            path,
+            muted,
+            paused,
+        });
         std::thread::spawn(move || {
-            if let Err(message) = play(&path, [muted, paused], wakeup, &inbox, &report) {
-                report(Report::Failed(message));
+            for ask in inbox {
+                let stop = matches!(ask, Ask::Stop);
+                if helper::write_message(&mut stdin, &encode_ask(&ask)).is_err() || stop {
+                    break;
+                }
+            }
+            // Closing stdin ends the helper.
+        });
+        let stopped = Arc::new(AtomicBool::new(false));
+        let done = Arc::clone(&stopped);
+        std::thread::spawn(move || {
+            let mut over = false;
+            while let Ok(Some(message)) = helper::read_message(&mut stdout) {
+                let Some(decoded) = decode_report(&message) else {
+                    break;
+                };
+                over = matches!(decoded, Report::Ended | Report::Failed(_));
+                report(decoded);
+                if over {
+                    break;
+                }
+            }
+            drop(stdout);
+            let status = child.wait();
+            if !over && !done.load(Ordering::Relaxed) {
+                let how = status.map_or_else(|e| e.to_string(), |s| s.to_string());
+                report(Report::Failed(format!("the video player crashed ({how})")));
             }
         });
-        Self { asks }
+        Self { asks, stopped }
+    }
+
+    /// A playback that never started; asks go nowhere.
+    fn stopped() -> Self {
+        Self {
+            asks: channel().0,
+            stopped: Arc::new(AtomicBool::new(true)),
+        }
     }
 
     pub fn pause(&self) {
@@ -192,15 +275,146 @@ impl Playback {
     }
 
     fn ask(&self, ask: Ask) {
-        // The thread is gone after the end or a failure; nothing to ask then.
+        // The helper is gone after the end or a failure; nothing to ask then.
         let _ = self.asks.send(ask);
     }
 }
 
 impl Drop for Playback {
     fn drop(&mut self) {
+        self.stopped.store(true, Ordering::Relaxed);
         self.ask(Ask::Stop);
     }
+}
+
+/// The helper's side of [`Playback`]: plays what the app's first message
+/// asks, reports on stdout and takes asks on stdin until it closes.
+pub fn serve_playback() -> ExitCode {
+    let mut stdin = std::io::stdin();
+    let Ok(Some(first)) = helper::read_message(&mut stdin) else {
+        return ExitCode::FAILURE;
+    };
+    let Some(Ask::Start {
+        path,
+        muted,
+        paused,
+    }) = decode_ask(&first)
+    else {
+        return ExitCode::FAILURE;
+    };
+    let (asks, inbox) = channel();
+    let wakeup = asks.clone();
+    std::thread::spawn(move || {
+        while let Ok(Some(message)) = helper::read_message(&mut stdin) {
+            let Some(ask) = decode_ask(&message) else {
+                break;
+            };
+            if asks.send(ask).is_err() {
+                break;
+            }
+        }
+        // The app is gone or done with the video.
+        let _ = asks.send(Ask::Stop);
+    });
+    let stdout = RefCell::new(std::io::stdout().lock());
+    let report = |report: Report| {
+        // The app may be gone; the closed stdin stops the video then.
+        let _ = helper::write_message(&mut *stdout.borrow_mut(), &encode_report(&report));
+    };
+    if let Err(message) = play(&path, [muted, paused], wakeup, &inbox, &report) {
+        report(Report::Failed(message));
+    }
+    ExitCode::SUCCESS
+}
+
+const START: u8 = 0;
+const PAUSE: u8 = 1;
+const MUTE: u8 = 2;
+const SEEK_SECONDS: u8 = 3;
+const SEEK_FRAMES: u8 = 4;
+const STOP: u8 = 5;
+
+fn encode_ask(ask: &Ask) -> Vec<u8> {
+    match ask {
+        Ask::Start {
+            path,
+            muted,
+            paused,
+        } => Writer::new(START)
+            .u8(u8::from(*muted))
+            .u8(u8::from(*paused))
+            .rest(helper::path_bytes(path)),
+        Ask::Pause(paused) => Writer::new(PAUSE).u8(u8::from(*paused)).done(),
+        Ask::Mute(muted) => Writer::new(MUTE).u8(u8::from(*muted)).done(),
+        Ask::Seek(VideoStep::Seconds(seconds)) => Writer::new(SEEK_SECONDS).i32(*seconds).done(),
+        Ask::Seek(VideoStep::Frames(frames)) => Writer::new(SEEK_FRAMES).i32(*frames).done(),
+        // Never sent: the helper's own.
+        Ask::Wake | Ask::Stop => Writer::new(STOP).done(),
+    }
+}
+
+fn decode_ask(message: &[u8]) -> Option<Ask> {
+    let mut reader = Reader::new(message);
+    Some(match reader.u8()? {
+        START => Ask::Start {
+            muted: reader.u8()? != 0,
+            paused: reader.u8()? != 0,
+            path: helper::path_from(reader.rest()),
+        },
+        PAUSE => Ask::Pause(reader.u8()? != 0),
+        MUTE => Ask::Mute(reader.u8()? != 0),
+        SEEK_SECONDS => Ask::Seek(VideoStep::Seconds(reader.i32()?)),
+        SEEK_FRAMES => Ask::Seek(VideoStep::Frames(reader.i32()?)),
+        STOP => Ask::Stop,
+        _ => return None,
+    })
+}
+
+const FRAME: u8 = 0;
+const ENDED: u8 = 1;
+const SEEKED: u8 = 2;
+const FAILED: u8 = 3;
+
+fn encode_report(report: &Report) -> Vec<u8> {
+    match report {
+        Report::Frame(image, position) => Writer::new(FRAME)
+            .u32(image.width)
+            .u32(image.height)
+            .u64(u64::try_from(position.as_nanos()).unwrap_or(u64::MAX))
+            .rest(&image.rgba),
+        Report::Ended => Writer::new(ENDED).done(),
+        Report::Seeked => Writer::new(SEEKED).done(),
+        Report::Failed(message) => Writer::new(FAILED).rest(message.as_bytes()),
+    }
+}
+
+fn decode_report(message: &[u8]) -> Option<Report> {
+    let mut reader = Reader::new(message);
+    Some(match reader.u8()? {
+        FRAME => {
+            let (width, height) = (reader.u32()?, reader.u32()?);
+            let position = Duration::from_nanos(reader.u64()?);
+            let rgba = reader.rest();
+            let expected = u64::from(width)
+                .checked_mul(u64::from(height))?
+                .checked_mul(4)?;
+            if u64::try_from(rgba.len()).ok()? != expected {
+                return None;
+            }
+            Report::Frame(
+                DecodedImage {
+                    width,
+                    height,
+                    rgba: Arc::from(rgba),
+                },
+                position,
+            )
+        }
+        ENDED => Report::Ended,
+        SEEKED => Report::Seeked,
+        FAILED => Report::Failed(String::from_utf8_lossy(reader.rest()).into_owned()),
+        _ => return None,
+    })
 }
 
 /// Plays until stopped, the end or a failure, then lets the player go.
@@ -255,7 +469,7 @@ fn play(
         asked.extend(inbox.try_iter());
         for ask in asked {
             match ask {
-                Ask::Wake => {}
+                Ask::Wake | Ask::Start { .. } => {}
                 Ask::Pause(paused) => player.set(c"pause", c_flag(paused))?,
                 Ask::Mute(muted) => player.set(c"mute", c_flag(muted))?,
                 Ask::Seek(step) if drawn => seeking = seek(step),

@@ -22,6 +22,7 @@ pub mod external;
 pub mod folder;
 pub mod geometry;
 pub mod heif;
+pub mod helper;
 pub mod launcher;
 #[cfg(target_os = "macos")]
 pub mod macos;

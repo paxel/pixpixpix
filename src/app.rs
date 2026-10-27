@@ -14,6 +14,7 @@ use crate::clipboard::{self, Clipboard};
 use crate::core::{Command, Core, Event, Export, Region, Screen, Shape};
 use crate::decode::DecodedImage;
 use crate::geometry::{self, Geometry};
+use crate::helper;
 use crate::rotate::Rotation;
 use crate::video::{Playback, Report};
 use crate::{
@@ -28,6 +29,9 @@ const TIMING_ENV: &str = "PIXPIXPIX_TIMING";
 
 /// Starts the viewer for the first command-line argument.
 pub fn run() -> ExitCode {
+    if let Some(code) = helper::serve() {
+        return code;
+    }
     let launched = Instant::now();
     let arg = std::env::args_os().nth(1).map(PathBuf::from);
     let cwd = std::env::current_dir().unwrap_or_default();

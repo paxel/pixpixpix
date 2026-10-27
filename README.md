@@ -268,7 +268,8 @@ Tests that need libheif, libmpv or libturbojpeg check the library-present branch
 the library is installed and the clear error otherwise. CI installs all three on
 Linux x86_64, Linux aarch64 and macOS arm64.
 
-`PIXPIXPIX_TIMING=1` prints the time from launch to the first frame.
+`PIXPIXPIX_TIMING=1` prints the time from launch to the first frame. `PIXPIXPIX_DEBUG=1`
+shows what libmpv and its decoders print, which pixpixpix otherwise drops.
 
 ## The name
 
