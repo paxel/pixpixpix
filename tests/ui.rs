@@ -2314,3 +2314,34 @@ fn the_question_before_trashing_a_folder_answers_by_click() {
         [Command::Trash(PathBuf::from("/p/cat.jpg"))]
     );
 }
+
+#[test]
+fn t_shows_the_trash_and_enter_a_file_of_it_large() {
+    let mut h = harness(browsing("/p/a.jpg", &["/p/a.jpg"]));
+    h.run();
+    h.key_press(egui::Key::T);
+    h.run();
+    h.get_by_label("Reading the trash\u{2026}");
+    h.get_by_label("trash");
+    h.state_mut()
+        .core
+        .handle(Event::BinListed(Ok(vec![pixpixpix::core::BinItem {
+            id: "/t/info/cat.jpg.trashinfo".into(),
+            file: PathBuf::from("/t/files/cat.jpg"),
+            original: Some(PathBuf::from("/p/cat.jpg")),
+            deleted: 1_790_812_800,
+        }])));
+    h.run();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    h.state_mut().core.handle(Event::Decoded {
+        path: PathBuf::from("/t/files/cat.jpg"),
+        result: Ok(DecodedImage {
+            width: 2,
+            height: 1,
+            rgba: Arc::from(vec![255; 8]),
+        }),
+    });
+    h.run();
+    h.get_by_role_and_label(Role::Image, "cat.jpg");
+}

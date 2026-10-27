@@ -9,9 +9,9 @@ use std::sync::Arc;
 use egui::{Color32, ColorImage, RichText, TextureHandle, TextureOptions};
 
 use crate::core::{
-    About, DefaultRow, Defaults, DirColumn, EditsView, Event, ExportView, Focus, InnerImages, Key,
-    KeyPress, MetadataView, MotionKind, Notice, Points, Region, Screen, Thumb, Toggle,
-    TrashSection, Video, VideoStep, View, Zoom, unturned,
+    About, BinPreview, DefaultRow, Defaults, DirColumn, EditsView, Event, ExportView, Focus,
+    InnerImages, Key, KeyPress, MetadataView, MotionKind, Notice, Points, Region, Screen, Thumb,
+    Toggle, TrashSection, Video, VideoStep, View, Zoom, unturned,
 };
 use crate::decode::DecodedImage;
 use crate::folder;
@@ -174,6 +174,7 @@ fn map_key(key: egui::Key) -> Option<Key> {
         egui::Key::I => Key::I,
         egui::Key::Questionmark => Key::Question,
         egui::Key::U => Key::U,
+        egui::Key::T => Key::T,
         _ => return None,
     })
 }
@@ -240,6 +241,15 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE.fill(BACKGROUND))
         .show(ui, |ui| {
+            if let Some(preview) = view
+                .bin_preview
+                .as_ref()
+                .filter(|_| view.overview.is_some())
+            {
+                show_bin_preview(ui, preview, textures);
+                show_diode(ui, Focus::Image, view);
+                return;
+            }
             if let Some(gallery) = &view.overview {
                 let side = view.settings.thumbnail_size;
                 overview::show_overview(ui, gallery, side, textures, &mut events);
@@ -845,6 +855,32 @@ fn show_defaults(
     }
 }
 
+/// A file of the bin view shown large, fitted to the main area.
+fn show_bin_preview(ui: &mut egui::Ui, preview: &BinPreview, textures: &mut Textures) {
+    let name = folder::file_name(&preview.path);
+    match &preview.image {
+        None => show_status(ui, "Loading\u{2026}"),
+        Some(Err(message)) => {
+            ui.centered_and_justified(|ui| {
+                ui.label(RichText::new(format!("{name}: {message}")).color(ERROR_TEXT));
+            });
+        }
+        Some(Ok(image)) => {
+            let area = ui.max_rect();
+            let texture = textures.get(ui.ctx(), &preview.path, image);
+            let size = fit(
+                egui::vec2(image.width as f32, image.height as f32),
+                area.size(),
+            );
+            let rect = egui::Rect::from_center_size(area.center(), size);
+            let response = ui.allocate_rect(rect, egui::Sense::hover());
+            egui::Image::new(&texture).paint_at(ui, rect);
+            response
+                .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Image, true, &name));
+        }
+    }
+}
+
 /// The question before `Shift`+`x` trashes every file of a folder.
 fn show_trash_section(ctx: &egui::Context, asked: &TrashSection, events: &mut Vec<Event>) {
     egui::Modal::new(egui::Id::new("trash section"))
@@ -1178,6 +1214,7 @@ fn show_key_line(ui: &mut egui::Ui, view: &View, events: &mut Vec<Event>) {
                 (Toggle::DotEntries, false) => "dot entries shown",
                 (Toggle::DotEntries, true) => "dot entries shown, kept",
                 (Toggle::Overview, _) => "overview",
+                (Toggle::Bin, _) => "trash",
             };
             ui.label(
                 RichText::new(text)
@@ -1190,6 +1227,7 @@ fn show_key_line(ui: &mut egui::Ui, view: &View, events: &mut Vec<Event>) {
                 Notice::FirstImage => "first image",
                 Notice::LastImage => "last image",
                 Notice::Copied => "copied",
+                Notice::Restored => "restored",
             };
             ui.label(RichText::new(text).color(NOTICE_TEXT));
         }

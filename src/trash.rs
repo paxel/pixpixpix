@@ -6,6 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::core::BinItem;
 use crate::folder;
 
 /// Moves `path` to the system trash; the error names the file and why.
@@ -100,4 +101,104 @@ pub fn move_to_trash(path: &Path) -> Result<(), String> {
         };
         format!("Cannot trash {}: {reason}", folder::file_name(path))
     })
+}
+
+/// Every media file in every trash: on Linux the home trash and the trash
+/// folders of mounted drives, on macOS the Trash.
+#[cfg(all(unix, not(target_os = "macos")))]
+pub fn list() -> Result<Vec<BinItem>, String> {
+    let items = ::trash::os_limited::list().map_err(|e| format!("Cannot read the trash: {e}"))?;
+    Ok(items
+        .into_iter()
+        .filter_map(|item| {
+            // The id is `<trash>/info/<name>.trashinfo`, the file `<trash>/files/<name>`.
+            let info = Path::new(&item.id);
+            let trash = info.parent()?.parent()?;
+            let name = info.file_name()?.to_str()?.strip_suffix(".trashinfo")?;
+            let file = trash.join("files").join(name);
+            (folder::is_media(&file) && file.is_file()).then(|| BinItem {
+                original: Some(item.original_path()),
+                file,
+                deleted: item.time_deleted,
+                id: item.id,
+            })
+        })
+        .collect())
+}
+
+/// Puts `item` back where it came from; the error names the file and why.
+#[cfg(all(unix, not(target_os = "macos")))]
+pub fn restore_item(item: &BinItem) -> Result<(), String> {
+    use ::trash::os_limited;
+
+    let name = item
+        .original
+        .as_deref()
+        .map_or_else(String::new, folder::file_name);
+    let items = os_limited::list().map_err(|e| format!("Cannot read the trash: {e}"))?;
+    let found = items
+        .into_iter()
+        .find(|i| i.id == item.id)
+        .ok_or_else(|| format!("Cannot restore {name}: it is not in the trash any more"))?;
+    os_limited::restore_all([found]).map_err(|e| match e {
+        ::trash::Error::RestoreCollision { .. } => {
+            format!("Cannot restore {name}: a file of that name is back there")
+        }
+        other => format!("Cannot restore {name}: {other}"),
+    })
+}
+
+/// Every media file in every trash: on Linux the home trash and the trash
+/// folders of mounted drives, on macOS the Trash.
+#[cfg(target_os = "macos")]
+pub fn list() -> Result<Vec<BinItem>, String> {
+    let trash = std::env::home_dir()
+        .ok_or("Cannot find the Trash")?
+        .join(".Trash");
+    let entries = std::fs::read_dir(&trash).map_err(|e| format!("Cannot read the Trash: {e}"))?;
+    let places = PLACES.lock().map(|p| p.clone()).unwrap_or_default();
+    Ok(entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|file| folder::is_media(file) && file.is_file())
+        .map(|file| {
+            let deleted = std::fs::metadata(&file)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .and_then(|d| i64::try_from(d.as_secs()).ok())
+                .unwrap_or(0);
+            BinItem {
+                id: file.clone().into_os_string(),
+                original: places
+                    .iter()
+                    .find(|(_, trashed)| **trashed == file)
+                    .map(|(original, _)| original.clone()),
+                file,
+                deleted,
+            }
+        })
+        .collect())
+}
+
+/// Puts `item` back where it came from; the error names the file and why.
+#[cfg(target_os = "macos")]
+pub fn restore_item(item: &BinItem) -> Result<(), String> {
+    let name = folder::file_name(&item.file);
+    let original = item.original.as_ref().ok_or_else(|| {
+        format!(
+            "Cannot restore {name}: macOS does not say where it came from; Finder's Put Back can"
+        )
+    })?;
+    restore(std::slice::from_ref(original))
+}
+
+#[cfg(not(unix))]
+pub fn list() -> Result<Vec<BinItem>, String> {
+    Err("The trash cannot be listed on this system yet".to_owned())
+}
+
+#[cfg(not(unix))]
+pub fn restore_item(_item: &BinItem) -> Result<(), String> {
+    Err("Restoring from the trash is not supported on this system yet".to_owned())
 }

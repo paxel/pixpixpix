@@ -115,10 +115,11 @@ pub(super) fn show_overview(
             .map(|larger| Event::ThumbnailWheel { larger }),
     );
     if overview.sections.is_empty() {
-        let text = if overview.scanning {
-            "Scanning…"
-        } else {
-            "No images"
+        let text = match (overview.scanning, overview.bin) {
+            (true, false) => "Scanning…",
+            (false, false) => "No images",
+            (true, true) => "Reading the trash…",
+            (false, true) => "No images in the trash",
         };
         show_status(ui, text);
         return;

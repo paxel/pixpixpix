@@ -149,6 +149,21 @@ The key line tags what is on.
 The dir column works the same in the overview: the overview follows the folder it
 goes to.
 
+### Trash (`t`)
+
+The files of every trash, the home wastebin and the trash folders of mounted drives,
+by the day they were trashed, newest first. Nothing is deleted for good here.
+
+| Key                     | Action                                            |
+|-------------------------|---------------------------------------------------|
+| arrows                  | select                                            |
+| `Enter`                 | show the file large, and back                     |
+| `u`                     | put the file back where it came from              |
+| `t` / `Esc`             | close                                             |
+
+On macOS only files pixpixpix trashed while running know where they came from; the
+others go back with Finder's Put Back.
+
 ### Settings (`s`)
 
 | Key           | Action |

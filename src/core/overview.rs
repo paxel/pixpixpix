@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
-use super::{Command, Core, Focus, Key, MotionKind, TrashSection};
+use super::{BinItem, BinPreview, Command, Core, Focus, Key, MotionKind, Notice, TrashSection};
 use crate::decode::DecodedImage;
 use crate::folder;
 use crate::rotate::Rotation;
@@ -37,6 +37,9 @@ pub struct Overview {
     /// What the UI is to scroll into view once, then report with
     /// [`super::Event::OverviewRevealed`].
     pub reveal: Option<Reveal>,
+    /// The bin view: the files of every trash, by the day they were
+    /// trashed, instead of a folder tree.
+    pub bin: bool,
 }
 
 /// A place in the overview to scroll to.
@@ -90,6 +93,8 @@ pub(super) struct Gallery {
     /// The file shown when the overview opened, selected once its tile
     /// arrives unless the selection was moved before.
     select: Option<PathBuf>,
+    /// The bin view's files, by their file in the trash.
+    bin: BTreeMap<PathBuf, BinItem>,
 }
 
 impl Core {
@@ -156,6 +161,7 @@ impl Core {
             selected: None,
             columns: 1,
             reveal: None,
+            bin: false,
         });
         vec![Command::ScanOverview {
             scan: self.gallery.scan,
@@ -168,7 +174,7 @@ impl Core {
     /// it, with the focus there was before the overview; without a tile the
     /// overview just closes.
     fn leave_overview(&mut self) -> Vec<Command> {
-        if self.selected_path().is_none() {
+        if self.selected_path().is_none() || self.view.overview.as_ref().is_some_and(|o| o.bin) {
             return self.close_overview();
         }
         let focus = self.gallery.focus;
@@ -193,7 +199,9 @@ impl Core {
             return Vec::new();
         };
         let mut commands = Vec::new();
-        if overview.scanning {
+        self.view.bin_preview = None;
+        self.gallery.bin.clear();
+        if overview.scanning && !overview.bin {
             commands.push(Command::CancelScan);
         }
         commands.extend(self.drop_thumbnails(None));
@@ -401,6 +409,9 @@ impl Core {
     /// Keys while the overview is open: `Tab` moves between dir column and
     /// gallery, the rest goes to the focused one.
     pub(super) fn overview_key(&mut self, key: Key) -> Vec<Command> {
+        if self.view.overview.as_ref().is_some_and(|o| o.bin) {
+            return self.bin_key(key);
+        }
         match (key, self.view.focus) {
             (Key::Tab, Focus::Dirs) => {
                 self.set_focus(Focus::Image);
@@ -577,6 +588,161 @@ impl Core {
         self.trashing.extend(files.iter().cloned());
         self.trashed.push(files.clone());
         files.into_iter().map(Command::Trash).collect()
+    }
+
+    /// `t`: opens the bin view, the gallery giving way to it, or closes it.
+    /// The trash is read; a playing video is paused.
+    pub(super) fn toggle_bin(&mut self) -> Vec<Command> {
+        let open = self.view.overview.as_ref().map(|o| o.bin);
+        if open == Some(true) {
+            return self.close_overview();
+        }
+        let mut commands = Vec::new();
+        if open == Some(false) {
+            commands.extend(self.close_overview());
+        }
+        if !matches!(self.view.focus, Focus::Image | Focus::Dirs) {
+            return commands;
+        }
+        self.gallery.focus = Some(self.view.focus);
+        self.set_focus(Focus::Image);
+        self.view.overview = Some(Overview {
+            root: PathBuf::from("Trash"),
+            sections: Vec::new(),
+            tiles: Vec::new(),
+            scanning: true,
+            visible: 0..0,
+            selected: None,
+            columns: 1,
+            reveal: None,
+            bin: true,
+        });
+        if self.video.as_ref().is_some_and(|v| v.playing) {
+            commands.extend(self.toggle_play());
+        }
+        commands.push(Command::ListBin);
+        commands
+    }
+
+    /// The trash is read: its files become tiles, a section per day they
+    /// were trashed, newest first.
+    pub(super) fn bin_listed(&mut self, result: Result<Vec<BinItem>, String>) -> Vec<Command> {
+        let Some(overview) = self.view.overview.as_mut().filter(|o| o.bin) else {
+            return Vec::new();
+        };
+        overview.scanning = false;
+        let mut items = match result {
+            Ok(items) => items,
+            Err(message) => {
+                self.view.trash_error = Some(message);
+                return Vec::new();
+            }
+        };
+        items.sort_by_key(|item| std::cmp::Reverse(item.deleted));
+        for item in items {
+            let day = chrono::DateTime::from_timestamp(item.deleted, 0)
+                .map(|t| {
+                    t.with_timezone(&chrono::Local)
+                        .format("%Y-%m-%d")
+                        .to_string()
+                })
+                .unwrap_or_else(|| "unknown day".to_owned());
+            let index = overview.tiles.len();
+            match overview.sections.last_mut() {
+                Some(section) if section.title == day => {
+                    section.tiles.end = index.saturating_add(1);
+                }
+                _ => overview.sections.push(Section {
+                    dir: PathBuf::from(&day),
+                    title: day,
+                    tiles: index..index.saturating_add(1),
+                }),
+            }
+            overview.tiles.push(Tile {
+                video: folder::is_video(&item.file),
+                motion: None,
+                path: item.file.clone(),
+                thumbnail: None,
+            });
+            self.gallery.bin.insert(item.file.clone(), item);
+        }
+        overview.selected = (!overview.tiles.is_empty()).then_some(0);
+        self.overview_refresh()
+    }
+
+    /// Keys of the bin view: the arrows select, `Enter` shows the selected
+    /// file large and back, `u` restores it, `Esc` closes.
+    fn bin_key(&mut self, key: Key) -> Vec<Command> {
+        if self.view.bin_preview.is_some() {
+            return match key {
+                Key::Enter | Key::Escape => {
+                    self.view.bin_preview = None;
+                    Vec::new()
+                }
+                Key::U => self.restore_from_bin(),
+                _ => Vec::new(),
+            };
+        }
+        match key {
+            Key::Left | Key::Right | Key::Up | Key::Down => {
+                self.move_selection(key);
+                Vec::new()
+            }
+            Key::Enter => {
+                let Some(path) = self.selected_path() else {
+                    return Vec::new();
+                };
+                self.view.bin_preview = Some(BinPreview {
+                    path: path.clone(),
+                    image: None,
+                });
+                vec![Command::Decode(path)]
+            }
+            Key::U => self.restore_from_bin(),
+            Key::Escape => {
+                let commands = self.close_overview();
+                self.set_focus(Focus::Image);
+                commands
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// `u` in the bin view: the selected file goes back where it came from.
+    fn restore_from_bin(&mut self) -> Vec<Command> {
+        let item = self
+            .selected_path()
+            .and_then(|path| self.gallery.bin.get(&path).cloned());
+        self.view.trash_error = None;
+        item.map(Command::RestoreFromBin).into_iter().collect()
+    }
+
+    /// A file of the bin view is back where it came from: its tile goes, the
+    /// large view with it; the folder shown is read again when it is the one.
+    pub(super) fn bin_restored(&mut self, file: &Path, result: Result<(), String>) -> Vec<Command> {
+        if let Err(message) = result {
+            self.view.trash_error = Some(message);
+            return Vec::new();
+        }
+        let original = self.gallery.bin.remove(file).and_then(|item| item.original);
+        if self
+            .view
+            .bin_preview
+            .as_ref()
+            .is_some_and(|p| p.path == file)
+        {
+            self.view.bin_preview = None;
+        }
+        self.view.key_line.notice = Some(Notice::Restored);
+        let mut commands = self.overview_trashed(file);
+        if let Some(dir) = original
+            .as_deref()
+            .and_then(Path::parent)
+            .filter(|dir| Some(*dir) == self.dir.as_deref())
+        {
+            commands.push(Command::ListFolder(dir.to_path_buf()));
+        }
+        commands
     }
 
     /// `Shift`+`x`: asks whether every file of the selected tile's folder

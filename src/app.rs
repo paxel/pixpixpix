@@ -354,6 +354,19 @@ impl Worker {
                     Some(Event::EditsSaved { target, result })
                 });
             }
+            Command::ListBin => {
+                self.run(|| Some(Event::BinListed(trash::list())));
+            }
+            Command::RestoreFromBin(item) => {
+                let item = item.clone();
+                self.run(move || {
+                    let result = trash::restore_item(&item);
+                    Some(Event::BinRestored {
+                        file: item.file,
+                        result,
+                    })
+                });
+            }
             Command::Restore(paths) => {
                 let paths = paths.clone();
                 self.run(move || {
@@ -724,6 +737,8 @@ impl App {
                 | Command::WriteRotation { .. }
                 | Command::Trash(_)
                 | Command::Restore(_)
+                | Command::ListBin
+                | Command::RestoreFromBin(_)
                 | Command::Copy { .. }
                 | Command::SaveEdits { .. }
                 | Command::Export { .. }

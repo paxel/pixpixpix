@@ -72,6 +72,7 @@ pub enum Key {
     I,
     Question,
     U,
+    T,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -175,6 +176,13 @@ pub enum Event {
     /// A [`Command::Trash`] finished.
     Trashed {
         path: PathBuf,
+        result: Result<(), String>,
+    },
+    /// The [`Command::ListBin`] found these, or why it could not.
+    BinListed(Result<Vec<BinItem>, String>),
+    /// A [`Command::RestoreFromBin`] of the file in the trash finished.
+    BinRestored {
+        file: PathBuf,
         result: Result<(), String>,
     },
     /// A [`Command::Restore`] finished.
@@ -380,6 +388,11 @@ pub enum Command {
     },
     /// Move the file to the system trash, answered by [`Event::Trashed`].
     Trash(PathBuf),
+    /// List every trash for the bin view, answered by [`Event::BinListed`].
+    ListBin,
+    /// Put this file of the bin view back where it came from, answered by
+    /// [`Event::BinRestored`].
+    RestoreFromBin(BinItem),
     /// Put the files back from the trash where they were, answered by
     /// [`Event::Restored`].
     Restore(Vec<PathBuf>),
@@ -647,6 +660,7 @@ fn key_named(name: &str) -> Option<Key> {
         "I" => Key::I,
         "?" => Key::Question,
         "U" => Key::U,
+        "T" => Key::T,
         _ => return None,
     })
 }
@@ -659,6 +673,8 @@ pub enum Toggle {
     DotEntries,
     /// `g`: the overview is open.
     Overview,
+    /// `t`: the bin view is open.
+    Bin,
 }
 
 /// A toggle that is on, and whether it stays on when the folder is left:
@@ -676,6 +692,8 @@ pub enum Notice {
     LastImage,
     /// The last `c` put the image on the clipboard.
     Copied,
+    /// A file of the bin view is back where it came from.
+    Restored,
 }
 
 /// The bottom line: the keys of the focused area and an optional notice.
@@ -778,6 +796,42 @@ const TOOLBAR_KEYS: [KeyHint; 2] = if cfg!(target_os = "macos") {
         },
     ]
 };
+
+/// The keys of the bin view.
+const BIN_KEYS: &[KeyHint] = &[
+    KeyHint {
+        keys: "Arrows",
+        action: "select",
+    },
+    KeyHint {
+        keys: "Enter",
+        action: "show large",
+    },
+    KeyHint {
+        keys: "U",
+        action: "restore",
+    },
+    KeyHint {
+        keys: "T/Esc",
+        action: "close",
+    },
+];
+
+/// The keys while the bin view shows a file large.
+const BIN_PREVIEW_KEYS: &[KeyHint] = &[
+    KeyHint {
+        keys: "Enter/Esc",
+        action: "back",
+    },
+    KeyHint {
+        keys: "U",
+        action: "restore",
+    },
+    KeyHint {
+        keys: "T",
+        action: "close",
+    },
+];
 
 /// The keys while `Shift`+`x` asks.
 const TRASH_SECTION_KEYS: &[KeyHint] = &[
@@ -1082,6 +1136,27 @@ pub struct DefaultRow {
     pub ours: bool,
 }
 
+/// A file of the bin view shown large.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BinPreview {
+    pub path: PathBuf,
+    /// Absent until decoded.
+    pub image: Option<Result<DecodedImage, String>>,
+}
+
+/// A file in a trash, as the bin view lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BinItem {
+    /// What the trash knows it by.
+    pub id: std::ffi::OsString,
+    /// The file in the trash.
+    pub file: PathBuf,
+    /// Where it came from, when the trash says.
+    pub original: Option<PathBuf>,
+    /// When it was trashed, in seconds since the Unix epoch.
+    pub deleted: i64,
+}
+
 /// The question before `Shift`+`x` trashes every file of a folder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrashSection {
@@ -1353,6 +1428,8 @@ pub struct View {
     pub about: Option<About>,
     /// `Shift`+`x` in the overview asks before trashing a folder's files.
     pub trash_section: Option<TrashSection>,
+    /// A file of the bin view shown large by `Enter`.
+    pub bin_preview: Option<BinPreview>,
     /// The default apps of the file types, once read for the settings
     /// screen.
     pub defaults: Option<Defaults>,
@@ -1621,6 +1698,7 @@ impl Core {
                 settings_open: false,
                 about: None,
                 trash_section: None,
+                bin_preview: None,
                 defaults: None,
                 settings_error: None,
                 open_error: None,
@@ -1759,6 +1837,8 @@ impl Core {
             Event::RotationWritten { path, result } => self.rotation_written(path, result),
             Event::Trashed { path, result } => self.trashed(&path, result),
             Event::Restored { paths, result } => self.restored(paths, result),
+            Event::BinListed(result) => self.bin_listed(result),
+            Event::BinRestored { file, result } => self.bin_restored(&file, result),
             Event::CopyError { message, path } => vec![Command::CopyReport { message, path }],
             Event::CopyText(text) => vec![Command::CopyText(text)],
             Event::OpenAbout => self.open_about(),
@@ -1946,8 +2026,8 @@ impl Core {
             toggle: Toggle::DotEntries,
             kept: self.dots_kept,
         });
-        let overview = self.view.overview.is_some().then_some(Tag {
-            toggle: Toggle::Overview,
+        let overview = self.view.overview.as_ref().map(|o| Tag {
+            toggle: if o.bin { Toggle::Bin } else { Toggle::Overview },
             kept: false,
         });
         self.view.tags = overview.into_iter().chain(dots).collect();
@@ -2040,6 +2120,14 @@ impl Core {
         }
         if self.view.trash_section.is_some() {
             self.view.key_line.keys = TRASH_SECTION_KEYS.to_vec();
+        }
+        if self.view.overview.as_ref().is_some_and(|o| o.bin) && !self.view.settings_open {
+            self.view.key_line.keys = if self.view.bin_preview.is_some() {
+                BIN_PREVIEW_KEYS.to_vec()
+            } else {
+                BIN_KEYS.to_vec()
+            };
+            self.view.key_line.keys.extend_from_slice(GLOBAL_KEYS);
         }
         self.publish_edits();
         self.publish_info();
@@ -2566,7 +2654,9 @@ impl Core {
                 settings.hints_hidden = !settings.hints_hidden;
                 self.change_settings(settings)
             }
+            (Key::G, false) if self.view.overview.as_ref().is_some_and(|o| o.bin) => Vec::new(),
             (Key::G, false) => self.toggle_overview(),
+            (Key::T, false) => self.toggle_bin(),
             (Key::X, false)
                 if key.shift && self.view.overview.is_some() && self.view.focus == Focus::Image =>
             {
@@ -3472,6 +3562,10 @@ impl Core {
     }
 
     fn decoded(&mut self, path: PathBuf, result: Result<DecodedImage, String>) -> Vec<Command> {
+        if let Some(preview) = self.view.bin_preview.as_mut().filter(|p| p.path == path) {
+            preview.image = Some(result);
+            return Vec::new();
+        }
         // An animation or a multi-image file says so right after this.
         self.animated.remove(&path);
         self.images.remove(&path);
