@@ -2026,3 +2026,29 @@ fn the_toolbar_saves_and_closes_by_click() {
     h.run();
     assert_eq!(h.state().core.view().toolbar, None);
 }
+
+/// Whether the diode of `area` is lit.
+fn diode_lit(h: &Harness<'_, State>, area: &str) -> Option<bool> {
+    h.get_by_label(&format!("{area} focus"))
+        .accesskit_node()
+        .is_selected()
+}
+
+#[test]
+fn the_key_line_names_the_focused_area_and_its_diode_is_lit() {
+    let mut h = column_open();
+    assert_eq!(diode_lit(&h, "folders"), Some(true));
+    assert_eq!(diode_lit(&h, "image view"), Some(false));
+    assert_eq!(diode_lit(&h, "preloaded files"), Some(false));
+    h.key_press(egui::Key::Tab);
+    h.run();
+    assert_eq!(diode_lit(&h, "folders"), Some(false));
+    assert_eq!(diode_lit(&h, "image view"), Some(true));
+    // The key line starts with the area's name.
+    let first = h.get_by_label("image view").rect();
+    assert!(first.min.x < h.get_by_label("Left/Right").rect().min.x);
+    h.key_press(egui::Key::Tab);
+    h.run();
+    assert_eq!(diode_lit(&h, "preloaded files"), Some(true));
+    assert_eq!(diode_lit(&h, "image view"), Some(false));
+}

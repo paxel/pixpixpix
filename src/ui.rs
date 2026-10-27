@@ -197,7 +197,8 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
             .show_separator_line(false)
             .frame(egui::Frame::NONE.fill(BACKGROUND).inner_margin(6.0))
             .show(ui, |ui| {
-                show_band(ui, &view.band, view.band_highlight, textures, &mut events)
+                show_band(ui, &view.band, view.band_highlight, textures, &mut events);
+                show_diode(ui, Focus::Band, view);
             });
     }
     if let Some(toolbar) = view.toolbar
@@ -223,7 +224,8 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
             .exact_size(DIR_COLUMN_WIDTH)
             .frame(egui::Frame::NONE.fill(BACKGROUND).inner_margin(6.0))
             .show(ui, |ui| {
-                show_dir_column(ui, column, view.focus == Focus::Dirs, &mut events)
+                show_dir_column(ui, column, view.focus == Focus::Dirs, &mut events);
+                show_diode(ui, Focus::Dirs, view);
             });
     }
     if let Some(metadata) = &view.metadata {
@@ -239,6 +241,7 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
             if let Some(gallery) = &view.overview {
                 let side = view.settings.thumbnail_size;
                 overview::show_overview(ui, gallery, side, textures, &mut events);
+                show_diode(ui, Focus::Image, view);
                 return;
             }
             let size = ui.max_rect().size();
@@ -279,6 +282,7 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
             if let Some(kind) = view.motion {
                 show_motion(ui, kind);
             }
+            show_diode(ui, Focus::Image, view);
         });
     if let (Some(dialog), Screen::Image { path, .. }) = (&view.save_dialog, &view.screen) {
         tools::show_save_dialog(ui.ctx(), &folder::file_name(path), dialog, &mut events);
@@ -698,6 +702,39 @@ fn app_field(ui: &mut egui::Ui, label: &str, value: &mut String) {
     });
 }
 
+/// The name of the area `focus` stands for, as the key line and the
+/// diodes call it.
+fn area_name(focus: Focus, view: &View) -> &'static str {
+    match focus {
+        Focus::Dirs => "folders",
+        Focus::Image if view.overview.is_some() => "gallery",
+        Focus::Image => "image view",
+        Focus::Band => "preloaded files",
+    }
+}
+
+/// The diode in the bottom right corner of the area `focus` stands for, lit
+/// while it has the focus.
+fn show_diode(ui: &mut egui::Ui, focus: Focus, view: &View) {
+    let area = ui.max_rect();
+    let center = egui::pos2(area.max.x - 8.0, area.max.y - 8.0);
+    let rect = egui::Rect::from_center_size(center, egui::Vec2::splat(10.0));
+    let lit = view.focus == focus;
+    let name = area_name(focus, view);
+    let response = ui.interact(rect, ui.id().with(("diode", name)), egui::Sense::hover());
+    let fill = if lit {
+        CURRENT_MARK
+    } else {
+        HIGHLIGHT_UNFOCUSED
+    };
+    ui.painter().circle_filled(center, 4.0, fill);
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Label, true, lit, format!("{name} focus"))
+    });
+    ui.ctx()
+        .accesskit_node_builder(response.id, |node| node.set_selected(lit));
+}
+
 /// The character of `text` at `x` points from its left on one line.
 fn char_at(ui: &egui::Ui, text: &RichText, x: f32) -> usize {
     let galley = egui::WidgetText::from(text.clone()).into_galley(
@@ -723,6 +760,13 @@ fn text_width(ui: &egui::Ui, text: &RichText) -> f32 {
 fn show_key_line(ui: &mut egui::Ui, view: &View, events: &mut Vec<Event>) {
     let key_line = &view.key_line;
     ui.horizontal_wrapped(|ui| {
+        // Where the keys go.
+        ui.label(
+            RichText::new(area_name(view.focus, view))
+                .color(CURRENT_MARK)
+                .strong(),
+        );
+        ui.add_space(12.0);
         if view.settings.hints_hidden {
             // Where the hints were: `?` brings them back.
             ui.label(RichText::new("?").color(DIM_TEXT).strong());

@@ -40,7 +40,8 @@ The [CHANGELOG](CHANGELOG.md) describes every feature in detail.
 
 ## Keys
 
-The bottom line of the window lists the keys of the area that has the focus, on as many
+The bottom line of the window names the area that has the focus, which also shows a lit
+diode in its bottom right corner, and lists its keys, on as many
 lines as it needs; `?` hides them and brings them back. A click on a key in that line does what
 the key does. Near the left or right edge of the image an arrow appears that steps to
 the previous or next file.
