@@ -9,10 +9,11 @@ use std::process::{Command, ExitCode};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::sync::{Arc, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::core::VideoStep;
 use crate::decode::DecodedImage;
+use crate::grabber;
 use crate::helper::{self, Reader, Writer};
 use crate::mpv::{self, Mpv, Player, PlayerEvent};
 use crate::{folder, motion};
@@ -29,9 +30,6 @@ fn mpv() -> Result<&'static Mpv, String> {
 /// Frames are drawn at most this wide and high, keeping the aspect ratio:
 /// drawing in software, larger ones cannot keep up.
 const MAX_SIDE: u32 = 1920;
-
-/// How long the first frame may take before the file counts as broken.
-const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How often a wait for the first frame looks at the cancellation token.
 const POLL: Duration = Duration::from_millis(50);
@@ -77,9 +75,16 @@ impl Size {
     }
 }
 
-/// The first frame of the video at `path`, or `None` once `cancel` is set. The
-/// error is mpv's message, or why mpv is missing.
+/// The first frame of the video at `path`, or `None` once `cancel` is set,
+/// grabbed by the shared helper process. The error is mpv's message, why mpv
+/// is missing, or that the file crashed the helper.
 pub fn first_frame(path: &Path, cancel: &AtomicBool) -> Option<Result<DecodedImage, String>> {
+    grabber::shared().grab(path, cancel)
+}
+
+/// [`first_frame`] with libmpv in this process: the helper's work. There is
+/// no time limit; only `cancel` ends the wait.
+pub fn grab_here(path: &Path, cancel: &AtomicBool) -> Option<Result<DecodedImage, String>> {
     let (wakeup, woken) = channel();
     let options = [("pause", "yes"), ("aid", "no"), ("osd-level", "0")];
     let player = match mpv().and_then(|mpv| mpv.player(&options, wakeup)) {
@@ -89,15 +94,11 @@ pub fn first_frame(path: &Path, cancel: &AtomicBool) -> Option<Result<DecodedIma
     if let Err(message) = player.load_file(path) {
         return Some(Err(message));
     }
-    let started = Instant::now();
     let mut size = Size::default();
     let mut ready = false;
     loop {
         if cancel.load(Ordering::Relaxed) {
             return None;
-        }
-        if started.elapsed() > FIRST_FRAME_TIMEOUT {
-            return Some(Err("mpv found no picture in the file".to_owned()));
         }
         while let Some(event) = player.next_event() {
             if let PlayerEvent::Ended(error) = &event {
@@ -378,10 +379,8 @@ const FAILED: u8 = 3;
 fn encode_report(report: &Report) -> Vec<u8> {
     match report {
         Report::Frame(image, position) => Writer::new(FRAME)
-            .u32(image.width)
-            .u32(image.height)
             .u64(u64::try_from(position.as_nanos()).unwrap_or(u64::MAX))
-            .rest(&image.rgba),
+            .image(image),
         Report::Ended => Writer::new(ENDED).done(),
         Report::Seeked => Writer::new(SEEKED).done(),
         Report::Failed(message) => Writer::new(FAILED).rest(message.as_bytes()),
@@ -392,23 +391,8 @@ fn decode_report(message: &[u8]) -> Option<Report> {
     let mut reader = Reader::new(message);
     Some(match reader.u8()? {
         FRAME => {
-            let (width, height) = (reader.u32()?, reader.u32()?);
             let position = Duration::from_nanos(reader.u64()?);
-            let rgba = reader.rest();
-            let expected = u64::from(width)
-                .checked_mul(u64::from(height))?
-                .checked_mul(4)?;
-            if u64::try_from(rgba.len()).ok()? != expected {
-                return None;
-            }
-            Report::Frame(
-                DecodedImage {
-                    width,
-                    height,
-                    rgba: Arc::from(rgba),
-                },
-                position,
-            )
+            Report::Frame(reader.image()?, position)
         }
         ENDED => Report::Ended,
         SEEKED => Report::Seeked,

@@ -7,14 +7,19 @@
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitCode, Stdio};
+use std::sync::Arc;
 
-use crate::video;
+use crate::decode::DecodedImage;
+use crate::{grabber, video};
 
 /// The first argument that makes pixpixpix a helper.
 pub const FLAG: &str = "--helper";
 
 /// The job of a helper playing one video.
 pub const PLAY: &str = "play";
+
+/// The job of the helper grabbing first frames.
+pub const GRAB: &str = "grab";
 
 /// Runs the helper job the arguments name, if they name one; `None` for a
 /// normal start.
@@ -26,6 +31,7 @@ pub fn serve() -> Option<ExitCode> {
     let job = args.next();
     Some(match job.as_ref().and_then(|j| j.to_str()) {
         Some(PLAY) => video::serve_playback(),
+        Some(GRAB) => grabber::serve(),
         _ => ExitCode::FAILURE,
     })
 }
@@ -35,11 +41,26 @@ pub fn debug() -> bool {
     std::env::var_os("PIXPIXPIX_DEBUG").is_some_and(|value| value == "1")
 }
 
-/// The command that starts this executable as the helper for `job`.
+/// The command that starts the app as the helper for `job`.
 pub fn command(job: &str) -> io::Result<Command> {
-    let mut command = Command::new(std::env::current_exe()?);
+    let mut command = Command::new(app_executable()?);
     command.args([FLAG, job]);
     Ok(command)
+}
+
+/// This executable, or for a test binary, which Cargo puts into `deps`, the
+/// app binary one folder up.
+fn app_executable() -> io::Result<PathBuf> {
+    let exe = std::env::current_exe()?;
+    let app = |name: &std::ffi::OsStr| name == "pixpixpix" || name == "pix3";
+    if exe.file_stem().is_some_and(app) {
+        return Ok(exe);
+    }
+    let beside = exe.parent().and_then(Path::parent).map(|dir| {
+        dir.join("pixpixpix")
+            .with_extension(std::env::consts::EXE_EXTENSION)
+    });
+    Ok(beside.filter(|path| path.exists()).unwrap_or(exe))
 }
 
 /// Starts `command` with its stdin and stdout piped to the app; what it
@@ -112,6 +133,11 @@ impl Writer {
         self.0
     }
 
+    /// The image, which must be the last field.
+    pub fn image(self, image: &DecodedImage) -> Vec<u8> {
+        self.u32(image.width).u32(image.height).rest(&image.rgba)
+    }
+
     pub fn done(self) -> Vec<u8> {
         self.0
     }
@@ -150,6 +176,21 @@ impl<'a> Reader<'a> {
     /// Everything left.
     pub fn rest(self) -> &'a [u8] {
         self.0
+    }
+
+    /// The image written by [`Writer::image`]; `None` if its pixels do not
+    /// match its size.
+    pub fn image(mut self) -> Option<DecodedImage> {
+        let (width, height) = (self.u32()?, self.u32()?);
+        let rgba = self.rest();
+        let expected = u64::from(width)
+            .checked_mul(u64::from(height))?
+            .checked_mul(4)?;
+        (u64::try_from(rgba.len()).ok()? == expected).then(|| DecodedImage {
+            width,
+            height,
+            rgba: Arc::from(rgba),
+        })
     }
 }
 

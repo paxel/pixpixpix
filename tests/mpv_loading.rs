@@ -1,6 +1,5 @@
-//! Seam 3: libmpv is loaded only once a video is decoded, and a missing one
-//! is a clear error. A test binary of its own, so no other test loads it
-//! first.
+//! Seam 3: libmpv is loaded only by the helper processes, never into the
+//! app, and a missing one is a clear error.
 
 #![cfg(target_os = "linux")]
 
@@ -21,23 +20,22 @@ fn libmpv_loaded() -> std::io::Result<bool> {
 }
 
 #[test]
-fn libmpv_is_loaded_on_the_first_video_only() {
+fn libmpv_is_never_loaded_into_the_app() {
     let decode = |path: &Path| decode::decode_file(path, &AtomicBool::new(false)).unwrap();
-    assert!(!libmpv_loaded().unwrap());
     decode(&fixture("sample.jpg")).unwrap();
-    decode(&fixture("sample.png")).unwrap();
-    assert!(!libmpv_loaded().unwrap());
     let dir = tempfile::tempdir().unwrap();
     let video = dir.path().join("clip.mp4");
     std::fs::write(&video, b"not a video").unwrap();
     match decode(&video) {
         Ok(image) => panic!("garbage decoded as {image:?}"),
-        Err(error) if libmpv_loaded().unwrap() => assert!(!error.is_empty()),
-        Err(error) => assert!(
-            error.starts_with("Videos need libmpv, which was not found: "),
-            "{error}"
-        ),
+        Err(error) => assert!(!error.is_empty()),
     }
+    // The helper grabbed it; this process never mapped libmpv.
+    match decode(&fixture("clip.mp4")) {
+        Ok(image) => assert_eq!((image.width, image.height), (64, 32)),
+        Err(error) => assert!(error.starts_with("Videos need libmpv"), "{error}"),
+    }
+    assert!(!libmpv_loaded().unwrap());
 }
 
 #[test]

@@ -8,7 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- Videos play in a helper process: a crash in libmpv shows the video as not playable instead of closing pixpixpix, and libmpv's console output stays silent unless `PIXPIXPIX_DEBUG=1`.
+- Videos play and get their first frames in helper processes: a crash in libmpv marks only the file that caused it as not playable instead of closing pixpixpix, and libmpv's console output stays silent unless `PIXPIXPIX_DEBUG=1`.
+- A video slow to show its first frame is no longer marked broken after 10 seconds.
 
 ---
 

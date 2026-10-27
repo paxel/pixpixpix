@@ -21,6 +21,7 @@ pub mod decode;
 pub mod external;
 pub mod folder;
 pub mod geometry;
+pub mod grabber;
 pub mod heif;
 pub mod helper;
 pub mod launcher;
