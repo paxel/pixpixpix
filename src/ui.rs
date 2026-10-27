@@ -10,8 +10,8 @@ use egui::{Color32, ColorImage, RichText, TextureHandle, TextureOptions};
 
 use crate::core::{
     About, DefaultRow, Defaults, DirColumn, EditsView, Event, ExportView, Focus, InnerImages, Key,
-    KeyPress, MetadataView, MotionKind, Notice, Points, Region, Screen, Thumb, Toggle, Video,
-    VideoStep, View, Zoom, unturned,
+    KeyPress, MetadataView, MotionKind, Notice, Points, Region, Screen, Thumb, Toggle,
+    TrashSection, Video, VideoStep, View, Zoom, unturned,
 };
 use crate::decode::DecodedImage;
 use crate::folder;
@@ -290,6 +290,9 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
         });
     if let (Some(dialog), Screen::Image { path, .. }) = (&view.save_dialog, &view.screen) {
         tools::show_save_dialog(ui.ctx(), &folder::file_name(path), dialog, &mut events);
+    }
+    if let Some(asked) = &view.trash_section {
+        show_trash_section(ui.ctx(), asked, &mut events);
     }
     if let Some(about) = view.about.as_ref().filter(|_| view.settings_open) {
         show_about(ui.ctx(), about, &mut events);
@@ -840,6 +843,46 @@ fn show_defaults(
         ui.label(RichText::new(error).color(ERROR_TEXT));
         copy_button(ui, error, None, events);
     }
+}
+
+/// The question before `Shift`+`x` trashes every file of a folder.
+fn show_trash_section(ctx: &egui::Context, asked: &TrashSection, events: &mut Vec<Event>) {
+    egui::Modal::new(egui::Id::new("trash section"))
+        .frame(
+            egui::Frame::NONE
+                .fill(BACKGROUND)
+                .inner_margin(24.0)
+                .corner_radius(8.0),
+        )
+        .show(ctx, |ui| {
+            let files = if asked.count == 1 {
+                "the 1 file".to_owned()
+            } else {
+                format!("all {} files", asked.count)
+            };
+            ui.label(
+                RichText::new(format!(
+                    "Trash {files} in \u{201c}{}\u{201d}?",
+                    folder_name(&asked.dir)
+                ))
+                .color(TEXT)
+                .strong()
+                .size(18.0),
+            );
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new("Its subfolders stay. u brings the files back.").color(DIM_TEXT),
+            );
+            ui.add_space(16.0);
+            ui.horizontal(|ui| {
+                if ui.button(RichText::new("Trash").color(TEXT)).clicked() {
+                    events.push(Event::TrashSection(true));
+                }
+                if ui.button(RichText::new("Keep").color(TEXT)).clicked() {
+                    events.push(Event::TrashSection(false));
+                }
+            });
+        });
 }
 
 /// Where pixpixpix lives.

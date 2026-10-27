@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
-use super::{Command, Core, Focus, Key, MotionKind};
+use super::{Command, Core, Focus, Key, MotionKind, TrashSection};
 use crate::decode::DecodedImage;
 use crate::folder;
 use crate::rotate::Rotation;
@@ -579,23 +579,97 @@ impl Core {
         files.into_iter().map(Command::Trash).collect()
     }
 
-    /// Files are back from the trash while the overview is open: the first,
-    /// with its Live Photo's MOV, is a tile in its section again, selected,
-    /// in a section of its own where its folder had none left. A file outside
-    /// the root changes nothing here.
+    /// `Shift`+`x`: asks whether every file of the selected tile's folder
+    /// should go to the trash.
+    pub(super) fn ask_trash_section(&mut self) {
+        let Some(overview) = self.view.overview.as_ref() else {
+            return;
+        };
+        let Some(section) = overview
+            .selected
+            .and_then(|i| overview.sections.iter().find(|s| s.tiles.contains(&i)))
+        else {
+            return;
+        };
+        self.view.trash_section = Some(TrashSection {
+            dir: section.dir.clone(),
+            count: section.tiles.len(),
+        });
+    }
+
+    /// The answer to [`Core::ask_trash_section`]: yes trashes the folder's
+    /// files, with their Live Photo videos, as one trashing `u` undoes.
+    pub(super) fn answer_trash_section(&mut self, yes: bool) -> Vec<Command> {
+        let Some(asked) = self.view.trash_section.take() else {
+            return Vec::new();
+        };
+        let Some(overview) = self.view.overview.as_ref().filter(|_| yes) else {
+            return Vec::new();
+        };
+        let Some(section) = overview.sections.iter().find(|s| s.dir == asked.dir) else {
+            return Vec::new();
+        };
+        let photos: Vec<PathBuf> = overview
+            .tiles
+            .get(section.tiles.clone())
+            .unwrap_or_default()
+            .iter()
+            .map(|t| t.path.clone())
+            .filter(|p| !self.trashing.contains(p))
+            .collect();
+        let files: Vec<PathBuf> = photos
+            .into_iter()
+            .flat_map(|photo| {
+                let mov = self.gallery.live.get(&photo).cloned();
+                std::iter::once(photo).chain(mov)
+            })
+            .collect();
+        if files.is_empty() {
+            return Vec::new();
+        }
+        self.view.trash_error = None;
+        self.trashing.extend(files.iter().cloned());
+        self.trashed.push(files.clone());
+        files.into_iter().map(Command::Trash).collect()
+    }
+
+    /// Files are back from the trash while the overview is open: each is a
+    /// tile in its section again, a Live Photo with its MOV, in a section of
+    /// its own where its folder had none left; the first is selected. Files
+    /// outside the root change nothing here.
     pub(super) fn overview_restored(&mut self, paths: &[PathBuf]) -> Vec<Command> {
-        let Some(first) = paths.first().cloned() else {
-            return Vec::new();
-        };
-        let Some(dir) = first.parent().map(Path::to_path_buf) else {
-            return Vec::new();
-        };
-        let mov = paths.get(1).cloned();
+        let live = folder::live_photos(paths);
+        let photos: Vec<&PathBuf> = paths
+            .iter()
+            .filter(|p| !live.values().any(|mov| mov == *p))
+            .collect();
+        for photo in &photos {
+            self.restore_tile(photo, live.get(*photo).cloned());
+        }
         let Some(overview) = self.view.overview.as_mut() else {
             return Vec::new();
         };
-        if !dir.starts_with(&overview.root) {
-            return Vec::new();
+        let first = photos
+            .first()
+            .and_then(|first| overview.tiles.iter().position(|t| t.path == **first));
+        if let Some(index) = first {
+            overview.selected = Some(index);
+            overview.reveal = Some(Reveal::Tile(index));
+        }
+        self.overview_refresh()
+    }
+
+    /// Puts `first` back as a tile in its section, in name order.
+    fn restore_tile(&mut self, first: &Path, mov: Option<PathBuf>) {
+        let first = first.to_path_buf();
+        let Some(dir) = first.parent().map(Path::to_path_buf) else {
+            return;
+        };
+        let Some(overview) = self.view.overview.as_mut() else {
+            return;
+        };
+        if !dir.starts_with(&overview.root) || overview.tiles.iter().any(|t| t.path == first) {
+            return;
         }
         let name = folder::file_name(&first);
         let index = match overview.sections.iter().position(|s| s.dir == dir) {
@@ -652,8 +726,7 @@ impl Core {
                 thumbnail: None,
             },
         );
-        overview.selected = Some(index);
-        overview.reveal = Some(Reveal::Tile(index));
+        overview.selected = overview.selected.map(later);
         self.gallery.loaded = self.gallery.loaded.iter().map(|i| later(*i)).collect();
         for i in self.gallery.decoding.values_mut() {
             *i = later(*i);
@@ -661,7 +734,6 @@ impl Core {
         if let Some(mov) = mov {
             self.gallery.live.insert(first, mov);
         }
-        self.overview_refresh()
     }
 
     /// A file is in the trash: its tile goes, the selection moves on to the

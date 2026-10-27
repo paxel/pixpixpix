@@ -2277,3 +2277,40 @@ fn the_settings_screen_fits_the_window_with_every_default_app_listed() {
     h.run();
     assert!(h.state().commands.contains(&Command::ProbeLibraries));
 }
+
+#[test]
+fn the_question_before_trashing_a_folder_answers_by_click() {
+    let mut core = shown("/p/cat.jpg");
+    core.handle(Event::FirstFrameShown);
+    core.handle(Event::FolderListed {
+        dir: PathBuf::from("/p"),
+        result: Ok(vec![PathBuf::from("/p/cat.jpg")]),
+    });
+    let commands = core.handle(Event::Key(pixpixpix::core::KeyPress::plain(
+        pixpixpix::core::Key::G,
+    )));
+    let scan = commands
+        .iter()
+        .find_map(|c| match c {
+            Command::ScanOverview { scan, .. } => Some(*scan),
+            _ => None,
+        })
+        .unwrap();
+    core.handle(Event::OverviewSection {
+        scan,
+        dir: PathBuf::from("/p"),
+        files: vec![PathBuf::from("/p/cat.jpg")],
+    });
+    let mut h = harness(core);
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::X);
+    h.run();
+    h.get_by_label("Trash the 1 file in \u{201c}p\u{201d}?");
+    h.state_mut().commands.clear();
+    h.get_by_role_and_label(Role::Button, "Trash").click();
+    h.run();
+    assert_eq!(
+        h.state().commands,
+        [Command::Trash(PathBuf::from("/p/cat.jpg"))]
+    );
+}

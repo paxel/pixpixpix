@@ -1087,3 +1087,55 @@ fn a_restored_tile_brings_back_the_section_its_folder_lost() {
     assert_eq!(open.sections[1].tiles, 3..4);
     assert_eq!(open.selected, Some(3));
 }
+
+fn shift(key: Key) -> Event {
+    let mut press = KeyPress::plain(key);
+    press.shift = true;
+    Event::Key(press)
+}
+
+#[test]
+fn shift_x_asks_and_esc_keeps_the_files() {
+    let mut core = gallery_with_sections();
+    assert!(core.handle(shift(Key::X)).is_empty());
+    assert_eq!(
+        core.view().trash_section,
+        Some(pixpixpix::core::TrashSection {
+            dir: PathBuf::from("/p"),
+            count: 3
+        })
+    );
+    // Other keys wait for the answer.
+    assert!(press(&mut core, Key::Right).is_empty());
+    assert!(press(&mut core, Key::Escape).is_empty());
+    assert_eq!(core.view().trash_section, None);
+    assert!(overview(&core).is_some());
+}
+
+#[test]
+fn shift_x_trashes_only_the_folder_and_one_u_brings_it_all_back() {
+    let mut core = gallery_with_sections();
+    core.handle(shift(Key::X));
+    let all = vec![p("a.jpg"), p("b.jpg"), p("c.jpg")];
+    assert_eq!(
+        press(&mut core, Key::Enter),
+        all.iter().cloned().map(Command::Trash).collect::<Vec<_>>()
+    );
+    for path in &all {
+        core.handle(Event::Trashed {
+            path: path.clone(),
+            result: Ok(()),
+        });
+    }
+    assert_eq!(tile_names(&core), ["1.jpg"]);
+    assert_eq!(press(&mut core, Key::U), [Command::Restore(all.clone())]);
+    core.handle(Event::Restored {
+        paths: all,
+        result: Ok(()),
+    });
+    assert_eq!(tile_names(&core), ["a.jpg", "b.jpg", "c.jpg", "1.jpg"]);
+    let open = overview(&core).unwrap();
+    assert_eq!(open.selected, Some(0));
+    assert_eq!(open.sections[0].tiles, 0..3);
+    assert_eq!(open.sections[1].tiles, 3..4);
+}

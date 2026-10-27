@@ -194,6 +194,8 @@ pub enum Event {
     },
     /// A [`Command::SetDefaults`] finished.
     DefaultsSet(Result<(), String>),
+    /// The question before trashing a folder's files was answered.
+    TrashSection(bool),
     /// The About page's link on the settings screen was clicked.
     OpenAbout,
     /// The About page's back button was clicked.
@@ -777,6 +779,18 @@ const TOOLBAR_KEYS: [KeyHint; 2] = if cfg!(target_os = "macos") {
     ]
 };
 
+/// The keys while `Shift`+`x` asks.
+const TRASH_SECTION_KEYS: &[KeyHint] = &[
+    KeyHint {
+        keys: "Enter",
+        action: "trash them",
+    },
+    KeyHint {
+        keys: "Esc",
+        action: "keep them",
+    },
+];
+
 /// While something trashed can be put back.
 const UNDO_TRASH_KEY: KeyHint = KeyHint {
     keys: "U",
@@ -1068,6 +1082,14 @@ pub struct DefaultRow {
     pub ours: bool,
 }
 
+/// The question before `Shift`+`x` trashes every file of a folder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrashSection {
+    pub dir: PathBuf,
+    /// How many files go, Live Photo videos not counted.
+    pub count: usize,
+}
+
 /// The About page.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct About {
@@ -1329,6 +1351,8 @@ pub struct View {
     pub settings_open: bool,
     /// The About page, opened from the settings screen.
     pub about: Option<About>,
+    /// `Shift`+`x` in the overview asks before trashing a folder's files.
+    pub trash_section: Option<TrashSection>,
     /// The default apps of the file types, once read for the settings
     /// screen.
     pub defaults: Option<Defaults>,
@@ -1596,6 +1620,7 @@ impl Core {
                 settings: Settings::default(),
                 settings_open: false,
                 about: None,
+                trash_section: None,
                 defaults: None,
                 settings_error: None,
                 open_error: None,
@@ -1737,6 +1762,7 @@ impl Core {
             Event::CopyError { message, path } => vec![Command::CopyReport { message, path }],
             Event::CopyText(text) => vec![Command::CopyText(text)],
             Event::OpenAbout => self.open_about(),
+            Event::TrashSection(yes) => self.answer_trash_section(yes),
             Event::DefaultsRead(defaults) => {
                 self.view.defaults = Some(defaults);
                 Vec::new()
@@ -2011,6 +2037,9 @@ impl Core {
         }
         if self.dialog.is_some() {
             self.view.key_line.keys = SAVE_DIALOG_KEYS.to_vec();
+        }
+        if self.view.trash_section.is_some() {
+            self.view.key_line.keys = TRASH_SECTION_KEYS.to_vec();
         }
         self.publish_edits();
         self.publish_info();
@@ -2503,6 +2532,14 @@ impl Core {
     /// Keys of every focus area first, then those of the focused one. The
     /// open settings screen takes every key but quit.
     fn key(&mut self, key: KeyPress) -> Vec<Command> {
+        if self.view.trash_section.is_some() {
+            return match (key.key, key.command) {
+                (Key::Q, true) => vec![Command::Quit],
+                (Key::Enter, false) => self.answer_trash_section(true),
+                (Key::Escape, false) => self.answer_trash_section(false),
+                _ => Vec::new(),
+            };
+        }
         if self.view.settings_open {
             match (key.key, key.command) {
                 (Key::Q, true) => return vec![Command::Quit],
@@ -2530,6 +2567,12 @@ impl Core {
                 self.change_settings(settings)
             }
             (Key::G, false) => self.toggle_overview(),
+            (Key::X, false)
+                if key.shift && self.view.overview.is_some() && self.view.focus == Focus::Image =>
+            {
+                self.ask_trash_section();
+                Vec::new()
+            }
             (Key::C, false) if key.shift && self.view.overview.is_some() => {
                 if self.view.focus == Focus::Image {
                     self.copy_file()
