@@ -132,6 +132,11 @@ pub enum Event {
     FolderDoubleClicked(PathBuf),
     /// The `..` row of the dir column was clicked: up to the parent.
     FolderUp,
+    /// An arrow at the edge of the image was clicked: the next or previous
+    /// file, like `Right` or `Left` in the image view.
+    Navigate {
+        forward: bool,
+    },
     /// The system asked to open the file, as Finder's "Open With" does on
     /// macOS.
     Opened(PathBuf),
@@ -495,6 +500,92 @@ pub enum Screen {
 pub struct KeyHint {
     pub keys: &'static str,
     pub action: &'static str,
+}
+
+impl KeyHint {
+    /// The keys of [`KeyHint::keys`] one by one, by where they stand in it,
+    /// as the presses a click on them makes: `Shift+Left/Right` is
+    /// `Shift`+`Left` and `Shift`+`Right`, `./Shift+.` is `.` and
+    /// `Shift`+`.`. A name no key has, such as `Arrows`, presses nothing.
+    pub fn presses(&self) -> Vec<(Range<usize>, Option<KeyPress>)> {
+        let mut presses = Vec::new();
+        let mut start: usize = 0;
+        // Modifiers carry on to the following keys that name none.
+        let mut held: Option<KeyPress> = None;
+        // A `/` is never a key itself, only what stands between keys.
+        for part in self.keys.split('/') {
+            let end = start.saturating_add(part.len());
+            let mut names: Vec<&str> = part.split('+').collect();
+            // `+` itself splits into two empty names.
+            if part.ends_with('+') {
+                names.truncate(names.len().saturating_sub(2));
+                names.push("+");
+            }
+            let key = names.last().and_then(|name| key_named(name));
+            let mut press = key.map(KeyPress::plain);
+            if let Some(press) = press.as_mut() {
+                let modifiers = names
+                    .get(..names.len().saturating_sub(1))
+                    .unwrap_or_default();
+                if modifiers.is_empty() {
+                    if let Some(held) = held {
+                        press.command = held.command;
+                        press.shift = held.shift;
+                        press.alt = held.alt;
+                    }
+                } else {
+                    for modifier in modifiers {
+                        match *modifier {
+                            "Shift" => press.shift = true,
+                            "Alt" => press.alt = true,
+                            _ => press.command = true,
+                        }
+                    }
+                    held = Some(*press);
+                }
+            }
+            presses.push((start..end, press));
+            start = end.saturating_add(1);
+        }
+        presses
+    }
+}
+
+/// The key a hint names.
+fn key_named(name: &str) -> Option<Key> {
+    Some(match name {
+        "F" => Key::F,
+        "Q" => Key::Q,
+        "Esc" => Key::Escape,
+        "Left" => Key::Left,
+        "Right" => Key::Right,
+        "+" => Key::Plus,
+        "-" => Key::Minus,
+        "0" => Key::Num0,
+        "1" => Key::Num1,
+        "N" => Key::N,
+        "Tab" => Key::Tab,
+        "Up" => Key::Up,
+        "Down" => Key::Down,
+        "Enter" => Key::Enter,
+        "Backspace" => Key::Backspace,
+        "." => Key::Period,
+        "R" => Key::R,
+        "B" => Key::B,
+        "S" => Key::S,
+        "O" => Key::O,
+        "L" => Key::L,
+        "X" => Key::X,
+        "C" => Key::C,
+        "Space" => Key::Space,
+        "M" => Key::M,
+        "G" => Key::G,
+        "P" => Key::P,
+        "Z" => Key::Z,
+        "I" => Key::I,
+        "?" => Key::Question,
+        _ => return None,
+    })
 }
 
 /// A one-shot action of the dir column that is on, tagged in the key line.
@@ -1449,6 +1540,10 @@ impl Core {
             Event::FolderClicked(dir) => self.folder_clicked(dir, false),
             Event::FolderDoubleClicked(dir) => self.folder_clicked(dir, true),
             Event::FolderUp => self.column_action(|core| core.dir_key(Key::Left)),
+            Event::Navigate { forward } if self.view.overview.is_none() => {
+                self.step(if forward { Step::Next } else { Step::Previous })
+            }
+            Event::Navigate { .. } => Vec::new(),
             Event::Opened(path) => self.opened(path),
             Event::Viewport(size) => {
                 self.view.viewport = size;

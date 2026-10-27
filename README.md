@@ -41,7 +41,9 @@ The [CHANGELOG](CHANGELOG.md) describes every feature in detail.
 ## Keys
 
 The bottom line of the window lists the keys of the area that has the focus, on as many
-lines as it needs; `?` hides them and brings them back.
+lines as it needs; `?` hides them and brings them back. A click on a key in that line does what
+the key does. Near the left or right edge of the image an arrow appears that steps to
+the previous or next file.
 On macOS, `Cmd` takes the place of `Ctrl` in every key below.
 
 ### Everywhere

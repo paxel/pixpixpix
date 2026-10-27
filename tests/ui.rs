@@ -1955,3 +1955,74 @@ fn hidden_hints_stay_hidden_after_a_restart() {
     assert!(h.query_by_label("Left/Right").is_none());
     h.get_by_label("?");
 }
+
+/// A click of the primary button at `pos`.
+fn click_at(h: &mut Harness<'static, State>, pos: egui::Pos2) {
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.run();
+}
+
+#[test]
+fn a_click_on_a_key_hint_presses_the_key_under_the_pointer() {
+    let mut core = browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]);
+    decoded(&mut core, "/p/b.jpg");
+    let mut h = harness(core);
+    h.run();
+    // The right end of `Left/Right` is `Right`.
+    let rect = h.get_by_label("Left/Right").rect();
+    click_at(&mut h, egui::pos2(rect.max.x - 3.0, rect.center().y));
+    assert!(matches!(
+        &h.state().core.view().screen,
+        Screen::Image { path, .. } if path == Path::new("/p/b.jpg")
+    ));
+    // A one-key hint's action presses it too.
+    let action = h
+        .query_all_by_label("preloaded files")
+        .next()
+        .unwrap()
+        .rect();
+    click_at(&mut h, action.center());
+    assert_eq!(h.state().core.view().focus, pixpixpix::core::Focus::Band);
+}
+
+#[test]
+fn an_arrow_shows_near_the_edge_and_steps_to_the_next_file() {
+    let mut h = harness(browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]));
+    h.run();
+    assert!(h.query_by_label("Next").is_none());
+    let area = h.ctx.content_rect();
+    h.hover_at(egui::pos2(area.max.x - 20.0, area.center().y));
+    h.run();
+    assert!(h.query_by_label("Previous").is_none());
+    h.get_by_role_and_label(Role::Button, "Next").click();
+    h.run();
+    assert_eq!(
+        h.state().core.view().screen,
+        Screen::Loading {
+            path: PathBuf::from("/p/b.jpg")
+        }
+    );
+}
+
+#[test]
+fn the_toolbar_saves_and_closes_by_click() {
+    let mut h = harness(shown("/p/cat.jpg"));
+    h.run();
+    h.key_press(egui::Key::P);
+    h.run();
+    assert!(
+        h.get_by_role_and_label(Role::Button, "Save\u{2026}")
+            .accesskit_node()
+            .is_disabled()
+    );
+    h.get_by_role_and_label(Role::Button, "Close").click();
+    h.run();
+    assert_eq!(h.state().core.view().toolbar, None);
+}

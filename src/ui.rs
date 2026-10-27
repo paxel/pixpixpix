@@ -189,7 +189,7 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
         .show_separator_line(false)
         .frame(egui::Frame::NONE.fill(BACKGROUND).inner_margin(6.0))
         .show(ui, |ui| {
-            show_key_line(ui, view);
+            show_key_line(ui, view, &mut events);
         });
     if !view.band.is_empty() && view.overview.is_none() {
         egui::Panel::bottom("band")
@@ -269,6 +269,9 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
                     }
                 }
                 Screen::Error { path, message } => show_error(ui, path.as_deref(), message),
+            }
+            if view.toolbar.is_none() && view.save_dialog.is_none() {
+                show_edge_arrows(ui, &mut events);
             }
             if let Some(inner) = view.inner {
                 show_inner(ui, inner);
@@ -695,6 +698,17 @@ fn app_field(ui: &mut egui::Ui, label: &str, value: &mut String) {
     });
 }
 
+/// The character of `text` at `x` points from its left on one line.
+fn char_at(ui: &egui::Ui, text: &RichText, x: f32) -> usize {
+    let galley = egui::WidgetText::from(text.clone()).into_galley(
+        ui,
+        Some(egui::TextWrapMode::Extend),
+        f32::INFINITY,
+        egui::TextStyle::Body,
+    );
+    galley.cursor_from_pos(egui::vec2(x, 0.0)).index.0
+}
+
 /// The width `text` takes on one line.
 fn text_width(ui: &egui::Ui, text: &RichText) -> f32 {
     let galley = egui::WidgetText::from(text.clone()).into_galley(
@@ -706,7 +720,7 @@ fn text_width(ui: &egui::Ui, text: &RichText) -> f32 {
     galley.size().x
 }
 
-fn show_key_line(ui: &mut egui::Ui, view: &View) {
+fn show_key_line(ui: &mut egui::Ui, view: &View, events: &mut Vec<Event>) {
     let key_line = &view.key_line;
     ui.horizontal_wrapped(|ui| {
         if view.settings.hints_hidden {
@@ -724,8 +738,42 @@ fn show_key_line(ui: &mut egui::Ui, view: &View) {
                 if ui.available_width() < needed && ui.cursor().min.x > ui.max_rect().min.x {
                     ui.end_row();
                 }
-                ui.add(egui::Label::new(key).wrap_mode(egui::TextWrapMode::Extend));
-                ui.add(egui::Label::new(action).wrap_mode(egui::TextWrapMode::Extend));
+                // A click presses the key under the pointer; on the action,
+                // the key of a hint with one.
+                let presses = hint.presses();
+                let response = ui.add(
+                    egui::Label::new(key.clone())
+                        .wrap_mode(egui::TextWrapMode::Extend)
+                        .sense(egui::Sense::click()),
+                );
+                if response.clicked()
+                    && let Some(pos) = response.interact_pointer_pos()
+                {
+                    let at = char_at(ui, &key, pos.x - response.rect.min.x);
+                    let press = presses
+                        .iter()
+                        .find(|(chars, _)| chars.contains(&at))
+                        .or(presses.last())
+                        .and_then(|(_, press)| *press);
+                    events.extend(press.map(Event::Key));
+                }
+                let one = match presses.as_slice() {
+                    [(_, Some(press))] => Some(*press),
+                    _ => None,
+                };
+                let sense = if one.is_some() {
+                    egui::Sense::click()
+                } else {
+                    egui::Sense::hover()
+                };
+                let response = ui.add(
+                    egui::Label::new(action)
+                        .wrap_mode(egui::TextWrapMode::Extend)
+                        .sense(sense),
+                );
+                if response.clicked() {
+                    events.extend(one.map(Event::Key));
+                }
                 ui.add_space(12.0);
             }
         }
@@ -927,6 +975,49 @@ const VIDEO_STEPS: [(&str, VideoStep); 6] = [
     ("+10s", VideoStep::Seconds(10)),
     ("+30s", VideoStep::Seconds(30)),
 ];
+
+/// How close to the left or right edge of the main area the pointer brings
+/// up the arrow to the previous or next file, in points.
+const EDGE: f32 = 96.0;
+
+/// The arrow to the previous or next file, while the pointer is near the
+/// left or right edge of the main area; a click on it steps there.
+fn show_edge_arrows(ui: &mut egui::Ui, events: &mut Vec<Event>) {
+    let area = ui.max_rect();
+    let Some(pointer) = ui.input(|i| i.pointer.hover_pos()) else {
+        return;
+    };
+    for (forward, label) in [(false, "Previous"), (true, "Next")] {
+        let x = if forward {
+            area.max.x - EDGE / 2.0
+        } else {
+            area.min.x + EDGE / 2.0
+        };
+        let near = if forward {
+            pointer.x >= area.max.x - EDGE
+        } else {
+            pointer.x <= area.min.x + EDGE
+        };
+        if !near || !area.contains(pointer) {
+            continue;
+        }
+        let rect =
+            egui::Rect::from_center_size(egui::pos2(x, area.center().y), egui::Vec2::splat(44.0));
+        let response = ui.interact(rect, ui.id().with(label), egui::Sense::click());
+        let painter = ui.painter();
+        painter.circle_filled(rect.center(), 22.0, ANIMATED_BADGE);
+        let (tip, back) = if forward { (8.0, -6.0) } else { (-8.0, 6.0) };
+        let center = rect.center();
+        let at = |dx: f32, dy: f32| egui::pos2(center.x + dx, center.y + dy);
+        let stroke = egui::Stroke::new(3.0, TEXT);
+        painter.line_segment([at(back, -10.0), at(tip, 0.0)], stroke);
+        painter.line_segment([at(back, 10.0), at(tip, 0.0)], stroke);
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+        if response.clicked() {
+            events.push(Event::Navigate { forward });
+        }
+    }
+}
 
 /// Over a video's frame: a big play triangle, unless the tools draw there,
 /// and step buttons while it is not playing, which a click plays, and why it

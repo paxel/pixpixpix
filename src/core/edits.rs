@@ -583,6 +583,10 @@ pub enum ToolbarClick {
     ExportLimit(Option<u32>),
     /// Export the area: the save dialog asks where to.
     Export,
+    /// Save the edits: the save dialog asks how, as `Enter` does.
+    Save,
+    /// Hide the toolbar, as `p` does.
+    Close,
 }
 
 /// The edits of the shown image as the UI draws them.
@@ -896,7 +900,8 @@ impl Core {
             | Event::CloseRequested
             | Event::FolderClicked(_)
             | Event::FolderDoubleClicked(_)
-            | Event::FolderUp => true,
+            | Event::FolderUp
+            | Event::Navigate { .. } => true,
             // Playing or seeking would replace the frame drawn on.
             Event::Clicked | Event::StepVideo(_) => video,
             Event::Key(key) if self.view.settings_open => key.command && key.key == Key::Q,
@@ -1312,6 +1317,12 @@ impl Core {
             ToolbarClick::ExportFormat(format) => export.format = format,
             ToolbarClick::ExportLimit(limit) => export.limit_kb = limit.filter(|kb| *kb > 0),
             ToolbarClick::Export => return self.export(),
+            ToolbarClick::Save => {
+                if self.unsaved().is_some() {
+                    self.open_dialog();
+                }
+            }
+            ToolbarClick::Close => self.toggle_toolbar(),
         }
         Vec::new()
     }

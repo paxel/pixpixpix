@@ -84,8 +84,17 @@ pub fn show_toolbar(
             events.push(Event::Toolbar(ToolbarClick::Redo));
         }
         ui.add_space(12.0);
+        if ui
+            .add_enabled(can_undo, egui::Button::new(text("Save\u{2026}")))
+            .clicked()
+        {
+            events.push(Event::Toolbar(ToolbarClick::Save));
+        }
         if ui.button(text("Settings")).clicked() {
             events.push(Event::Toolbar(ToolbarClick::Settings));
+        }
+        if ui.button(text("Close")).clicked() {
+            events.push(Event::Toolbar(ToolbarClick::Close));
         }
     });
 }

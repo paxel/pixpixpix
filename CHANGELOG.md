@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- A click on a key in the key line does what the key does; arrows near the image's edges step to the previous or next file; the toolbar has Save and Close buttons.
 - `?` hides the key hints and brings them back, remembered across starts; a `?` marks where they were, and tags and errors still show.
 - The dir column works with the mouse: a click goes to a folder, a double-click goes into its first subfolder, and a `..` row goes to the parent.
 
