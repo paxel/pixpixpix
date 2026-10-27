@@ -920,8 +920,11 @@ impl Core {
             }
         };
         let later = |i: usize| if i >= index { i.saturating_add(1) } else { i };
+        // A section ending right where the tile goes keeps its end: the tile
+        // is not one of its.
+        let later_end = |i: usize| if i > index { i.saturating_add(1) } else { i };
         for section in overview.sections.iter_mut().filter(|s| s.dir != dir) {
-            section.tiles = later(section.tiles.start)..later(section.tiles.end);
+            section.tiles = later(section.tiles.start)..later_end(section.tiles.end);
         }
         overview.tiles.insert(
             index,

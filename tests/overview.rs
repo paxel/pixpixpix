@@ -1074,9 +1074,27 @@ fn a_restored_tile_brings_back_the_section_its_folder_lost() {
     });
     let open = overview(&core).unwrap();
     assert_eq!(open.sections.len(), 2);
+    // The section before keeps its tiles; the restored one is drawn once.
+    assert_eq!(open.sections[0].tiles, 0..3);
     assert_eq!(open.sections[1].dir, PathBuf::from("/p/x"));
     assert_eq!(open.sections[1].tiles, 3..4);
     assert_eq!(open.selected, Some(3));
+}
+
+#[test]
+fn a_tile_restored_first_in_its_section_belongs_to_that_section_only() {
+    let mut core = gallery_with_sections();
+    core.handle(Event::Restored {
+        paths: vec![PathBuf::from("/p/x/0.jpg")],
+        result: Ok(()),
+    });
+    let open = overview(&core).unwrap();
+    assert_eq!(
+        tile_names(&core),
+        ["a.jpg", "b.jpg", "c.jpg", "0.jpg", "1.jpg"]
+    );
+    assert_eq!(open.sections[0].tiles, 0..3);
+    assert_eq!(open.sections[1].tiles, 3..5);
 }
 
 fn shift(key: Key) -> Event {
