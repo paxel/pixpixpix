@@ -141,6 +141,8 @@ const HEIGHT_ID: u64 = 2;
 const COMMAND_ID: u64 = 3;
 /// The `reply_userdata` of the observed playback position.
 const POSITION_ID: u64 = 4;
+/// The `reply_userdata` of the observed rotation the file asks for.
+const ROTATION_ID: u64 = 5;
 
 type Handle = *mut c_void;
 type RenderContext = *mut c_void;
@@ -260,6 +262,9 @@ pub enum PlayerEvent {
     Height(Option<u32>),
     /// The playback position changed; absent while unknown.
     Position(Option<Duration>),
+    /// The file asks for its picture to be turned clockwise by these
+    /// degrees, which [`Player::render`] does not do.
+    Rotation(u32),
     /// The file ended, with mpv's message when it could not be played.
     Ended(Option<String>),
     /// Playback restarted after a seek, or after the file was loaded.
@@ -321,7 +326,12 @@ impl Mpv {
                 self.check((self.set_option)(handle, name.as_ptr(), value.as_ptr()))?;
             }
             self.check((self.initialize)(handle))?;
-            for (id, name) in [(WIDTH_ID, c"dwidth"), (HEIGHT_ID, c"dheight")] {
+            let observed = [
+                (WIDTH_ID, c"dwidth"),
+                (HEIGHT_ID, c"dheight"),
+                (ROTATION_ID, c"video-dec-params/rotate"),
+            ];
+            for (id, name) in observed {
                 self.check((self.observe)(handle, id, name.as_ptr(), FORMAT_INT64))?;
             }
             self.check((self.observe)(
@@ -451,11 +461,12 @@ impl Player {
                     let property = &*event.data.cast::<EventProperty>();
                     let value = (property.format == FORMAT_INT64 && !property.data.is_null())
                         .then(|| *property.data.cast::<i64>())
-                        .and_then(|v| u32::try_from(v).ok())
-                        .filter(|v| *v > 0);
+                        .and_then(|v| u32::try_from(v).ok());
+                    let size = value.filter(|v| *v > 0);
                     Some(match event.reply_userdata {
-                        WIDTH_ID => PlayerEvent::Width(value),
-                        HEIGHT_ID => PlayerEvent::Height(value),
+                        WIDTH_ID => PlayerEvent::Width(size),
+                        HEIGHT_ID => PlayerEvent::Height(size),
+                        ROTATION_ID => PlayerEvent::Rotation(value.unwrap_or(0)),
                         _ => PlayerEvent::Other,
                     })
                 }

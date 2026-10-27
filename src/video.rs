@@ -16,7 +16,8 @@ use crate::decode::DecodedImage;
 use crate::grabber;
 use crate::helper::{self, Reader, Writer};
 use crate::mpv::{self, Mpv, Player, PlayerEvent};
-use crate::{folder, motion};
+use crate::rotate::Rotation;
+use crate::{clipboard, folder, motion};
 
 /// libmpv, loaded on the first video.
 static MPV: OnceLock<Result<Mpv, String>> = OnceLock::new();
@@ -34,12 +35,13 @@ const MAX_SIDE: u32 = 1920;
 /// How often a wait for the first frame looks at the cancellation token.
 const POLL: Duration = Duration::from_millis(50);
 
-/// The display size of the video once known, and the size frames are drawn
-/// at.
+/// The display size of the video once known, the size frames are drawn at,
+/// and how they are turned then.
 #[derive(Default)]
 struct Size {
     width: Option<u32>,
     height: Option<u32>,
+    rotation: Rotation,
 }
 
 impl Size {
@@ -48,6 +50,14 @@ impl Size {
         match event {
             PlayerEvent::Width(width) => self.width = *width,
             PlayerEvent::Height(height) => self.height = *height,
+            PlayerEvent::Rotation(degrees) => {
+                self.rotation = match degrees % 360 {
+                    90 => Rotation::Right,
+                    180 => Rotation::Half,
+                    270 => Rotation::Left,
+                    _ => Rotation::None,
+                };
+            }
             PlayerEvent::Ended(_)
             | PlayerEvent::Position(_)
             | PlayerEvent::Restarted
@@ -73,6 +83,15 @@ impl Size {
         };
         Some((scale(width), scale(height)))
     }
+
+    /// Draws the current frame at [`Size::target`], turned upright.
+    fn render(&self, player: &Player, (width, height): (u32, u32)) -> Result<DecodedImage, String> {
+        let frame = player.render(width, height)?;
+        if self.rotation == Rotation::None {
+            return Ok(frame);
+        }
+        clipboard::turned(&frame, self.rotation)
+    }
 }
 
 /// The first frame of the video at `path`, or `None` once `cancel` is set,
@@ -86,7 +105,14 @@ pub fn first_frame(path: &Path, cancel: &AtomicBool) -> Option<Result<DecodedIma
 /// no time limit; only `cancel` ends the wait.
 pub fn grab_here(path: &Path, cancel: &AtomicBool) -> Option<Result<DecodedImage, String>> {
     let (wakeup, woken) = channel();
-    let options = [("pause", "yes"), ("aid", "no"), ("osd-level", "0")];
+    let options = [
+        ("pause", "yes"),
+        ("aid", "no"),
+        ("osd-level", "0"),
+        // mpv's software rendering crashes on rotated videos; they are
+        // turned here instead.
+        ("video-rotate", "no"),
+    ];
     let player = match mpv().and_then(|mpv| mpv.player(&options, wakeup)) {
         Ok(player) => player,
         Err(message) => return Some(Err(message)),
@@ -110,8 +136,8 @@ pub fn grab_here(path: &Path, cancel: &AtomicBool) -> Option<Result<DecodedImage
             size.update(&event);
         }
         ready |= player.frame_ready();
-        if ready && let Some((width, height)) = size.target() {
-            return Some(player.render(width, height));
+        if ready && let Some(target) = size.target() {
+            return Some(size.render(&player, target));
         }
         if let Err(RecvTimeoutError::Disconnected) = woken.recv_timeout(POLL) {
             return Some(Err("mpv stopped".to_owned()));
@@ -422,6 +448,8 @@ fn play(
         ("pause", flag(paused)),
         ("osd-level", "0"),
         ("mute", flag(muted)),
+        // As in `grab_here`.
+        ("video-rotate", "no"),
     ];
     // Declared before the player, so the copy goes once the player is gone.
     let clip = if folder::is_video(path) {
@@ -480,10 +508,10 @@ fn play(
             }
         }
         ready |= player.frame_ready();
-        if ready && let Some((width, height)) = size.target() {
+        if ready && let Some(target) = size.target() {
             ready = false;
             drawn = true;
-            report(Report::Frame(player.render(width, height)?, position));
+            report(Report::Frame(size.render(&player, target)?, position));
             if seeking == Some(Awaiting::Frame) {
                 seeking = None;
                 report(Report::Seeked);

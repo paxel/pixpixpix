@@ -154,3 +154,30 @@ fn a_cancelled_grab_gives_nothing() {
     });
     assert_eq!(grabber.grab(&fixture("clip.mp4"), &cancel), None);
 }
+
+#[test]
+fn a_rotated_video_gives_its_first_frame_upright() {
+    let results = grab_all(|_| real_helper(), &[fixture("rotated.mp4")]);
+    let image = match &results[0] {
+        Some(Ok(image)) => image.clone(),
+        // Without libmpv the reason crosses over instead.
+        Some(Err(message)) => {
+            assert!(message.starts_with("Videos need libmpv"), "{message}");
+            return;
+        }
+        None => panic!("no answer"),
+    };
+    // Stored 64 by 32, turned a quarter; ffmpeg's upright frame to compare.
+    let upright = image::open(fixture("rotated_first.png"))
+        .unwrap()
+        .to_rgba8();
+    assert_eq!((image.width, image.height), upright.dimensions());
+    let difference: u64 = image
+        .rgba
+        .iter()
+        .zip(upright.as_raw())
+        .map(|(a, b)| u64::from(a.abs_diff(*b)))
+        .sum();
+    let mean = difference / image.rgba.len() as u64;
+    assert!(mean < 24, "mean difference {mean}");
+}
