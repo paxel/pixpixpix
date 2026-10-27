@@ -2,7 +2,7 @@
 //! natural name order every list in the app uses.
 
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{self, AtomicBool};
@@ -194,34 +194,6 @@ pub fn list_dirs(dir: &Path, dots: bool) -> io::Result<Vec<PathBuf>> {
 /// The first media file of `dir` in natural order, if any.
 pub fn first_media(dir: &Path) -> io::Result<Option<PathBuf>> {
     Ok(list_media(dir, false)?.into_iter().next())
-}
-
-/// The folder a search below a folder stopped at, with its media files.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Found {
-    pub dir: PathBuf,
-    /// In natural order, dot files skipped.
-    pub files: Vec<PathBuf>,
-}
-
-/// The shallowest folder below `dir` with media files, searched breadth-first
-/// in natural order within a level. Dot folders are skipped unless `dots` is
-/// set, symlinked folders are not followed and unreadable ones are passed
-/// over. `None` once `cancel` is set, `Some(None)` when nothing was found.
-pub fn search_media(dir: &Path, dots: bool, cancel: &AtomicBool) -> Option<Option<Found>> {
-    let mut queue: VecDeque<PathBuf> = real_subfolders(dir, dots).into();
-    while let Some(next) = queue.pop_front() {
-        if cancel.load(atomic::Ordering::Relaxed) {
-            return None;
-        }
-        if let Ok(files) = list_media(&next, false)
-            && !files.is_empty()
-        {
-            return Some(Some(Found { dir: next, files }));
-        }
-        queue.extend(real_subfolders(&next, dots));
-    }
-    Some(None)
 }
 
 /// Walks `root` and the folders below it depth-first in natural order, a

@@ -5,7 +5,6 @@ use std::sync::Arc;
 
 use pixpixpix::core::{Command, Core, Event, Focus, Key, KeyPress, Screen};
 use pixpixpix::decode::DecodedImage;
-use pixpixpix::folder::Found;
 
 fn image() -> DecodedImage {
     DecodedImage {
@@ -203,32 +202,4 @@ fn the_band_focused_from_the_column_keeps_the_preview() {
     press(&mut core, Key::B);
     assert!(shows_image(&core, "/p/x/1.jpg"));
     assert_eq!(highlighted(&core), Some(Path::new("/p/x/1.jpg")));
-}
-
-#[test]
-fn enter_on_a_found_image_moves_to_its_folder_like_a_click() {
-    let mut core = column_open();
-    press(&mut core, Key::R);
-    core.handle(Event::Searched {
-        dir: PathBuf::from("/p"),
-        dots: false,
-        found: Some(Found {
-            dir: PathBuf::from("/p/y/z"),
-            files: paths(&["/p/y/z/1.jpg", "/p/y/z/2.jpg"]),
-        }),
-    });
-    decoded(&mut core, "/p/y/z/1.jpg");
-    decoded(&mut core, "/p/y/z/2.jpg");
-    // `b` keeps the search running and its band shown.
-    assert!(press(&mut core, Key::B).is_empty());
-    assert_eq!(highlighted(&core), Some(Path::new("/p/y/z/1.jpg")));
-    press(&mut core, Key::Right);
-    let commands = press(&mut core, Key::Enter);
-    assert!(commands.contains(&Command::ListFolder(PathBuf::from("/p/y/z"))));
-    assert_eq!(
-        core.view().dir_column.as_ref().map(|c| c.dir.as_path()),
-        Some(Path::new("/p/y/z"))
-    );
-    assert_eq!(core.view().focus, Focus::Image);
-    assert!(shows_image(&core, "/p/y/z/2.jpg"));
 }

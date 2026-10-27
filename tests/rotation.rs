@@ -241,18 +241,6 @@ fn a_failed_write_keeps_the_rotation_and_shows_why() {
 }
 
 #[test]
-fn r_in_the_dir_column_still_searches() {
-    let mut core = showing();
-    press(&mut core, Key::N);
-    let commands = press(&mut core, Key::R);
-    assert!(
-        commands.iter().any(|c| matches!(c, Command::Search { .. })),
-        "{commands:?}"
-    );
-    assert_eq!(core.view().rotation, Rotation::None);
-}
-
-#[test]
 fn a_preview_is_not_turned_but_the_rotation_waits_for_the_return() {
     let mut core = showing();
     press(&mut core, Key::R);

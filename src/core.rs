@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use crate::decode::{DecodedImage, Frame};
-use crate::folder::{self, Found};
+use crate::folder;
 use crate::metadata::{Metadata, Strip};
 use crate::rotate::Rotation;
 use crate::settings::Settings;
@@ -17,7 +17,6 @@ use crate::startup::NoFile;
 mod edits;
 mod info;
 mod overview;
-mod search;
 
 pub use edits::{
     Block, Color, EditsView, Export, ExportFormat, ExportView, HANDLE_REACH, ImagePoint, Mark,
@@ -31,7 +30,6 @@ pub use info::{DATE_FORMAT_ERROR, MetadataView};
 
 use overview::Gallery;
 pub use overview::{Overview, Reveal, Section, Tile};
-use search::Search;
 
 #[derive(Debug, Clone, Copy)]
 enum Step {
@@ -144,13 +142,6 @@ pub enum Event {
     DirsListed {
         dir: PathBuf,
         result: Result<Vec<PathBuf>, String>,
-    },
-    /// A search asked for with [`Command::Search`] finished; `found` is absent
-    /// when no folder below `dir` has media files.
-    Searched {
-        dir: PathBuf,
-        dots: bool,
-        found: Option<Found>,
     },
     /// The settings asked for with [`Command::LoadSettings`], or why the file
     /// cannot be used.
@@ -318,16 +309,6 @@ pub enum Command {
     WatchFolder(PathBuf),
     /// List the subfolders of a folder, answered by [`Event::DirsListed`].
     ListDirs(PathBuf),
-    /// Search the folders below `dir` breadth-first for the shallowest one with
-    /// media files, dot folders only with `dots`, replacing any search so far;
-    /// answered by [`Event::Searched`].
-    Search {
-        dir: PathBuf,
-        dots: bool,
-    },
-    /// The running search is no longer needed; it reports nothing once
-    /// cancelled.
-    CancelSearch,
     /// Read the settings file, answered by [`Event::SettingsLoaded`].
     LoadSettings,
     /// Put the launcher entry and the icon where the desktop finds them, for
@@ -505,14 +486,6 @@ pub enum Screen {
         /// How many subfolders it has; absent until they are counted.
         folders: Option<usize>,
     },
-    /// Searching the folders below `dir` for images.
-    Searching {
-        dir: PathBuf,
-    },
-    /// No folder below `dir` has images.
-    NothingBelow {
-        dir: PathBuf,
-    },
 }
 
 /// One entry of the key line: the keys and what they do.
@@ -527,8 +500,6 @@ pub struct KeyHint {
 pub enum Toggle {
     /// `.`: dot files and dot folders are shown.
     DotEntries,
-    /// `r`: the subfolders are searched for images.
-    FindImages,
 }
 
 /// A toggle that is on, and whether it stays on when the folder is left:
@@ -727,10 +698,6 @@ const DIR_COLUMN_KEYS: &[KeyHint] = &[
     KeyHint {
         keys: "./Shift+.",
         action: "dot entries",
-    },
-    KeyHint {
-        keys: "R/Shift+R",
-        action: "find images",
     },
     KeyHint {
         keys: "G",
@@ -1183,10 +1150,6 @@ pub struct Core {
     dots: bool,
     /// `Shift`+`.`: dot entries stay shown when the folder is left.
     dots_kept: bool,
-    /// The one-shot `r` search of the dir column.
-    search: Option<Search>,
-    /// `Shift`+`r`: every folder the dir column enters is searched.
-    search_kept: bool,
     /// Decode results of the files in the window around the current one.
     /// Failures are kept too, so a broken file is not decoded again and again.
     cache: BTreeMap<PathBuf, Result<DecodedImage, String>>,
@@ -1481,8 +1444,6 @@ impl Core {
             column_dirs: None,
             dots: false,
             dots_kept: false,
-            search: None,
-            search_kept: false,
             cache: BTreeMap::new(),
             decoding,
             came_from: None,
@@ -1568,7 +1529,6 @@ impl Core {
                 self.dirs_listed(&dir, result);
                 Vec::new()
             }
-            Event::Searched { dir, dots, found } => self.searched(dir, dots, found),
             Event::SettingsLoaded(Ok(settings)) => {
                 let commands = self.apply_settings(settings);
                 self.export_settings_loaded();
@@ -1768,22 +1728,16 @@ impl Core {
             .map(PathBuf::as_path)
     }
 
-    /// Shows the search or the preview if there is one, otherwise the current
-    /// folder.
+    /// Shows the preview if there is one, otherwise the current folder.
     fn publish(&mut self) {
         let dots = self.dots.then_some(Tag {
             toggle: Toggle::DotEntries,
             kept: self.dots_kept,
         });
-        let search = (self.search_kept || self.search.is_some()).then_some(Tag {
-            toggle: Toggle::FindImages,
-            kept: self.search_kept,
-        });
-        self.view.tags = dots.into_iter().chain(search).collect();
-        let preview = self.search_view().or_else(|| {
-            self.previewed()
-                .and_then(|dir| Some(self.nav.get(dir)?.preview(dir)))
-        });
+        self.view.tags = dots.into_iter().collect();
+        let preview = self
+            .previewed()
+            .and_then(|dir| Some(self.nav.get(dir)?.preview(dir)));
         let previewing = preview.is_some();
         // A preview is never the current file, so it is shown unturned.
         self.view.rotation = if preview.is_some() {
@@ -2501,7 +2455,6 @@ impl Core {
             }
             (_, true) => Vec::new(),
             (Key::Period, false) if key.shift && self.view.focus == Focus::Dirs => self.keep_dots(),
-            (Key::R, false) if key.shift && self.view.focus == Focus::Dirs => self.keep_search(),
             _ => match self.view.focus {
                 Focus::Dirs => self.dir_key(key.key),
                 Focus::Image => self.image_key(key.key),
@@ -2580,11 +2533,7 @@ impl Core {
             error: None,
         });
         self.set_focus(Focus::Dirs);
-        let mut commands = vec![Command::ListDirs(dir)];
-        if self.search_kept {
-            commands.extend(self.start_search());
-        }
-        commands
+        vec![Command::ListDirs(dir)]
     }
 
     /// Lists the column's subfolders, keeping the highlight on the folder just
@@ -2624,7 +2573,7 @@ impl Core {
     }
 
     /// Keys of the dir column; leaving the folder ends the one-shot actions
-    /// first, and a kept search starts again in the folder entered.
+    /// first.
     fn dir_key(&mut self, key: Key) -> Vec<Command> {
         let mut commands = match key {
             Key::Period => {
@@ -2632,28 +2581,22 @@ impl Core {
                 let dots = !self.dots;
                 return self.set_dots(dots);
             }
-            Key::R if self.search_kept => return self.keep_search(),
-            Key::R => return self.start_search(),
             Key::Left | Key::Right | Key::Enter | Key::Escape | Key::Backspace => {
                 self.reset_one_shot()
             }
             _ => Vec::new(),
         };
         commands.extend(self.move_in_column(key));
-        if self.search_kept && self.view.overview.is_none() {
-            commands.extend(self.start_search());
-        }
         commands
     }
 
-    /// Ends the one-shot actions that are not kept: the search is aborted and
-    /// dot entries are hidden again.
+    /// Ends the one-shot actions that are not kept: dot entries are hidden
+    /// again.
     fn reset_one_shot(&mut self) -> Vec<Command> {
-        let mut commands = self.abort_search();
         if self.dots && !self.dots_kept {
-            commands.extend(self.set_dots(false));
+            return self.set_dots(false);
         }
-        commands
+        Vec::new()
     }
 
     /// `Shift`+`.`: dot entries are shown and stay shown in every folder, or
@@ -2662,17 +2605,6 @@ impl Core {
         self.dots_kept = !self.dots_kept;
         let dots = self.dots_kept;
         self.set_dots(dots)
-    }
-
-    /// `Shift`+`r`: every folder the dir column enters is searched, starting
-    /// with this one, until `r` or `Shift`+`r` ends it.
-    fn keep_search(&mut self) -> Vec<Command> {
-        self.search_kept = !self.search_kept;
-        if self.search_kept {
-            self.start_search()
-        } else {
-            self.abort_search()
-        }
     }
 
     /// Shows or hides dot entries in the column and the current folder.
@@ -3101,9 +3033,6 @@ impl Core {
 
     /// Jumps to a cached file picked in the band, broken or not.
     fn show(&mut self, path: PathBuf) -> Vec<Command> {
-        if let Some(commands) = self.show_found(&path) {
-            return commands;
-        }
         if !self.cache.contains_key(&path) {
             return Vec::new();
         }
@@ -3160,7 +3089,6 @@ impl Core {
         self.animated.remove(&path);
         self.images.remove(&path);
         let mut commands = self.copy_decoded(&path, &result);
-        commands.extend(self.search_decoded(&path, &result));
         if !self.decoding.remove(&path) {
             self.nav_decoded(path, result);
             return commands;
@@ -3183,6 +3111,16 @@ impl Core {
         self.cache.insert(path, result);
         commands.extend(self.refresh());
         commands
+    }
+
+    /// Whether the current folder or the nav cache waits for the decode of
+    /// `path`.
+    fn decoding_elsewhere(&self, path: &Path) -> bool {
+        self.decoding.contains(path)
+            || self
+                .nav
+                .values()
+                .any(|n| matches!(&n.state, NavState::Decoding(p) if p == path))
     }
 
     /// The current file and up to `cache_per_side` neighbours on each side, in

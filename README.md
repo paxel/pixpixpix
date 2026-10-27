@@ -20,8 +20,7 @@ neighbours are preloaded so the next image is already there.
   before `img10`), with a band of the preloaded neighbours, the current file in its middle. Files other programs add,
   remove or rename show up on their own.
 - **Move through folders.** A dir column lists the subfolders and previews the first
-  image of the highlighted one; it can also search the subfolders for the nearest
-  folder with images.
+  image of the highlighted one.
 - **Overview.** A scrollable gallery of the current folder and every folder below it,
   with thumbnails shared with other apps through the freedesktop thumbnail cache.
 - **Act on the file.** Rotate (JPEG losslessly), move to the trash, copy to the
@@ -103,8 +102,6 @@ In the save dialog, `Enter` saves as a new file and `Esc` goes back to editing.
 | `Left` / `Esc` / `Backspace` | go to the parent                                               |
 | `.`                          | show dot files and dot folders until you leave the folder      |
 | `Shift`+`.`                  | show dot files and dot folders in every folder, until `.`      |
-| `r`                          | find the nearest subfolder with images, until you leave        |
-| `Shift`+`r`                  | find images below every folder you enter, until `r`            |
 | `g`                          | overview of the highlighted folder                             |
 | `n`                          | close                                                          |
 | `b`                          | focus the preloaded files                                      |

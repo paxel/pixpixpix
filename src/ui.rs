@@ -269,8 +269,6 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
                 }
                 Screen::Error { path, message } => show_error(ui, path.as_deref(), message),
                 Screen::NoImages { folders, .. } => show_no_images(ui, *folders),
-                Screen::Searching { .. } => show_status(ui, "Searching…"),
-                Screen::NothingBelow { .. } => show_status(ui, "No images below"),
             }
             if let Some(inner) = view.inner {
                 show_inner(ui, inner);
@@ -668,8 +666,6 @@ fn show_key_line(ui: &mut egui::Ui, view: &View) {
             let text = match (tag.toggle, tag.kept) {
                 (Toggle::DotEntries, false) => "dot entries shown",
                 (Toggle::DotEntries, true) => "dot entries shown, kept",
-                (Toggle::FindImages, false) => "finding images",
-                (Toggle::FindImages, true) => "finding images, kept",
             };
             ui.label(
                 RichText::new(text)

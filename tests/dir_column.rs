@@ -334,7 +334,6 @@ fn the_key_line_lists_the_keys_of_the_focused_area() {
             "Left/Esc/Backspace",
             "Right/Enter",
             "./Shift+.",
-            "R/Shift+R",
             "G",
             "N",
             "B",
