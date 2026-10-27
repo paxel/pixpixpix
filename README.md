@@ -12,7 +12,7 @@ is shown. Started on a folder or without an argument, it shows the folder's firs
 image. From there you step through the folder with the arrow keys, while the
 neighbours are preloaded so the next image is already there.
 
-> Status: early development, heading for the first release, 0.1.0.
+> Status: early development; 0.1.0 is the first release.
 
 ## What it does
 
