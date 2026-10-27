@@ -271,6 +271,36 @@ th {
   white-space: nowrap;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* What the release brings, on the overview: a callout in the accent. */
+.whats-new {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 0.9rem 1.1rem;
+  margin: 0 0 1.5rem;
+}
+
+.whats-new h2 {
+  margin-top: 0;
+}
+
+.whats-new p:last-child {
+  margin-bottom: 0;
+}
+
 /* ---------- header ---------- */
 
 .site-header {
