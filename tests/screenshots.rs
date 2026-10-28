@@ -1,5 +1,5 @@
 //! The screenshots of the documentation site: the app drawn headless with
-//! generated sample pictures, its triangles rasterized on the CPU, so the
+//! the photos of `tests/photos/`, its triangles rasterized on the CPU, so the
 //! pictures come out the same on every machine and need no GPU.
 //!
 //! `cargo test --test screenshots -- --ignored` writes them into
@@ -19,85 +19,39 @@ use pixpixpix::ui;
 /// The window the screenshots show, in points; one point is one pixel.
 const WINDOW: Vec2 = Vec2::new(1200.0, 760.0);
 
-const ROOT: &str = "/home/you/Pictures/Holiday 2026";
+const ROOT: &str = "/home/you/Pictures/Pigs";
 
-/// The sample folders and their files.
+/// The sample folders and their files; every file name is one photo in
+/// `tests/photos/`, credited on the site's overview page.
 fn folders() -> BTreeMap<PathBuf, Vec<PathBuf>> {
-    let folder = |name: &str, count: usize| {
-        let dir = Path::new(ROOT).join(name);
-        let files = (1..=count)
-            .map(|i| dir.join(format!("IMG_{:04}.jpg", 4100 + i)))
+    let folder = |dir: PathBuf, first: u32, count: u32| {
+        let files = (first..first + count)
+            .map(|n| dir.join(format!("IMG_{n}.jpg")))
             .collect();
         (dir, files)
     };
-    let mut folders = BTreeMap::from([folder("Coast", 9), folder("Mountains", 7)]);
-    let root = PathBuf::from(ROOT);
-    let files = (1..=14)
-        .map(|i| root.join(format!("IMG_{:04}.jpg", 4000 + i)))
-        .collect();
-    folders.insert(root, files);
-    folders
+    BTreeMap::from([
+        folder(PathBuf::from(ROOT), 4001, 7),
+        folder(Path::new(ROOT).join("Farm"), 4101, 4),
+        folder(Path::new(ROOT).join("Zoo"), 4201, 4),
+    ])
 }
 
-/// A small landscape for `path`: a sky, a sun and hills in colours of its own.
-fn picture(path: &Path, width: u32, height: u32) -> DecodedImage {
-    let seed = path
-        .to_string_lossy()
-        .bytes()
-        .fold(7u32, |h, b| h.wrapping_mul(31).wrapping_add(u32::from(b)));
-    let hue = (seed.wrapping_mul(2_654_435_761) >> 7) as f32 % 360.0;
-    let sky_top = hsv(hue, 0.55, 0.55);
-    let sky_low = hsv(hue + 40.0, 0.35, 0.95);
-    let sun = hsv(hue + 70.0, 0.25, 1.0);
-    let far = hsv(hue + 160.0, 0.35, 0.55);
-    let near = hsv(hue + 190.0, 0.45, 0.32);
-    let phase = (seed % 100) as f32 / 16.0;
-    let (w, h) = (width as f32, height as f32);
-    let mut rgba = Vec::with_capacity((width * height * 4) as usize);
-    for y in 0..height {
-        for x in 0..width {
-            let (u, v) = (x as f32 / w, y as f32 / h);
-            let far_line = 0.55 + 0.08 * (u * 5.0 + phase).sin();
-            let near_line = 0.72 + 0.06 * (u * 9.0 - phase).cos();
-            let (sx, sy) = (u - 0.7, (v - 0.3) * h / w);
-            let color = if v > near_line {
-                near
-            } else if v > far_line {
-                far
-            } else if (sx * sx + sy * sy).sqrt() < 0.07 {
-                sun
-            } else {
-                mix(sky_top, sky_low, v / far_line)
-            };
-            rgba.extend_from_slice(&[color[0], color[1], color[2], 255]);
-        }
+/// The photo for `path`, found by its file name, scaled to fit `size` when given.
+fn picture(path: &Path, size: Option<u32>) -> Result<DecodedImage, String> {
+    let photo = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/photos")
+        .join(path.file_name().unwrap_or_default());
+    let mut image = image::open(&photo).map_err(|e| format!("{}: {e}", photo.display()))?;
+    if let Some(size) = size {
+        image = image.thumbnail(size, size);
     }
-    DecodedImage {
-        width,
-        height,
-        rgba: Arc::from(rgba),
-    }
-}
-
-fn hsv(hue: f32, s: f32, v: f32) -> [u8; 3] {
-    let h = (hue % 360.0) / 60.0;
-    let c = v * s;
-    let x = c * (1.0 - (h % 2.0 - 1.0).abs());
-    let (r, g, b) = match h as u32 {
-        0 => (c, x, 0.0),
-        1 => (x, c, 0.0),
-        2 => (0.0, c, x),
-        3 => (0.0, x, c),
-        4 => (x, 0.0, c),
-        _ => (c, 0.0, x),
-    };
-    let m = v - c;
-    [r, g, b].map(|ch| ((ch + m) * 255.0).round() as u8)
-}
-
-fn mix(a: [u8; 3], b: [u8; 3], t: f32) -> [u8; 3] {
-    let t = t.clamp(0.0, 1.0);
-    [0, 1, 2].map(|i| (f32::from(a[i]) * (1.0 - t) + f32::from(b[i]) * t).round() as u8)
+    let rgba = image.to_rgba8();
+    Ok(DecodedImage {
+        width: rgba.width(),
+        height: rgba.height(),
+        rgba: Arc::from(rgba.into_raw()),
+    })
 }
 
 /// The app with its answers faked: files, thumbnails, the trash and the
@@ -146,11 +100,8 @@ impl Shot {
         let folders = folders();
         match command {
             Command::Decode(path) => {
-                let image = picture(&path, 1500, 1000);
-                self.handle(Event::Decoded {
-                    path,
-                    result: Ok(image),
-                });
+                let result = picture(&path, None);
+                self.handle(Event::Decoded { path, result });
             }
             Command::ListFolder(dir) => {
                 let files = folders.get(&dir).cloned().unwrap_or_default();
@@ -182,12 +133,8 @@ impl Shot {
                 self.handle(Event::OverviewScanned(scan));
             }
             Command::DecodeThumbnail { path, size } => {
-                let image = picture(&path, size, size * 2 / 3);
-                self.handle(Event::ThumbnailDecoded {
-                    path,
-                    size,
-                    result: Ok(image),
-                });
+                let result = picture(&path, Some(size));
+                self.handle(Event::ThumbnailDecoded { path, size, result });
             }
             Command::ListBin => self.handle(Event::BinListed(Ok(bin()))),
             Command::ReadDefaults { .. } => self.handle(Event::DefaultsRead(defaults())),
@@ -377,7 +324,7 @@ fn bin() -> Vec<BinItem> {
                 id: format!("{}.trashinfo", file.display()).into(),
                 file,
                 original: Some(original),
-                deleted: monday + if i < 6 { day } else { 0 } + i as i64 * 60,
+                deleted: monday + if i < 3 { day } else { 0 } + i as i64 * 60,
             }
         })
         .collect()
@@ -424,7 +371,7 @@ fn defaults() -> Defaults {
 }
 
 fn first_file() -> PathBuf {
-    Path::new(ROOT).join("IMG_4005.jpg")
+    Path::new(ROOT).join("IMG_4001.jpg")
 }
 
 /// The share of the canvas that is not the window's background.
