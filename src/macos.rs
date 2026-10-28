@@ -1,6 +1,6 @@
-//! AppKit, which every Mac has: the general pasteboard for `c`, the
-//! application delegate through which Finder's "Open With" and a file dropped
-//! on the Dock icon reach the app, and Launch Services for the default apps.
+//! AppKit, which every Mac has: the general pasteboard for `c`, the Apple
+//! Event through which Finder's "Open With" and a file dropped on the Dock
+//! icon reach the app, and Launch Services for the default apps.
 #![expect(
     unsafe_code,
     reason = "calls into AppKit through the Objective-C runtime"
@@ -12,13 +12,13 @@ use objc2::rc::{Retained, autoreleasepool};
 use objc2::runtime::ProtocolObject;
 use objc2::{AnyThread, DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSApplication, NSApplicationDelegate, NSApplicationWillFinishLaunchingNotification,
-    NSPasteboard, NSPasteboardItem, NSPasteboardTypeFileURL, NSPasteboardTypePNG,
-    NSPasteboardTypeString, NSPasteboardWriting,
+    NSApplicationWillFinishLaunchingNotification, NSPasteboard, NSPasteboardItem,
+    NSPasteboardTypeFileURL, NSPasteboardTypePNG, NSPasteboardTypeString, NSPasteboardWriting,
 };
+use objc2_core_services::{kAEOpenDocuments, kCoreEventClass, keyDirectObject};
 use objc2_foundation::{
-    MainThreadMarker, NSArray, NSData, NSNotification, NSNotificationCenter, NSObject,
-    NSObjectProtocol, NSString, NSURL,
+    MainThreadMarker, NSAppleEventDescriptor, NSAppleEventManager, NSArray, NSData, NSNotification,
+    NSNotificationCenter, NSObject, NSObjectProtocol, NSString, NSURL,
 };
 
 use objc2_app_kit::NSWorkspace;
@@ -81,39 +81,60 @@ struct Opener {
 }
 
 define_class!(
-    // SAFETY: NSObject has no subclassing requirements and `Delegate` does
+    // SAFETY: NSObject has no subclassing requirements and `Handler` does
     // not implement `Drop`.
     #[unsafe(super = NSObject)]
     #[thread_kind = MainThreadOnly]
-    #[name = "PixpixpixDelegate"]
+    #[name = "PixpixpixOpenHandler"]
     #[ivars = Opener]
-    struct Delegate;
+    struct Handler;
 
     // SAFETY: `NSObjectProtocol` has no safety requirements.
-    unsafe impl NSObjectProtocol for Delegate {}
+    unsafe impl NSObjectProtocol for Handler {}
 
-    // SAFETY: `NSApplicationDelegate` has no safety requirements.
-    unsafe impl NSApplicationDelegate for Delegate {
-        // SAFETY: the signature is the one AppKit calls.
-        #[unsafe(method(application:openURLs:))]
-        fn open_urls(&self, _application: &NSApplication, urls: &NSArray<NSURL>) {
-            let opener = self.ivars();
-            for path in urls.iter().filter_map(|url| url.to_file_path()) {
-                // The app may already be gone; nothing to open then.
-                let _ = opener.events.send(Event::Opened(path));
-            }
-            opener.ctx.request_repaint();
-        }
-    }
-
-    impl Delegate {
+    impl Handler {
         // SAFETY: the signature is the one a notification observer has.
         #[unsafe(method(willFinishLaunching:))]
         fn will_finish_launching(&self, _notification: &NSNotification) {
-            // Winit sets no delegate of its own, and the files of the launch
-            // are handed over only after this.
-            NSApplication::sharedApplication(self.mtm())
-                .setDelegate(Some(ProtocolObject::from_ref(self)));
+            // Winit owns the application delegate and panics on any other,
+            // so the files come from the Apple Event itself. AppKit installs
+            // its own handler before this and sends the event only after.
+            // SAFETY: `self` lives for good and has the selector, which takes
+            // the event and the reply.
+            unsafe {
+                NSAppleEventManager::sharedAppleEventManager()
+                    .setEventHandler_andSelector_forEventClass_andEventID(
+                        self,
+                        sel!(openDocuments:withReplyEvent:),
+                        kCoreEventClass,
+                        kAEOpenDocuments,
+                    );
+            }
+        }
+
+        // SAFETY: the signature is the one NSAppleEventManager calls.
+        #[unsafe(method(openDocuments:withReplyEvent:))]
+        fn open_documents(
+            &self,
+            event: &NSAppleEventDescriptor,
+            _reply: &NSAppleEventDescriptor,
+        ) {
+            let opener = self.ivars();
+            let Some(files) = event.paramDescriptorForKeyword(keyDirectObject) else {
+                return;
+            };
+            // Descriptor lists count from 1.
+            for index in 1..=files.numberOfItems() {
+                let path = files
+                    .descriptorAtIndex(index)
+                    .and_then(|file| file.fileURLValue())
+                    .and_then(|url| url.to_file_path());
+                if let Some(path) = path {
+                    // The app may already be gone; nothing to open then.
+                    let _ = opener.events.send(Event::Opened(path));
+                }
+            }
+            opener.ctx.request_repaint();
         }
     }
 );
@@ -125,22 +146,22 @@ pub fn open_files(events: Sender<Event>, ctx: egui::Context) {
     let Some(mtm) = MainThreadMarker::new() else {
         return;
     };
-    let delegate = Delegate::alloc(mtm).set_ivars(Opener { events, ctx });
+    let handler = Handler::alloc(mtm).set_ivars(Opener { events, ctx });
     // SAFETY: NSObject's `init` has this signature.
-    let delegate: Retained<Delegate> = unsafe { msg_send![super(delegate), init] };
+    let handler: Retained<Handler> = unsafe { msg_send![super(handler), init] };
     // SAFETY: the observer stays alive for good below, the selector takes
     // the notification, and the name is the constant AppKit defines.
     unsafe {
         NSNotificationCenter::defaultCenter().addObserver_selector_name_object(
-            &delegate,
+            &handler,
             sel!(willFinishLaunching:),
             Some(NSApplicationWillFinishLaunchingNotification),
             None,
         );
     }
-    // AppKit keeps neither the observer nor the delegate alive; they serve
-    // as long as the app runs.
-    std::mem::forget(delegate);
+    // AppKit keeps neither the observer nor the event handler alive; it
+    // serves as long as the app runs.
+    std::mem::forget(handler);
 }
 
 /// Launch Services, which keeps the default app of each content type.

@@ -59,8 +59,8 @@ x11rb = "0.13"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSPasteboard", "NSPasteboardItem", "NSResponder", "NSWorkspace"] }
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFString"] }
-objc2-core-services = { version = "0.3", default-features = false, features = ["std", "LaunchServices", "LSInfo", "LSConstants"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSData", "NSError", "NSFileManager", "NSNotification", "NSObject", "NSString", "NSURL"] }
+objc2-core-services = { version = "0.3", default-features = false, features = ["std", "AE", "AEDataModel", "AppleEvents", "LaunchServices", "LSInfo", "LSConstants"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "objc2-core-services", "NSAppleEventDescriptor", "NSAppleEventManager", "NSArray", "NSData", "NSError", "NSFileManager", "NSNotification", "NSObject", "NSString", "NSURL"] }
 
 [dev-dependencies]
 egui_kittest = "0.35"
