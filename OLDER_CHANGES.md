@@ -2,6 +2,12 @@
 
 Releases before the current one, newest first.
 
+## [0.3.1] - 2026-10-28
+
+### Fixed
+
+- On macOS, pixpixpix starts again instead of crashing at once; files opened from Finder or dropped on the Dock icon still open in it.
+
 ## [0.3.0] - 2026-10-27
 
 ### Added
