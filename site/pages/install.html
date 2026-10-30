@@ -9,13 +9,24 @@ formula from the tap, not the whole tap (see Homebrew's
 <a href="https://docs.brew.sh/Tap-Trust">Tap Trust</a>).</p>
 <pre><code>brew install paxel/tap/pixpixpix</code></pre>
 <p>It puts pixpixpix into the application menu and into "Open with" for images and videos, never
-as the default app. The <a href="formats.html#native-libraries">native libraries</a> come from your
-distribution.</p>
+as the default app. The <a href="formats.html#native-libraries">native libraries</a> for videos,
+HEIC/AVIF and lossless JPEG turns come from your distribution, not from Homebrew, whose libraries
+pixpixpix does not look for on Linux:</p>
+<pre><code># Fedora
+sudo dnf install mpv-libs libheif turbojpeg
+# Debian, Ubuntu
+sudo apt install libmpv2 libheif1 libheif-plugin-libde265 libheif-plugin-dav1d libturbojpeg
+# Arch
+sudo pacman -S mpv libheif libjpeg-turbo</code></pre>
+<p>For phone videos on Fedora, also see <a href="formats.html#phone-videos-on-fedora">Phone videos
+on Fedora</a>.</p>
 
 <h2>Homebrew on macOS</h2>
 <p>The cask installs <code>pixpixpix.app</code> with libmpv bundled, plus the
 <code>pixpixpix</code> and <code>pix3</code> commands:</p>
 <pre><code>brew install --cask paxel/tap/pixpixpix</code></pre>
+<p>HEIC/AVIF and lossless JPEG turns need two more libraries from Homebrew:</p>
+<pre><code>brew install libheif jpeg-turbo</code></pre>
 <p>The app is not signed, so macOS blocks its first start: allow it once in System Settings &gt;
 Privacy &amp; Security &gt; "Open Anyway", or run
 <code>xattr -dr com.apple.quarantine /Applications/pixpixpix.app</code>.</p>
