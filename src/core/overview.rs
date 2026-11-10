@@ -70,6 +70,8 @@ pub struct Tile {
     pub motion: Option<MotionKind>,
     /// Absent until decoded, and again once off screen.
     pub thumbnail: Option<Result<DecodedImage, String>>,
+    /// On its way to the trash: drawn with a bin until it is there.
+    pub trashing: bool,
 }
 
 /// What the core keeps of the overview besides its view.
@@ -264,6 +266,7 @@ impl Core {
             motion: live.contains_key(&path).then_some(MotionKind::LivePhoto),
             path,
             thumbnail: None,
+            trashing: false,
         }));
         overview.sections.push(Section {
             dir: dir.to_path_buf(),
@@ -576,7 +579,8 @@ impl Core {
     }
 
     /// `x`: sends the selected file to the trash, with the MOV of a Live
-    /// Photo; its tile goes once it is there.
+    /// Photo; its tile shows a bin at once and goes once the file is there,
+    /// the selection moving on right away.
     fn trash_selected(&mut self) -> Vec<Command> {
         let Some(path) = self.selected_path() else {
             return Vec::new();
@@ -586,10 +590,48 @@ impl Core {
         }
         self.view.trash_error = None;
         let mov = self.gallery.live.get(&path).cloned();
+        self.bin_tiles(std::slice::from_ref(&path));
         let files = [vec![path], mov.into_iter().collect()].concat();
         self.trashing.extend(files.iter().cloned());
         self.trashed.push(files.clone());
         files.into_iter().map(Command::Trash).collect()
+    }
+
+    /// Puts a bin on the tiles of `paths` and moves the selection off them:
+    /// to the next tile without a bin, else the one before.
+    fn bin_tiles(&mut self, paths: &[PathBuf]) {
+        let Some(overview) = self.view.overview.as_mut() else {
+            return;
+        };
+        for tile in overview
+            .tiles
+            .iter_mut()
+            .filter(|t| paths.contains(&t.path))
+        {
+            tile.trashing = true;
+        }
+        let Some(selected) = overview.selected else {
+            return;
+        };
+        let free = |i: &usize| overview.tiles.get(*i).is_some_and(|t| !t.trashing);
+        let next = (selected..overview.tiles.len())
+            .find(free)
+            .or_else(|| (0..selected).rev().find(free));
+        if let Some(next) = next.filter(|n| *n != selected) {
+            overview.selected = Some(next);
+            overview.reveal = Some(Reveal::Tile(next));
+        }
+    }
+
+    /// The trash refused `path`: its tile loses the bin.
+    pub(super) fn overview_trash_refused(&mut self, path: &Path) {
+        let Self { view, gallery, .. } = self;
+        let Some(overview) = view.overview.as_mut().or(gallery.kept.as_mut()) else {
+            return;
+        };
+        for tile in overview.tiles.iter_mut().filter(|t| t.path == path) {
+            tile.trashing = false;
+        }
     }
 
     /// `t`: opens the bin view, the gallery giving way to it, or closes it.
@@ -665,6 +707,7 @@ impl Core {
                 motion: None,
                 path: item.file.clone(),
                 thumbnail: None,
+                trashing: false,
             });
             self.gallery.bin.insert(item.file.clone(), item);
         }
@@ -833,6 +876,7 @@ impl Core {
         if files.is_empty() {
             return Vec::new();
         }
+        self.bin_tiles(&files);
         self.view.trash_error = None;
         self.trashing.extend(files.iter().cloned());
         self.trashed.push(files.clone());
@@ -933,6 +977,7 @@ impl Core {
                 motion: mov.as_ref().map(|_| MotionKind::LivePhoto),
                 path: first.clone(),
                 thumbnail: None,
+                trashing: false,
             },
         );
         overview.selected = overview.selected.map(later);

@@ -36,6 +36,8 @@ const PLACEHOLDER_TILE: Color32 = Color32::from_rgb(0x24, 0x24, 0x28);
 /// The badge of an animated or multi-image thumb and its marks.
 const ANIMATED_BADGE: Color32 = Color32::from_rgba_premultiplied(0x12, 0x12, 0x14, 0xc0);
 const ANIMATED_MARK: Color32 = Color32::from_rgb(0xe8, 0xe8, 0xea);
+/// Over the picture of a file on its way to the trash.
+const BIN_DIM: Color32 = Color32::from_rgba_premultiplied(0x12, 0x12, 0x14, 0x90);
 /// The highlighted folder of the focused dir column, and its text.
 const HIGHLIGHT: Color32 = Color32::from_rgb(0xff, 0xd5, 0x80);
 const HIGHLIGHT_TEXT: Color32 = Color32::from_rgb(0x12, 0x12, 0x14);
@@ -465,6 +467,35 @@ fn paint_play(painter: &egui::Painter, center: egui::Pos2, radius: f32) {
     painter.add(egui::Shape::convex_polygon(
         points,
         ANIMATED_MARK,
+        egui::Stroke::NONE,
+    ));
+}
+
+/// A file on its way to the trash: the picture `rect` dimmed, a bin in its
+/// top right corner.
+fn paint_bin(painter: &egui::Painter, rect: egui::Rect) {
+    painter.rect_filled(rect, 0.0, BIN_DIM);
+    let center = egui::pos2(rect.max.x - 16.0, rect.min.y + 16.0);
+    painter.circle_filled(center, 13.0, ANIMATED_BADGE);
+    let (x, y) = (center.x, center.y);
+    let lid = egui::Stroke::new(2.0, HIGHLIGHT);
+    painter.line_segment(
+        [egui::pos2(x - 7.0, y - 5.0), egui::pos2(x + 7.0, y - 5.0)],
+        lid,
+    );
+    painter.line_segment(
+        [egui::pos2(x - 2.0, y - 7.5), egui::pos2(x + 2.0, y - 7.5)],
+        lid,
+    );
+    let body = vec![
+        egui::pos2(x - 5.5, y - 3.0),
+        egui::pos2(x + 5.5, y - 3.0),
+        egui::pos2(x + 4.0, y + 8.0),
+        egui::pos2(x - 4.0, y + 8.0),
+    ];
+    painter.add(egui::Shape::convex_polygon(
+        body,
+        HIGHLIGHT,
         egui::Stroke::NONE,
     ));
 }

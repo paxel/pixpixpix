@@ -4,8 +4,8 @@
 use egui::{Color32, Rect, RichText};
 
 use super::{
-    BAND_HIGHLIGHT, BROKEN_TILE, ERROR_TEXT, TEXT, Textures, fit, paint_motion_badge, paint_play,
-    show_status,
+    BAND_HIGHLIGHT, BROKEN_TILE, ERROR_TEXT, TEXT, Textures, fit, paint_bin, paint_motion_badge,
+    paint_play, show_status,
 };
 use crate::core::{Event, MotionKind, Overview, Reveal, Section, Tile};
 use crate::folder;
@@ -240,8 +240,8 @@ fn revealed(
 
 /// One tile of `side` points with its top left corner at `min`: the
 /// thumbnail, a placeholder while it is not decoded, or an error marker; a
-/// video carries a play mark, a Live Photo its badge; the file name below,
-/// and a frame while selected. Whether it was clicked.
+/// video carries a play mark, a Live Photo its badge, a file on its way to
+/// the trash a bin; the file name below, and a frame while selected. Whether it was clicked.
 fn show_tile(
     ui: &mut egui::Ui,
     index: usize,
@@ -294,6 +294,9 @@ fn show_tile(
     } else {
         label
     };
+    if tile.trashing {
+        paint_bin(ui.painter(), marked);
+    }
     if selected {
         ui.painter().rect_stroke(
             area.expand(3.0),
@@ -306,6 +309,11 @@ fn show_tile(
     let text = match label {
         Some(kind) => format!("{name} ({kind})"),
         None => name.clone(),
+    };
+    let text = if tile.trashing {
+        format!("{text}, on its way to the trash")
+    } else {
+        text
     };
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, text.clone())

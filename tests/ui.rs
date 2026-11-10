@@ -1121,6 +1121,27 @@ fn g_replaces_image_and_band_by_sections_of_named_placeholders() {
 }
 
 #[test]
+fn a_tile_on_its_way_to_the_trash_is_drawn_with_a_bin_until_it_is_there() {
+    let (mut h, scan) = overview_open();
+    overview_section(
+        &mut h,
+        scan.unwrap(),
+        "/p",
+        &["/p/a.jpg".into(), "/p/b.jpg".into()],
+    );
+    h.key_press(egui::Key::X);
+    h.run();
+    h.get_by_role_and_label(Role::Button, "a.jpg, on its way to the trash");
+    h.state_mut().core.handle(Event::Trashed {
+        path: PathBuf::from("/p/a.jpg"),
+        result: Ok(()),
+    });
+    h.run();
+    assert!(h.query_by_role_and_label(Role::Label, "a.jpg").is_none());
+    h.get_by_role_and_label(Role::Button, "b.jpg");
+}
+
+#[test]
 fn only_the_tiles_on_screen_are_laid_out_and_decoded() {
     let (mut h, scan) = overview_open();
     let scan = scan.unwrap();

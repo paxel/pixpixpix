@@ -574,6 +574,8 @@ fn x_trashes_the_selected_file_with_its_live_mov_and_its_tile_goes() {
             PathBuf::from("/q/IMG_1.MOV")
         ]
     );
+    // The selection moved on; back on the tile on its way, `x` does nothing.
+    press(&mut core, Key::Left);
     assert!(trashes(&press(&mut core, Key::X)).is_empty());
     assert_eq!(overview(&core).unwrap().tiles.len(), 4);
 
@@ -1053,6 +1055,110 @@ fn u_in_the_gallery_puts_the_tile_back_in_its_section_selected() {
     assert_eq!(open.selected, Some(1));
     assert_eq!(open.sections[0].tiles, 0..3);
     assert_eq!(open.sections[1].tiles, 3..4);
+}
+
+fn binned(core: &Core) -> Vec<String> {
+    overview(core)
+        .map(|o| {
+            o.tiles
+                .iter()
+                .filter(|t| t.trashing)
+                .map(|t| pixpixpix::folder::file_name(&t.path))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[test]
+fn x_puts_a_bin_on_the_tile_and_moves_on_until_the_file_is_in_the_trash() {
+    let mut core = gallery_with_sections();
+    press(&mut core, Key::X);
+    assert_eq!(tile_names(&core), ["a.jpg", "b.jpg", "c.jpg", "1.jpg"]);
+    assert_eq!(binned(&core), ["b.jpg"]);
+    assert_eq!(overview(&core).unwrap().selected, Some(2));
+    core.handle(Event::Trashed {
+        path: p("b.jpg"),
+        result: Ok(()),
+    });
+    assert_eq!(tile_names(&core), ["a.jpg", "c.jpg", "1.jpg"]);
+    // Still on c.jpg.
+    assert_eq!(overview(&core).unwrap().selected, Some(1));
+}
+
+#[test]
+fn a_trashing_the_trash_refuses_takes_the_bin_away_and_keeps_the_tile() {
+    let mut core = gallery_with_sections();
+    press(&mut core, Key::X);
+    core.handle(Event::Trashed {
+        path: p("b.jpg"),
+        result: Err("Cannot trash b.jpg: no".to_owned()),
+    });
+    assert_eq!(tile_names(&core), ["a.jpg", "b.jpg", "c.jpg", "1.jpg"]);
+    assert!(binned(&core).is_empty());
+    assert_eq!(
+        core.view().trash_error.as_deref(),
+        Some("Cannot trash b.jpg: no")
+    );
+}
+
+#[test]
+fn x_on_the_last_tile_moves_back_to_the_one_before() {
+    let mut core = gallery_with_sections();
+    press(&mut core, Key::Right);
+    press(&mut core, Key::Right);
+    press(&mut core, Key::X);
+    assert_eq!(binned(&core), ["1.jpg"]);
+    assert_eq!(overview(&core).unwrap().selected, Some(2));
+}
+
+#[test]
+fn shift_x_puts_a_bin_on_every_tile_of_the_folder_and_moves_past_them() {
+    let mut core = gallery_with_sections();
+    core.handle(shift(Key::X));
+    press(&mut core, Key::Enter);
+    assert_eq!(binned(&core), ["a.jpg", "b.jpg", "c.jpg"]);
+    assert_eq!(overview(&core).unwrap().selected, Some(3));
+}
+
+#[test]
+fn u_while_the_trashing_is_still_on_its_way_puts_the_tile_back_after_it() {
+    // On a slow drive such as pCloud the file reaches the trash only later.
+    let mut core = gallery_with_sections();
+    press(&mut core, Key::X);
+    assert!(press(&mut core, Key::U).is_empty());
+    let commands = core.handle(Event::Trashed {
+        path: p("b.jpg"),
+        result: Ok(()),
+    });
+    assert!(commands.contains(&Command::Restore(vec![p("b.jpg")])));
+    core.handle(Event::Restored {
+        paths: vec![p("b.jpg")],
+        result: Ok(()),
+    });
+    assert_eq!(tile_names(&core), ["a.jpg", "b.jpg", "c.jpg", "1.jpg"]);
+    assert_eq!(overview(&core).unwrap().selected, Some(1));
+}
+
+#[test]
+fn u_waiting_for_a_trashing_the_trash_refuses_puts_nothing_back() {
+    let mut core = gallery_with_sections();
+    press(&mut core, Key::X);
+    core.handle(Event::Trashed {
+        path: p("b.jpg"),
+        result: Ok(()),
+    });
+    press(&mut core, Key::X);
+    assert!(press(&mut core, Key::U).is_empty());
+    let commands = core.handle(Event::Trashed {
+        path: p("c.jpg"),
+        result: Err("Cannot trash c.jpg: no".to_owned()),
+    });
+    assert!(!commands.iter().any(|c| matches!(c, Command::Restore(_))));
+    // The trashing before is still there for the next `u`.
+    assert_eq!(
+        press(&mut core, Key::U),
+        [Command::Restore(vec![p("b.jpg")])]
+    );
 }
 
 #[test]

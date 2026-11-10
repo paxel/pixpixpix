@@ -1552,6 +1552,9 @@ pub struct Core {
     /// What `u` puts back, the last trashed last: the files of one trashing
     /// each, a Live Photo's MOV with its photo.
     trashed: Vec<Vec<PathBuf>>,
+    /// The trashing `u` asked to put back while some of its files were not
+    /// in the trash yet; it goes back once they all are.
+    undo_waiting: Option<Vec<PathBuf>>,
     /// Files whose last decode found an animation.
     animated: BTreeSet<PathBuf>,
     /// The animation of the current file, once the first frame is shown.
@@ -1766,6 +1769,7 @@ impl Core {
             writing: None,
             trashing: BTreeSet::new(),
             trashed: Vec::new(),
+            undo_waiting: None,
             animated: BTreeSet::new(),
             animation: None,
             images: BTreeMap::new(),
@@ -3333,8 +3337,9 @@ impl Core {
     fn trashed(&mut self, path: &Path, result: Result<(), String>) -> Vec<Command> {
         self.trashing.remove(path);
         if let Err(message) = result {
+            self.overview_trash_refused(path);
             // Not in the trash, so nothing to put back.
-            for files in &mut self.trashed {
+            for files in self.trashed.iter_mut().chain(self.undo_waiting.as_mut()) {
                 files.retain(|f| f != path);
             }
             self.trashed.retain(|files| !files.is_empty());
@@ -3347,7 +3352,7 @@ impl Core {
                 Some(before) => format!("{before}\n{message}"),
                 None => message,
             });
-            return commands;
+            return [commands, self.undo_arrived()].concat();
         }
         if let Some(files) = &mut self.all_files {
             files.retain(|f| f != path);
@@ -3359,16 +3364,35 @@ impl Core {
         {
             commands.extend(self.folder_listed(&dir, Ok(files)));
         }
+        commands.extend(self.undo_arrived());
         commands
     }
 
-    /// `u`: the files of the last trashing go back where they were.
+    /// `u`: the files of the last trashing go back where they were, once
+    /// they are all in the trash; on a slow drive that can take a while.
     pub(super) fn undo_trash(&mut self) -> Vec<Command> {
+        if self.undo_waiting.is_some() {
+            return Vec::new();
+        }
         let Some(files) = self.trashed.pop() else {
             return Vec::new();
         };
         self.view.trash_error = None;
-        vec![Command::Restore(files)]
+        self.undo_waiting = Some(files);
+        self.undo_arrived()
+    }
+
+    /// Puts back the trashing `u` waits for once none of its files is on its
+    /// way to the trash any more; the ones the trash refused are left out.
+    fn undo_arrived(&mut self) -> Vec<Command> {
+        let arrived = self
+            .undo_waiting
+            .as_ref()
+            .is_some_and(|files| files.iter().all(|f| !self.trashing.contains(f)));
+        match self.undo_waiting.take_if(|_| arrived) {
+            Some(files) if !files.is_empty() => vec![Command::Restore(files)],
+            _ => Vec::new(),
+        }
     }
 
     /// Files are back from the trash: the first shows in its folder, which is
