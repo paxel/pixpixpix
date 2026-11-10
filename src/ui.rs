@@ -472,12 +472,23 @@ fn paint_play(painter: &egui::Painter, center: egui::Pos2, radius: f32) {
 }
 
 /// A file on its way to the trash: the picture `rect` dimmed, a bin in its
-/// top right corner.
-fn paint_bin(painter: &egui::Painter, rect: egui::Rect) {
+/// top right corner; coming `back`, the bin with an arrow up beside it.
+fn paint_bin(painter: &egui::Painter, rect: egui::Rect, back: bool) {
     painter.rect_filled(rect, 0.0, BIN_DIM);
     let center = egui::pos2(rect.max.x - 16.0, rect.min.y + 16.0);
     painter.circle_filled(center, 13.0, ANIMATED_BADGE);
-    let (x, y) = (center.x, center.y);
+    let shift = if back { 3.0 } else { 0.0 };
+    let (x, y) = (center.x - shift, center.y);
+    if back {
+        let (ax, stroke) = (center.x + 7.0, egui::Stroke::new(2.0, TEXT));
+        painter.line_segment([egui::pos2(ax, y + 7.0), egui::pos2(ax, y - 5.0)], stroke);
+        let head = vec![
+            egui::pos2(ax, y - 8.0),
+            egui::pos2(ax + 3.5, y - 3.5),
+            egui::pos2(ax - 3.5, y - 3.5),
+        ];
+        painter.add(egui::Shape::convex_polygon(head, TEXT, egui::Stroke::NONE));
+    }
     let lid = egui::Stroke::new(2.0, HIGHLIGHT);
     painter.line_segment(
         [egui::pos2(x - 7.0, y - 5.0), egui::pos2(x + 7.0, y - 5.0)],

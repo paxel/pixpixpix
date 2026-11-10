@@ -5,7 +5,9 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use pixpixpix::core::{Command, Core, Event, Focus, Key, KeyPress, Overview, Reveal, Screen};
+use pixpixpix::core::{
+    Command, Core, Event, Focus, Key, KeyPress, Overview, Reveal, Screen, TrashMark,
+};
 use pixpixpix::decode::DecodedImage;
 use pixpixpix::rotate::Rotation;
 use pixpixpix::settings::Settings;
@@ -1057,12 +1059,13 @@ fn u_in_the_gallery_puts_the_tile_back_in_its_section_selected() {
     assert_eq!(open.sections[1].tiles, 3..4);
 }
 
-fn binned(core: &Core) -> Vec<String> {
+/// The names of the tiles marked `mark`.
+fn marked(core: &Core, mark: TrashMark) -> Vec<String> {
     overview(core)
         .map(|o| {
             o.tiles
                 .iter()
-                .filter(|t| t.trashing)
+                .filter(|t| t.trash == Some(mark))
                 .map(|t| pixpixpix::folder::file_name(&t.path))
                 .collect()
         })
@@ -1074,7 +1077,7 @@ fn x_puts_a_bin_on_the_tile_and_moves_on_until_the_file_is_in_the_trash() {
     let mut core = gallery_with_sections();
     press(&mut core, Key::X);
     assert_eq!(tile_names(&core), ["a.jpg", "b.jpg", "c.jpg", "1.jpg"]);
-    assert_eq!(binned(&core), ["b.jpg"]);
+    assert_eq!(marked(&core, TrashMark::Going), ["b.jpg"]);
     assert_eq!(overview(&core).unwrap().selected, Some(2));
     core.handle(Event::Trashed {
         path: p("b.jpg"),
@@ -1094,7 +1097,7 @@ fn a_trashing_the_trash_refuses_takes_the_bin_away_and_keeps_the_tile() {
         result: Err("Cannot trash b.jpg: no".to_owned()),
     });
     assert_eq!(tile_names(&core), ["a.jpg", "b.jpg", "c.jpg", "1.jpg"]);
-    assert!(binned(&core).is_empty());
+    assert!(marked(&core, TrashMark::Going).is_empty());
     assert_eq!(
         core.view().trash_error.as_deref(),
         Some("Cannot trash b.jpg: no")
@@ -1107,7 +1110,7 @@ fn x_on_the_last_tile_moves_back_to_the_one_before() {
     press(&mut core, Key::Right);
     press(&mut core, Key::Right);
     press(&mut core, Key::X);
-    assert_eq!(binned(&core), ["1.jpg"]);
+    assert_eq!(marked(&core, TrashMark::Going), ["1.jpg"]);
     assert_eq!(overview(&core).unwrap().selected, Some(2));
 }
 
@@ -1116,27 +1119,81 @@ fn shift_x_puts_a_bin_on_every_tile_of_the_folder_and_moves_past_them() {
     let mut core = gallery_with_sections();
     core.handle(shift(Key::X));
     press(&mut core, Key::Enter);
-    assert_eq!(binned(&core), ["a.jpg", "b.jpg", "c.jpg"]);
+    assert_eq!(marked(&core, TrashMark::Going), ["a.jpg", "b.jpg", "c.jpg"]);
     assert_eq!(overview(&core).unwrap().selected, Some(3));
 }
 
 #[test]
-fn u_while_the_trashing_is_still_on_its_way_puts_the_tile_back_after_it() {
+fn u_while_the_file_is_on_its_way_keeps_the_tile_coming_back_until_it_is_back() {
     // On a slow drive such as pCloud the file reaches the trash only later.
     let mut core = gallery_with_sections();
     press(&mut core, Key::X);
     assert!(press(&mut core, Key::U).is_empty());
+    assert_eq!(marked(&core, TrashMark::ComingBack), ["b.jpg"]);
+    assert_eq!(overview(&core).unwrap().selected, Some(1));
     let commands = core.handle(Event::Trashed {
         path: p("b.jpg"),
         result: Ok(()),
     });
     assert!(commands.contains(&Command::Restore(vec![p("b.jpg")])));
+    // The tile never leaves in between.
+    assert_eq!(tile_names(&core), ["a.jpg", "b.jpg", "c.jpg", "1.jpg"]);
+    assert_eq!(marked(&core, TrashMark::ComingBack), ["b.jpg"]);
     core.handle(Event::Restored {
         paths: vec![p("b.jpg")],
         result: Ok(()),
     });
     assert_eq!(tile_names(&core), ["a.jpg", "b.jpg", "c.jpg", "1.jpg"]);
-    assert_eq!(overview(&core).unwrap().selected, Some(1));
+    assert!(
+        overview(&core)
+            .unwrap()
+            .tiles
+            .iter()
+            .all(|t| t.trash.is_none())
+    );
+    let open = overview(&core).unwrap();
+    assert_eq!(open.selected, Some(1));
+    assert_eq!(open.sections[0].tiles, 0..3);
+    assert_eq!(open.sections[1].tiles, 3..4);
+}
+
+#[test]
+fn a_file_coming_back_the_restore_fails_for_leaves_with_its_tile() {
+    let mut core = gallery_with_sections();
+    press(&mut core, Key::X);
+    press(&mut core, Key::U);
+    core.handle(Event::Trashed {
+        path: p("b.jpg"),
+        result: Ok(()),
+    });
+    core.handle(Event::Restored {
+        paths: vec![p("b.jpg")],
+        result: Err("Cannot restore b.jpg: a file of that name is back there".to_owned()),
+    });
+    assert_eq!(tile_names(&core), ["a.jpg", "c.jpg", "1.jpg"]);
+    assert_eq!(
+        core.view().trash_error.as_deref(),
+        Some("Cannot restore b.jpg: a file of that name is back there")
+    );
+}
+
+#[test]
+fn a_file_coming_back_the_trash_refuses_stays_without_a_mark() {
+    let mut core = gallery_with_sections();
+    press(&mut core, Key::X);
+    press(&mut core, Key::U);
+    core.handle(Event::Trashed {
+        path: p("b.jpg"),
+        result: Err("Cannot trash b.jpg: no".to_owned()),
+    });
+    assert_eq!(tile_names(&core), ["a.jpg", "b.jpg", "c.jpg", "1.jpg"]);
+    assert!(
+        overview(&core)
+            .unwrap()
+            .tiles
+            .iter()
+            .all(|t| t.trash.is_none())
+    );
 }
 
 #[test]

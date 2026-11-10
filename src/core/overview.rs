@@ -60,6 +60,16 @@ pub struct Section {
     pub tiles: Range<usize>,
 }
 
+/// A tile's file between its place and the trash, drawn with a bin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrashMark {
+    /// On its way to the trash; the tile goes once the file is there.
+    Going,
+    /// `u` came while the file was on its way: it goes back once it is in
+    /// the trash, and the tile stays meanwhile.
+    ComingBack,
+}
+
 /// One file of the overview.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tile {
@@ -70,8 +80,8 @@ pub struct Tile {
     pub motion: Option<MotionKind>,
     /// Absent until decoded, and again once off screen.
     pub thumbnail: Option<Result<DecodedImage, String>>,
-    /// On its way to the trash: drawn with a bin until it is there.
-    pub trashing: bool,
+    /// Between its place and the trash, if it is.
+    pub trash: Option<TrashMark>,
 }
 
 /// What the core keeps of the overview besides its view.
@@ -266,7 +276,7 @@ impl Core {
             motion: live.contains_key(&path).then_some(MotionKind::LivePhoto),
             path,
             thumbnail: None,
-            trashing: false,
+            trash: None,
         }));
         overview.sections.push(Section {
             dir: dir.to_path_buf(),
@@ -608,12 +618,12 @@ impl Core {
             .iter_mut()
             .filter(|t| paths.contains(&t.path))
         {
-            tile.trashing = true;
+            tile.trash = Some(TrashMark::Going);
         }
         let Some(selected) = overview.selected else {
             return;
         };
-        let free = |i: &usize| overview.tiles.get(*i).is_some_and(|t| !t.trashing);
+        let free = |i: &usize| overview.tiles.get(*i).is_some_and(|t| t.trash.is_none());
         let next = (selected..overview.tiles.len())
             .find(free)
             .or_else(|| (0..selected).rev().find(free));
@@ -625,13 +635,59 @@ impl Core {
 
     /// The trash refused `path`: its tile loses the bin.
     pub(super) fn overview_trash_refused(&mut self, path: &Path) {
+        self.mark_tile(path, None);
+    }
+
+    /// Marks the tile of `path`, if there is one; whether there was.
+    fn mark_tile(&mut self, path: &Path, mark: Option<TrashMark>) -> bool {
         let Self { view, gallery, .. } = self;
         let Some(overview) = view.overview.as_mut().or(gallery.kept.as_mut()) else {
+            return false;
+        };
+        let tile = overview.tiles.iter_mut().find(|t| t.path == path);
+        tile.map(|tile| tile.trash = mark).is_some()
+    }
+
+    /// `u` came while `files` were on their way to the trash: their tiles
+    /// stay, marked as coming back, and the first is selected.
+    pub(super) fn overview_coming_back(&mut self, files: &[PathBuf]) {
+        let Some(overview) = self.view.overview.as_mut() else {
             return;
         };
-        for tile in overview.tiles.iter_mut().filter(|t| t.path == path) {
-            tile.trashing = false;
+        let mut first = None;
+        for (index, tile) in overview.tiles.iter_mut().enumerate() {
+            if tile.trash == Some(TrashMark::Going) && files.contains(&tile.path) {
+                tile.trash = Some(TrashMark::ComingBack);
+                first = first.or(Some(index));
+            }
         }
+        if let Some(index) = first {
+            overview.selected = Some(index);
+            overview.reveal = Some(Reveal::Tile(index));
+        }
+    }
+
+    /// Whether the tile of `path` waits to come back from the trash.
+    pub(super) fn coming_back(&self, path: &Path) -> bool {
+        let overview = self.view.overview.as_ref().or(self.gallery.kept.as_ref());
+        overview.is_some_and(|o| {
+            o.tiles
+                .iter()
+                .any(|t| t.path == path && t.trash == Some(TrashMark::ComingBack))
+        })
+    }
+
+    /// A restore of tiles coming back failed: the files stay in the trash,
+    /// their tiles go.
+    pub(super) fn overview_not_back(&mut self, paths: &[PathBuf]) -> Vec<Command> {
+        let mut commands = Vec::new();
+        for path in paths {
+            if self.coming_back(path) {
+                self.mark_tile(path, None);
+                commands.extend(self.overview_trashed(path));
+            }
+        }
+        commands
     }
 
     /// `t`: opens the bin view, the gallery giving way to it, or closes it.
@@ -707,7 +763,7 @@ impl Core {
                 motion: None,
                 path: item.file.clone(),
                 thumbnail: None,
-                trashing: false,
+                trash: None,
             });
             self.gallery.bin.insert(item.file.clone(), item);
         }
@@ -918,7 +974,12 @@ impl Core {
         let Some(overview) = self.view.overview.as_mut() else {
             return;
         };
-        if !dir.starts_with(&overview.root) || overview.tiles.iter().any(|t| t.path == first) {
+        if !dir.starts_with(&overview.root) {
+            return;
+        }
+        // A tile that stayed while its file came back only loses its bin.
+        if let Some(tile) = overview.tiles.iter_mut().find(|t| t.path == first) {
+            tile.trash = None;
             return;
         }
         let name = folder::file_name(&first);
@@ -977,7 +1038,7 @@ impl Core {
                 motion: mov.as_ref().map(|_| MotionKind::LivePhoto),
                 path: first.clone(),
                 thumbnail: None,
-                trashing: false,
+                trash: None,
             },
         );
         overview.selected = overview.selected.map(later);
@@ -993,6 +1054,9 @@ impl Core {
     /// A file is in the trash: its tile goes, the selection moves on to the
     /// tile after it, or the one before after the last.
     pub(super) fn overview_trashed(&mut self, path: &Path) -> Vec<Command> {
+        if self.coming_back(path) {
+            return Vec::new();
+        }
         self.gallery.live.remove(path);
         let open = self.view.overview.is_some();
         let Self { view, gallery, .. } = self;

@@ -7,7 +7,7 @@ use super::{
     BAND_HIGHLIGHT, BROKEN_TILE, ERROR_TEXT, TEXT, Textures, fit, paint_bin, paint_motion_badge,
     paint_play, show_status,
 };
-use crate::core::{Event, MotionKind, Overview, Reveal, Section, Tile};
+use crate::core::{Event, MotionKind, Overview, Reveal, Section, Tile, TrashMark};
 use crate::folder;
 
 /// The line of the file name below a thumbnail.
@@ -294,8 +294,8 @@ fn show_tile(
     } else {
         label
     };
-    if tile.trashing {
-        paint_bin(ui.painter(), marked);
+    if let Some(mark) = tile.trash {
+        paint_bin(ui.painter(), marked, mark == TrashMark::ComingBack);
     }
     if selected {
         ui.painter().rect_stroke(
@@ -310,10 +310,10 @@ fn show_tile(
         Some(kind) => format!("{name} ({kind})"),
         None => name.clone(),
     };
-    let text = if tile.trashing {
-        format!("{text}, on its way to the trash")
-    } else {
-        text
+    let text = match tile.trash {
+        Some(TrashMark::Going) => format!("{text}, on its way to the trash"),
+        Some(TrashMark::ComingBack) => format!("{text}, coming back from the trash"),
+        None => text,
     };
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, text.clone())

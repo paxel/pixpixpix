@@ -12,7 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- `u` pressed while a file is still on its way to the trash, as on a slow drive such as pCloud, puts it back once it got there; before, the file came back but its tile in the overview stayed gone.
+- `u` pressed while a file is still on its way to the trash, as on a slow drive such as pCloud, keeps its tile in the overview, marked as coming back, and puts the file back once it got there; before, the file came back but its tile stayed gone.
 
 ---
 

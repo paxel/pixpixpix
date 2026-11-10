@@ -1142,6 +1142,22 @@ fn a_tile_on_its_way_to_the_trash_is_drawn_with_a_bin_until_it_is_there() {
 }
 
 #[test]
+fn u_while_the_file_is_on_its_way_draws_the_tile_coming_back() {
+    let (mut h, scan) = overview_open();
+    overview_section(
+        &mut h,
+        scan.unwrap(),
+        "/p",
+        &["/p/a.jpg".into(), "/p/b.jpg".into()],
+    );
+    h.key_press(egui::Key::X);
+    h.run();
+    h.key_press(egui::Key::U);
+    h.run();
+    h.get_by_role_and_label(Role::Button, "a.jpg, coming back from the trash");
+}
+
+#[test]
 fn only_the_tiles_on_screen_are_laid_out_and_decoded() {
     let (mut h, scan) = overview_open();
     let scan = scan.unwrap();

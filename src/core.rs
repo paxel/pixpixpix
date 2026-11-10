@@ -29,7 +29,7 @@ use info::Info;
 pub use info::{DATE_FORMAT_ERROR, MetadataView};
 
 use overview::Gallery;
-pub use overview::{Overview, Reveal, Section, Tile};
+pub use overview::{Overview, Reveal, Section, Tile, TrashMark};
 
 #[derive(Debug, Clone, Copy)]
 enum Step {
@@ -3378,6 +3378,12 @@ impl Core {
             return Vec::new();
         };
         self.view.trash_error = None;
+        let on_the_way: Vec<PathBuf> = files
+            .iter()
+            .filter(|f| self.trashing.contains(*f))
+            .cloned()
+            .collect();
+        self.overview_coming_back(&on_the_way);
         self.undo_waiting = Some(files);
         self.undo_arrived()
     }
@@ -3400,7 +3406,7 @@ impl Core {
     fn restored(&mut self, paths: Vec<PathBuf>, result: Result<(), String>) -> Vec<Command> {
         if let Err(message) = result {
             self.view.trash_error = Some(message);
-            return Vec::new();
+            return self.overview_not_back(&paths);
         }
         let Some(first) = paths.first().cloned() else {
             return Vec::new();
