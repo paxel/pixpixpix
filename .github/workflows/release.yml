@@ -1,6 +1,7 @@
 # Release on tag: `git tag v0.1.0 && git push --tags` produces everything.
 #
-#   gate     - tag matches the crate version, then the full Linux gate
+#   gate     - tag matches the crate version, then the full Linux gate with
+#              the dependency check and the coverage floor
 #   build    - per target a flat tar.gz with pixpixpix, pix3, LICENSE, README.md
 #              and CHANGELOG.md: linux-x86_64, linux-aarch64 (built natively on
 #              the arm runner) and macos-arm64; the Linux ones also carry the
@@ -69,6 +70,17 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
+      # The gates of security.yml and quality.yml once more: an advisory can
+      # appear between the merge and the tag.
+      - name: Advisories, licences and sources
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check advisories licenses sources
+      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
+        with:
+          tool: cargo-tarpaulin
+      - name: Coverage ratchet
+        run: scripts/coverage.sh --check
 
   build:
     name: Artifacts (${{ matrix.platform }})
