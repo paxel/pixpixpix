@@ -1,0 +1,43 @@
+# Fuzz targets for the parsers that compute offsets and lengths in untrusted files.
+# Run with cargo-fuzz on nightly: `cargo +nightly fuzz run <target>`;
+# .github/workflows/fuzz.yml runs every target for a minute.
+[package]
+name = "pixpixpix-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+tempfile = "3"
+
+[dependencies.pixpixpix]
+path = ".."
+
+# Its own workspace, so the fuzz crate stays out of the main build.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "multi_picture"
+path = "fuzz_targets/multi_picture.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "reset_orientation"
+path = "fuzz_targets/reset_orientation.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "motion_find"
+path = "fuzz_targets/motion_find.rs"
+test = false
+doc = false
+bench = false
