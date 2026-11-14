@@ -18,6 +18,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - `u` pressed while a file is still on its way to the trash, as on a slow drive such as pCloud, keeps its tile in the overview, marked as coming back, and puts the file back once it got there; before, the file came back but its tile stayed gone.
 
+### Security
+
+- rustix is updated to 1.1.6, whose extended-attribute functions no longer hand out uninitialized memory (RUSTSEC-2026-0486, [pix-98](https://github.com/paxel/pixpixpix/issues/98)).
+
 ---
 
 Historical changes have been moved to [OLDER_CHANGES.md](OLDER_CHANGES.md).
