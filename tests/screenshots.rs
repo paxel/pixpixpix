@@ -155,23 +155,27 @@ impl Shot {
             let output = self.ctx.run_ui(input, |ui| {
                 events = ui::show(ui, self.core.view(), &mut self.textures);
             });
-            for (id, delta) in output.textures_delta.set {
-                let ImageData::Color(image) = delta.image;
-                match (delta.pos, self.gpu.get_mut(&id)) {
-                    (Some([x0, y0]), Some(texture)) => {
-                        for y in 0..image.size[1] {
-                            for x in 0..image.size[0] {
-                                let to = (y0 + y) * texture.size[0] + x0 + x;
-                                texture.pixels[to] = image.pixels[y * image.size[0] + x];
+            let mut textures = output.textures_delta;
+            // Several updates of one texture arrive in the order they apply.
+            for (id, deltas) in textures.set.drain() {
+                for delta in deltas {
+                    let ImageData::Color(image) = delta.image;
+                    match (delta.pos, self.gpu.get_mut(&id)) {
+                        (Some([x0, y0]), Some(texture)) => {
+                            for y in 0..image.size[1] {
+                                for x in 0..image.size[0] {
+                                    let to = (y0 + y) * texture.size[0] + x0 + x;
+                                    texture.pixels[to] = image.pixels[y * image.size[0] + x];
+                                }
                             }
                         }
-                    }
-                    _ => {
-                        self.gpu.insert(id, (*image).clone());
+                        _ => {
+                            self.gpu.insert(id, (*image).clone());
+                        }
                     }
                 }
             }
-            for id in output.textures_delta.free {
+            for id in textures.free.drain() {
                 self.gpu.remove(&id);
             }
             self.primitives = self.ctx.tessellate(output.shapes, output.pixels_per_point);

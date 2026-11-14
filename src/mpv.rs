@@ -202,7 +202,7 @@ pub fn load<P: AsRef<OsStr>>(names: &[P]) -> Result<Mpv, String> {
     for name in names {
         // SAFETY: libmpv runs no initialisation code with preconditions when
         // loaded.
-        match unsafe { Library::new(name) } {
+        match unsafe { Library::new(name.as_ref()) } {
             Ok(library) => return functions(library),
             Err(e) => reason = e.to_string(),
         }

@@ -240,6 +240,7 @@ fn mouse_wheel_over_the_image_zooms_in() {
     h.run();
     h.hover_at(egui::pos2(400.0, 200.0));
     h.event(egui::Event::MouseWheel {
+        source: egui::MouseWheelSource::Unknown,
         unit: egui::MouseWheelUnit::Point,
         delta: egui::vec2(0.0, 50.0),
         phase: egui::TouchPhase::Move,
@@ -1219,6 +1220,7 @@ fn arrows_move_a_marked_selection_scrolled_into_view_only_once() {
     // Scrolled away by the wheel, the view stays where the wheel left it.
     h.hover_at(egui::pos2(400.0, 300.0));
     h.event(egui::Event::MouseWheel {
+        source: egui::MouseWheelSource::Unknown,
         unit: egui::MouseWheelUnit::Point,
         delta: egui::vec2(0.0, 100_000.0),
         phase: egui::TouchPhase::Move,
@@ -1254,6 +1256,7 @@ fn ctrl_wheel_over_the_overview_resizes_the_thumbnails() {
     overview_section(&mut h, scan.unwrap(), "/p", &["/p/a.jpg".into()]);
     h.hover_at(egui::pos2(400.0, 300.0));
     h.event(egui::Event::MouseWheel {
+        source: egui::MouseWheelSource::Wheel,
         unit: egui::MouseWheelUnit::Line,
         delta: egui::vec2(0.0, 1.0),
         phase: egui::TouchPhase::Move,
@@ -1270,6 +1273,7 @@ fn a_touchpad_steps_the_tiles_once_per_50_points_of_ctrl_scroll() {
     h.hover_at(egui::pos2(400.0, 300.0));
     let mut scroll = |y: f32| {
         h.event(egui::Event::MouseWheel {
+            source: egui::MouseWheelSource::Trackpad,
             unit: egui::MouseWheelUnit::Point,
             delta: egui::vec2(0.0, y),
             phase: egui::TouchPhase::Move,

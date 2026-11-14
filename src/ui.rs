@@ -369,7 +369,7 @@ fn show_band(
         left += size.x + gap;
         let response = ui.interact(
             rect,
-            ui.id().with(("thumb", &thumb.path)),
+            ui.scope_id().with(("thumb", &thumb.path)),
             egui::Sense::click(),
         );
         let name = folder::file_name(&thumb.path);
@@ -429,7 +429,7 @@ fn show_band(
             );
         }
         response.widget_info(|| {
-            egui::WidgetInfo::selected(egui::WidgetType::Button, true, thumb.current, label.clone())
+            egui::WidgetInfo::selected(egui::Role::Button, true, thumb.current, label.clone())
         });
         ui.ctx()
             .accesskit_node_builder(response.id, |node| node.set_selected(highlighted));
@@ -598,9 +598,7 @@ fn show_dir_column(ui: &mut egui::Ui, column: &DirColumn, focused: bool, events:
                     font.clone(),
                     DIM_TEXT,
                 );
-                response.widget_info(|| {
-                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "..")
-                });
+                response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, ".."));
                 if response.clicked() {
                     events.push(Event::FolderUp);
                 }
@@ -634,12 +632,7 @@ fn show_dir_column(ui: &mut egui::Ui, column: &DirColumn, focused: bool, events:
                     fg,
                 );
                 response.widget_info(|| {
-                    egui::WidgetInfo::selected(
-                        egui::WidgetType::SelectableLabel,
-                        true,
-                        highlighted,
-                        name.clone(),
-                    )
+                    egui::WidgetInfo::selected(egui::Role::Button, true, highlighted, name.clone())
                 });
                 if response.double_clicked() {
                     events.push(Event::FolderDoubleClicked(dir.clone()));
@@ -739,7 +732,7 @@ fn show_settings(
     defaults: Option<&Defaults>,
     events: &mut Vec<Event>,
 ) {
-    egui::Modal::new(egui::Id::new("settings"))
+    egui::Modal::new(egui::Id::unique("settings"))
         .frame(
             egui::Frame::NONE
                 .fill(BACKGROUND)
@@ -921,15 +914,14 @@ fn show_bin_preview(ui: &mut egui::Ui, preview: &BinPreview, textures: &mut Text
             let rect = egui::Rect::from_center_size(area.center(), size);
             let response = ui.allocate_rect(rect, egui::Sense::hover());
             egui::Image::new(&texture).paint_at(ui, rect);
-            response
-                .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Image, true, &name));
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, &name));
         }
     }
 }
 
 /// The question before `Shift`+`x` trashes every file of a folder.
 fn show_trash_section(ctx: &egui::Context, asked: &TrashSection, events: &mut Vec<Event>) {
-    egui::Modal::new(egui::Id::new("trash section"))
+    egui::Modal::new(egui::Id::unique("trash section"))
         .frame(
             egui::Frame::NONE
                 .fill(BACKGROUND)
@@ -976,7 +968,7 @@ const BAND_SPOTIFY: &str = "https://open.spotify.com/artist/1F7QDWyZTLGzkyGLgFjE
 /// The About page: the icon, name, version, license and links, and the
 /// optional libraries, with buttons to copy it all and to go back.
 fn show_about(ctx: &egui::Context, about: &About, events: &mut Vec<Event>) {
-    egui::Modal::new(egui::Id::new("about"))
+    egui::Modal::new(egui::Id::unique("about"))
         .frame(
             egui::Frame::NONE
                 .fill(BACKGROUND)
@@ -1068,7 +1060,7 @@ pub fn about_text(about: &About) -> String {
 
 /// The app's icon as a texture, made once.
 fn icon_texture(ctx: &egui::Context) -> Option<egui::TextureHandle> {
-    let id = egui::Id::new("app icon");
+    let id = egui::Id::unique("app icon");
     if let Some(icon) = ctx.data(|d| d.get_temp::<egui::TextureHandle>(id)) {
         return Some(icon);
     }
@@ -1155,7 +1147,11 @@ fn show_diode(ui: &mut egui::Ui, focus: Focus, view: &View) {
     let rect = egui::Rect::from_center_size(center, egui::Vec2::splat(10.0));
     let lit = view.focus == focus;
     let name = area_name(focus, view);
-    let response = ui.interact(rect, ui.id().with(("diode", name)), egui::Sense::hover());
+    let response = ui.interact(
+        rect,
+        ui.scope_id().with(("diode", name)),
+        egui::Sense::hover(),
+    );
     let fill = if lit {
         CURRENT_MARK
     } else {
@@ -1163,7 +1159,7 @@ fn show_diode(ui: &mut egui::Ui, focus: Focus, view: &View) {
     };
     ui.painter().circle_filled(center, 4.0, fill);
     response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::Label, true, lit, format!("{name} focus"))
+        egui::WidgetInfo::selected(egui::Role::Label, true, lit, format!("{name} focus"))
     });
     ui.ctx()
         .accesskit_node_builder(response.id, |node| node.set_selected(lit));
@@ -1226,7 +1222,7 @@ fn show_hint(ui: &mut egui::Ui, index: usize, hint: &KeyHint, events: &mut Vec<E
         _ => None,
     };
     let (rect, key) = ui.allocate_exact_size(plain.size(), egui::Sense::CLICK);
-    key.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, hint.keys));
+    key.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, hint.keys));
     let sense = if one.is_some() {
         egui::Sense::click()
     } else {
@@ -1257,7 +1253,7 @@ fn show_hint(ui: &mut egui::Ui, index: usize, hint: &KeyHint, events: &mut Vec<E
         (false, true) => one.map(|_| 0),
         (false, false) => None,
     };
-    let flash_id = ui.id().with(("key flash", index));
+    let flash_id = ui.scope_id().with(("key flash", index));
     let now = ui.input(|i| i.time);
     if let Some(at) = pressed {
         ui.data_mut(|d| d.insert_temp(flash_id, (at, now)));
@@ -1414,7 +1410,7 @@ fn show_image(
     } else {
         egui::Sense::drag()
     };
-    let response = ui.interact(area, ui.id().with("image"), sense);
+    let response = ui.interact(area, ui.scope_id().with("image"), sense);
     let from_area = |pos: egui::Pos2| Points {
         x: pos.x - area.min.x,
         y: pos.y - area.min.y,
@@ -1525,7 +1521,7 @@ fn show_image(
         egui::Sense::hover()
     };
     let response = ui.allocate_rect(visible, sense);
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Image, true, &name));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, &name));
     if response.clicked() {
         events.push(Event::Clicked);
     }
@@ -1563,7 +1559,7 @@ fn show_edge_arrows(ui: &mut egui::Ui, events: &mut Vec<Event>) {
         };
         let rect =
             egui::Rect::from_center_size(egui::pos2(x, area.center().y), egui::Vec2::splat(44.0));
-        let response = ui.interact(rect, ui.id().with(label), egui::Sense::click());
+        let response = ui.interact(rect, ui.scope_id().with(label), egui::Sense::click());
         let (fill, color) = if response.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
             (ANIMATED_BADGE, TEXT)
@@ -1579,7 +1575,7 @@ fn show_edge_arrows(ui: &mut egui::Ui, events: &mut Vec<Event>) {
         painter.line_segment([at(back, -10.0), at(tip, 0.0)], stroke);
         painter.line_segment([at(back, 10.0), at(tip, 0.0)], stroke);
         response.widget_info(|| {
-            egui::WidgetInfo::selected(egui::WidgetType::Button, true, response.hovered(), label)
+            egui::WidgetInfo::selected(egui::Role::Button, true, response.hovered(), label)
         });
         if response.clicked() {
             events.push(Event::Navigate { forward });
@@ -1621,8 +1617,8 @@ fn show_video(
         let radius = (area.width().min(area.height()) / 8.0).clamp(24.0, 64.0);
         let rect = egui::Rect::from_center_size(area.center(), egui::Vec2::splat(radius * 2.0));
         paint_play(ui.painter(), area.center(), radius);
-        let response = ui.interact(rect, ui.id().with("play"), egui::Sense::click());
-        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Play"));
+        let response = ui.interact(rect, ui.scope_id().with("play"), egui::Sense::click());
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Play"));
         if response.clicked() {
             events.push(Event::Clicked);
         }

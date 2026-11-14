@@ -115,7 +115,7 @@ pub fn load(names: &[&str]) -> Result<Heif, String> {
     for name in names {
         // SAFETY: libheif runs no initialisation code with preconditions when
         // loaded.
-        match unsafe { Library::new(name) } {
+        match unsafe { Library::new(*name) } {
             Ok(library) => return functions(library),
             Err(e) => reason = e.to_string(),
         }
