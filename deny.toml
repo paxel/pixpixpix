@@ -10,6 +10,9 @@ all-features = true
 [advisories]
 unmaintained = "all"
 yanked = "deny"
+# Unsound crates anywhere in the tree, not only the ones this crate depends on
+# directly (cargo deny's default).
+unsound = "all"
 ignore = [
     # zbus_names, zvariant and zvariant_derive were merged into zbus 6. They come
     # in through eframe's accessibility support (accesskit_unix on zbus 5), which

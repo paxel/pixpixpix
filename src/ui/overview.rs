@@ -76,7 +76,7 @@ pub(super) fn show_overview(
 ) {
     // One step per notch of a wheel, or per `TOUCHPAD_STEP` points a touchpad
     // scrolls; egui's zoom is smoothed over frames.
-    let id = egui::Id::new("thumbnail touchpad");
+    let id = egui::Id::unique("thumbnail touchpad");
     let mut scrolled: f32 = ui.data(|d| d.get_temp(id)).unwrap_or_default();
     let mut turns = Vec::new();
     ui.input(|i| {
@@ -202,7 +202,7 @@ pub(super) fn show_overview(
 /// as a sign of life: the trash is read in one call that tells no progress.
 fn reading_the_trash(ui: &egui::Ui) -> String {
     // When the reading was first shown, and when last; a gap means a new one.
-    let id = egui::Id::new("reading the trash since");
+    let id = egui::Id::unique("reading the trash since");
     let now = ui.input(|i| i.time);
     let (since, _) = ui
         .data(|d| d.get_temp::<(f64, f64)>(id))
@@ -261,9 +261,12 @@ fn show_tile(
             let pixels = egui::vec2(image.width as f32, image.height as f32);
             let rect = Rect::from_center_size(area.center(), fit(pixels, area.size()));
             egui::Image::new(&texture).paint_at(ui, rect);
-            let response = ui.interact(rect, ui.id().with(("tile", index)), egui::Sense::hover());
-            response
-                .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Image, true, &name));
+            let response = ui.interact(
+                rect,
+                ui.scope_id().with(("tile", index)),
+                egui::Sense::hover(),
+            );
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, &name));
             marked = rect;
             None
         }
@@ -305,7 +308,11 @@ fn show_tile(
             egui::StrokeKind::Outside,
         );
     }
-    let response = ui.interact(area, ui.id().with(("open", index)), egui::Sense::click());
+    let response = ui.interact(
+        area,
+        ui.scope_id().with(("open", index)),
+        egui::Sense::click(),
+    );
     let text = match label {
         Some(kind) => format!("{name} ({kind})"),
         None => name.clone(),
@@ -316,7 +323,7 @@ fn show_tile(
         None => text,
     };
     response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, text.clone())
+        egui::WidgetInfo::selected(egui::Role::Button, true, selected, text.clone())
     });
     ui.ctx()
         .accesskit_node_builder(response.id, |node| node.set_selected(selected));

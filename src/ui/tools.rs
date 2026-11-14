@@ -177,9 +177,8 @@ fn swatch(ui: &mut egui::Ui, color: Color, chosen: bool) -> egui::Response {
         Stroke::new(1.0, DIM_TEXT)
     };
     painter.rect_stroke(rect, 3.0, frame, egui::StrokeKind::Inside);
-    response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::Button, true, chosen, color.name())
-    });
+    response
+        .widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, chosen, color.name()));
     response
 }
 
@@ -378,7 +377,7 @@ pub fn show_text_field(
     };
     let (width, height) = (placed.image.width, placed.image.height);
     let font = egui::FontId::proportional(size.text_height(width, height) * placed.scale());
-    egui::Area::new(egui::Id::new("text-tool"))
+    egui::Area::new(egui::Id::unique("text-tool"))
         .fixed_pos(placed.to_screen(at.x, at.y))
         .order(egui::Order::Foreground)
         .show(ctx, |ui| {
@@ -441,7 +440,7 @@ pub fn show_save_dialog(
         .fill(Color32::WHITE)
         .inner_margin(28.0)
         .corner_radius(14.0);
-    let modal = egui::Modal::new(egui::Id::new("save-edits"))
+    let modal = egui::Modal::new(egui::Id::unique("save-edits"))
         .frame(frame)
         .backdrop_color(Color32::from_black_alpha(160))
         .show(ctx, |ui| {

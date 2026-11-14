@@ -24,3 +24,10 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           command: check advisories licenses sources
+      # The fuzz crate has a lockfile of its own. Its licences are not checked:
+      # libFuzzer (NCSA) only builds the fuzz targets and never ships.
+      - name: Advisories and sources of the fuzz crate
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          manifest-path: fuzz/Cargo.toml
+          command: check advisories sources
