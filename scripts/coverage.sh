@@ -43,9 +43,13 @@ write_badge() {
 # binaries the tests spawn, via the inherited profile environment. The LCOV file is for
 # the SonarQube job in quality.yml.
 #
+# The helper processes the tests start end once their stdin closes, and write
+# their profile on the way out; without the delay tarpaulin merges a profile
+# still being written and fails on it ("parser failure: Nom(Eof)").
+#
 # Tarpaulin's last line reads like "74.32% coverage, 1234/1660 lines covered".
 coverage=$(cd "$ROOT" && cargo tarpaulin --engine llvm --locked --skip-clean \
-  --out Stdout --out Lcov 2>&1 | tee /dev/stderr | grep -oE '^[0-9]+\.[0-9]+% coverage' | cut -d% -f1)
+  --post-test-delay 2 --out Stdout --out Lcov 2>&1 | tee /dev/stderr | grep -oE '^[0-9]+\.[0-9]+% coverage' | cut -d% -f1)
 
 if [ -z "$coverage" ]; then
   echo "coverage: tarpaulin produced no percentage" >&2
