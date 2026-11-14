@@ -52,19 +52,25 @@ pub fn command(job: &str) -> io::Result<Command> {
     Ok(command)
 }
 
-/// This executable, or for a test binary, which Cargo puts into `deps`, the
-/// app binary one folder up.
+/// This executable, or for a test binary the app binary of the same build:
+/// Cargo puts test binaries into `deps`, or since Rust 1.100 into
+/// `build/<package>/<hash>/out`, below the folder that holds the app.
 fn app_executable() -> io::Result<PathBuf> {
     let exe = std::env::current_exe()?;
     let app = |name: &std::ffi::OsStr| name == "pixpixpix" || name == "pix3";
     if exe.file_stem().is_some_and(app) {
         return Ok(exe);
     }
-    let beside = exe.parent().and_then(Path::parent).map(|dir| {
-        dir.join("pixpixpix")
-            .with_extension(std::env::consts::EXE_EXTENSION)
-    });
-    Ok(beside.filter(|path| path.exists()).unwrap_or(exe))
+    let beside = exe
+        .ancestors()
+        .skip(2)
+        .take(4)
+        .map(|dir| {
+            dir.join("pixpixpix")
+                .with_extension(std::env::consts::EXE_EXTENSION)
+        })
+        .find(|path| path.is_file());
+    Ok(beside.unwrap_or(exe))
 }
 
 /// Starts `command` with its stdin and stdout piped to the app; what it
