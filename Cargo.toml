@@ -30,6 +30,10 @@ unimplemented = "deny"
 dbg_macro = "deny"
 # No-`#[allow]` policy: fix the lint instead of silencing it.
 allow_attributes = "deny"
+# Every unsafe block states why it is sound, every unsafe fn what its caller
+# must uphold.
+undocumented_unsafe_blocks = "deny"
+missing_safety_doc = "deny"
 
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }

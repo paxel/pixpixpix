@@ -2,7 +2,14 @@
 
 <p>
   <a href="https://github.com/paxel/pixpixpix/actions/workflows/ci.yml"><img src="https://github.com/paxel/pixpixpix/actions/workflows/ci.yml/badge.svg?branch=summer" alt="CI"/></a>
+  <a href="https://github.com/paxel/pixpixpix/actions/workflows/quality.yml"><img src="https://github.com/paxel/pixpixpix/actions/workflows/quality.yml/badge.svg?branch=summer" alt="Quality"/></a>
   <a href="https://github.com/paxel/pixpixpix/actions/workflows/security.yml"><img src="https://github.com/paxel/pixpixpix/actions/workflows/security.yml/badge.svg?branch=summer" alt="Security"/></a>
+  <a href="https://sonarcloud.io/summary/new_code?id=paxel_pixpixpix"><img src="https://sonarcloud.io/api/project_badges/measure?project=paxel_pixpixpix&amp;metric=alert_status" alt="Quality Gate Status"/></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/paxel/pixpixpix"><img src="https://api.scorecard.dev/projects/github.com/paxel/pixpixpix/badge" alt="OpenSSF Scorecard"/></a>
+  <a href="https://github.com/paxel/pixpixpix/blob/summer/scripts/coverage.sh"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fpaxel%2Fpixpixpix%2Fsummer%2F.github%2Fbadges%2Fcoverage.json" alt="Coverage"/></a>
+  <a href="https://github.com/paxel/pixpixpix/actions/workflows/fuzz.yml"><img src="https://github.com/paxel/pixpixpix/actions/workflows/fuzz.yml/badge.svg?branch=summer" alt="Fuzz"/></a>
+  <a href="https://github.com/paxel/pixpixpix/blob/summer/Cargo.toml"><img src="https://img.shields.io/badge/unsafe-FFI%20only-yellowgreen" alt="unsafe: FFI only"/></a>
+  <a href="https://github.com/paxel/pixpixpix/blob/summer/src/lib.rs"><img src="https://img.shields.io/badge/panic--free-linted-success" alt="panic-free"/></a>
   <a href="https://github.com/paxel/pixpixpix/releases/latest"><img src="https://img.shields.io/github/v/release/paxel/pixpixpix" alt="Release"/></a>
   <a href="https://paxel.github.io/pixpixpix/"><img src="https://img.shields.io/badge/docs-paxel.github.io-informational" alt="Documentation"/></a>
   <a href="https://paxel.github.io/pixpixpix/install.html"><img src="https://img.shields.io/badge/platforms-Linux%20%7C%20macOS-informational" alt="Platforms"/></a>

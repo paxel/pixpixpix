@@ -1,0 +1,5 @@
+# The exact Rust release every build uses, locally and in CI. The workflows pin
+# dtolnay/rust-toolchain to the same version; a bump changes both in a commit of its own.
+[toolchain]
+channel = "1.100.0"
+components = ["clippy", "rustfmt"]

@@ -1,4 +1,4 @@
-# Gate for every push and pull request: formatting, clippy with zero warnings
+# Gate for every pull request and every push to summer: formatting, clippy with zero warnings
 # and the full test suite on Linux x86_64, Linux aarch64 and macOS arm64.
 #
 # The native libraries pixpixpix loads at runtime (libturbojpeg, libheif with
@@ -8,12 +8,24 @@
 name: CI
 
 on:
+  # Pushes only to summer, which takes nothing but pull request merges. Every
+  # other branch is tested by its pull request run, which tests the merge of the
+  # branch into its base: with up-to-date branches required, that is the tree
+  # the merge puts on summer.
   push:
+    branches: [summer]
   pull_request:
 
+# A newer push or pull request update cancels the older run of the same branch.
+# The group names the bare branch: head_ref is bare on pull request events,
+# ref_name (not ref, which is refs/heads/...) on pushes.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
+
+# The token only reads the code: no job here writes to the repository.
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -33,12 +45,12 @@ jobs:
             runner: macos-latest
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, 2026-10-08
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Keep in sync with rust-toolchain.toml; toolchain bumps are deliberate, separate commits.
+      - uses: dtolnay/rust-toolchain@9522411a9bce8484da960823fc2f46e52f981f71 # 1.100.0 branch
         with:
-          toolchain: stable
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Native libraries (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -54,6 +66,6 @@ jobs:
       - name: Format
         run: cargo fmt --check
       - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --locked --all-targets -- -D warnings
       - name: Tests
-        run: cargo test
+        run: cargo test --locked
