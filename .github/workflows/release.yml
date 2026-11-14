@@ -10,7 +10,9 @@
 #   flatpak  - per architecture a Flatpak bundle, pixpixpix-<ver>-x86_64.flatpak
 #              and -aarch64.flatpak, from the Linux tarball's binary and libmpv
 #              built in flatpak-builder (packaging/flatpak), natively on each runner
-#   release  - GitHub Release, notes = the CHANGELOG section for the tag
+#   release  - GitHub Release, notes = the CHANGELOG section for the tag, every
+#              file with signed SLSA build provenance (actions/attest), whose
+#              bundle is a release asset too
 #   tap      - renders the Linux formula and the macOS cask with the artifacts'
 #              checksums and pushes them to paxel/homebrew-tap as
 #              Formula/pixpixpix.rb and Casks/pixpixpix.rb (CHANNEL_PAT)
@@ -151,14 +153,34 @@ jobs:
     needs: [build, flatpak]
     if: github.ref_type == 'tag' || github.event.inputs.publish == 'true'
     runs-on: ubuntu-latest
+    # contents: the release itself. id-token and attestations: the signed
+    # build provenance (Sigstore certificate from the workflow's OIDC token).
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: dist
           merge-multiple: true
+      # SLSA build provenance for every release file, signed with Sigstore and
+      # stored with GitHub's attestations
+      # (`gh attestation verify <file> --repo paxel/pixpixpix`). The bundle is
+      # also a release asset, for verification without GitHub's API.
+      - name: Attest build provenance
+        id: attest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.flatpak
+      - name: Add the provenance bundle to the release assets
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: cp "$BUNDLE" "dist/pixpixpix-${RELEASE_TAG}.intoto.jsonl"
       - name: Release notes from the CHANGELOG section
         run: |
           ver=${RELEASE_TAG#v}

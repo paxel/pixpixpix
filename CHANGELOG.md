@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.4.0]
 
+### Added
+
+- Every release file carries signed build provenance, which `gh attestation verify <file> --repo paxel/pixpixpix` checks ([pix-105](https://github.com/paxel/pixpixpix/issues/105)).
+
 ### Changed
 
 - `x` in the [overview](https://paxel.github.io/pixpixpix/trash-and-undo.html#trashing) dims the tile and shows a bin on it at once and moves the selection on; the tile goes once the file is in the trash.
