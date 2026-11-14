@@ -1,7 +1,7 @@
 # Checks the dependencies with cargo deny (deny.toml): a known vulnerability
 # (RustSec) or a licence that is not allowed fails it. Runs on every push and
 # pull request, and weekly, because new advisories appear without any change
-# here. Unmaintained or yanked crates are reported but never fail it.
+# here. Unmaintained, unsound or yanked crates fail it too.
 name: Security
 
 on:

@@ -1,13 +1,23 @@
-# cargo deny, run by .github/workflows/security.yml: known vulnerabilities in
-# dependencies (RustSec) and dependency licences. Unmaintained or yanked
-# crates are reported but do not fail the check.
+# cargo deny, run by .github/workflows/security.yml: RustSec advisories for the
+# dependencies, their licences and their sources. A vulnerability, an
+# unmaintained or unsound crate and a yanked version all fail the check: they are
+# findings, not footnotes. An exception is an entry in `ignore` below, with its
+# reason.
 
 [graph]
 all-features = true
 
 [advisories]
-unmaintained = "none"
-yanked = "warn"
+unmaintained = "all"
+yanked = "deny"
+ignore = [
+    # zbus_names, zvariant and zvariant_derive were merged into zbus 6. They come
+    # in through eframe's accessibility support (accesskit_unix on zbus 5), which
+    # has no release on zbus 6 yet. Drop these when egui moves to it.
+    { id = "RUSTSEC-2026-0370", reason = "zvariant, via eframe/accesskit_unix on zbus 5; no release on zbus 6 yet" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names, via eframe/accesskit_unix on zbus 5; no release on zbus 6 yet" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive, via eframe/accesskit_unix on zbus 5; no release on zbus 6 yet" },
+]
 
 [licenses]
 # Permissive licences, and MPL-2.0, whose copyleft stays with its own files.
