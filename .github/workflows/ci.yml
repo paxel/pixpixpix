@@ -34,9 +34,9 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, 2026-10-08
+      # Keep in sync with rust-toolchain.toml; toolchain bumps are deliberate, separate commits.
+      - uses: dtolnay/rust-toolchain@9522411a9bce8484da960823fc2f46e52f981f71 # 1.100.0 branch
         with:
-          toolchain: stable
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Native libraries (Linux)
