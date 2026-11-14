@@ -13,3 +13,13 @@ Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-
 ### Domain docs
 
 Single-context: `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+## Rules
+
+* `cargo fmt`, `cargo clippy --all-targets -- -D warnings` and `cargo test` before every commit, on the toolchain `rust-toolchain.toml` pins.
+* Shipped code may not panic: `unwrap`, `expect`, `panic`, `todo`, `unimplemented` and `dbg!` are denied in `Cargo.toml`, `unreachable`, indexing, slicing and overflowing arithmetic in `src/lib.rs`. Tests are exempt. No `#[allow]`: fix the lint.
+* Unsafe is denied crate-wide. Only the FFI modules (`mpv`, `heif`, `turbojpeg`, `macos`) opt in with `#[expect(unsafe_code, reason = "…")]`, and every unsafe block carries a `// SAFETY:` comment.
+* Coverage ratchet: `scripts/coverage.sh --check` in `quality.yml` fails under `.coverage-floor`. When coverage rises, raise the floor and the badge (`scripts/coverage.sh` without `--check`, on a machine with every native library installed) in the same pull request; never lower it.
+* A dependency advisory is fixed by an update; an `ignore` in `deny.toml` only with its reason, when no fixed release exists.
+* `summer` takes pull requests only; the required checks are the CI lanes, the coverage ratchet, cargo deny and CodeQL.
+* Commits: one-line summary, `[pix-<issue>]` first for ticket work, no trailers.
