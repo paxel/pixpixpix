@@ -15,11 +15,11 @@ yanked = "deny"
 unsound = "all"
 ignore = [
     # zbus_names, zvariant and zvariant_derive were merged into zbus 6. They come
-    # in through eframe's accessibility support (accesskit_unix on zbus 5), which
-    # has no release on zbus 6 yet. Drop these when egui moves to it.
-    { id = "RUSTSEC-2026-0370", reason = "zvariant, via eframe/accesskit_unix on zbus 5; no release on zbus 6 yet" },
-    { id = "RUSTSEC-2026-0371", reason = "zbus_names, via eframe/accesskit_unix on zbus 5; no release on zbus 6 yet" },
-    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive, via eframe/accesskit_unix on zbus 5; no release on zbus 6 yet" },
+    # in through eframe's accessibility support: accesskit_unix 0.24 and atspi 0.30,
+    # the latest releases, still need zbus 5. Drop these when they move to zbus 6.
+    { id = "RUSTSEC-2026-0370", reason = "zvariant, via eframe/accesskit_unix on zbus 5; atspi and accesskit_unix have no release on zbus 6 yet" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names, via eframe/accesskit_unix on zbus 5; atspi and accesskit_unix have no release on zbus 6 yet" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive, via eframe/accesskit_unix on zbus 5; atspi and accesskit_unix have no release on zbus 6 yet" },
 ]
 
 [licenses]
