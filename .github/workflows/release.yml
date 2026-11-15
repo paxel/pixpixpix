@@ -135,7 +135,9 @@ jobs:
     runs-on: ${{ matrix.runner }}
     container:
       image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-26.08
-      options: --privileged
+      # The image's runtimes sit on a lower overlay layer, where updating them
+      # fails with "Invalid cross-device link"; a volume holds a copy instead.
+      options: --privileged --volume /var/lib/flatpak
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
