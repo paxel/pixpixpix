@@ -1,29 +1,20 @@
-# Gate for every pull request and every push to summer: formatting, clippy with zero warnings
-# and the full test suite on Linux x86_64, Linux aarch64 and macOS arm64.
-#
-# The native libraries pixpixpix loads at runtime (libturbojpeg, libheif with
-# its decoder plugins, libmpv) are installed on every lane, so the tests that
-# take the library-present branch really run. Clippy runs on every lane because
-# of the platform-specific code (X11 clipboard, macOS key names).
 name: CI
 
+# pixpixpix's gates. The standard's part comes from paxel/gates: the OSV gate, the Rust gate
+# on Linux x86_64 (format, lint set, clippy, tests, coverage ratchet) and SonarQube Cloud.
+# The Rust gate tests on one system only and installs no Homebrew packages, so the lanes for
+# Linux aarch64 and macOS arm64 are pixpixpix's own (docs/adr/0001-move-to-gates.md).
+# A branch gets its run through its pull request; a run per push as well would be the same
+# jobs twice, and SonarQube Cloud analyses only the default branch and pull requests.
 on:
-  # Pushes only to summer, which takes nothing but pull request merges. Every
-  # other branch is tested by its pull request run, which tests the merge of the
-  # branch into its base: with up-to-date branches required, that is the tree
-  # the merge puts on summer.
   push:
     branches: [summer]
   pull_request:
 
-# A newer push or pull request update cancels the older run of the same branch.
-# The group names the bare branch: head_ref is bare on pull request events,
-# ref_name (not ref, which is refs/heads/...) on pushes.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  group: ci-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
-# The token only reads the code: no job here writes to the repository.
 permissions:
   contents: read
 
@@ -31,14 +22,23 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  test:
+  vulns:
+    uses: paxel/gates/.github/workflows/vulns.yml@c3bbaf3526aaa668e256f8a05f78853564fd1217 # v1.1.0
+
+  rust:
+    uses: paxel/gates/.github/workflows/rust.yml@c3bbaf3526aaa668e256f8a05f78853564fd1217 # v1.1.0
+    with:
+      apt-packages: libturbojpeg libheif1 libheif-plugin-libde265 libheif-plugin-dav1d libmpv2
+      # The helper processes the tests start write their profile on the way out; without the
+      # delay tarpaulin merges a profile still being written and fails on it.
+      coverage: rust --post-test-delay 2
+
+  native:
     name: ${{ matrix.name }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: Linux x86_64
-            runner: ubuntu-24.04
           - name: Linux aarch64
             runner: ubuntu-24.04-arm
           - name: macOS arm64
@@ -46,7 +46,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # Keep in sync with rust-toolchain.toml; toolchain bumps are deliberate, separate commits.
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@9522411a9bce8484da960823fc2f46e52f981f71 # 1.100.0 branch
         with:
           components: rustfmt, clippy
@@ -65,7 +66,20 @@ jobs:
         run: brew install jpeg-turbo libheif mpv
       - name: Format
         run: cargo fmt --check
-      - name: Clippy
-        run: cargo clippy --locked --all-targets -- -D warnings
+      # The two clippy runs of the shared Rust gate: shipped code under the whole lint set,
+      # tests with the lints allowed that are how a test fails.
+      - name: Clippy on shipped code
+        run: cargo clippy --locked --all-features -- -D warnings
+      - name: Clippy on tests
+        run: >-
+          cargo clippy --locked --tests --benches --examples --all-features -- -D warnings
+          -A clippy::unwrap_used -A clippy::expect_used -A clippy::panic -A clippy::indexing_slicing
+          -A clippy::string_slice -A clippy::arithmetic_side_effects -A clippy::unreachable
       - name: Tests
-        run: cargo test --locked
+        run: cargo test --locked --all-features
+
+  sonar:
+    needs: rust
+    uses: paxel/gates/.github/workflows/sonar.yml@c3bbaf3526aaa668e256f8a05f78853564fd1217 # v1.1.0
+    secrets:
+      sonar-token: ${{ secrets.SQ_TOKEN }}

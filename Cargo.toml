@@ -27,6 +27,12 @@ expect_used = "deny"
 panic = "deny"
 todo = "deny"
 unimplemented = "deny"
+# Shipped code may not index, slice or do arithmetic that can panic either. CI runs clippy on
+# the tests with these four allowed (paxel/gates, actions/rust), like unwrap and expect.
+unreachable = "deny"
+indexing_slicing = "deny"
+string_slice = "deny"
+arithmetic_side_effects = "deny"
 dbg_macro = "deny"
 # No-`#[allow]` policy: fix the lint instead of silencing it.
 allow_attributes = "deny"
