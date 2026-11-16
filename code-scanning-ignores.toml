@@ -5,9 +5,7 @@
 # when the gate fails again: that is the review. Then fix it, or move the date with a reason.
 # Nothing is dismissed in GitHub or marked in SonarQube Cloud.
 #
-# # The three findings Scorecard has for every single-maintainer repository; the standard asks
-# for them here whether or not Scorecard reports them yet.
-[[IgnoredAlerts]]   tool, rule (as GitHub reports them), path, reason, ignoreUntil
+# [[IgnoredAlerts]]   tool, rule (as GitHub reports them), path, reason, ignoreUntil
 #                     path is the file the finding is in; the entry covers that file only.
 #                     Leave it out only for a finding without a file (Scorecard's
 #                     repository-level ones); left out for a finding in a file, it blocks.
@@ -15,6 +13,8 @@
 #                     as SonarQube Cloud writes it, e.g. "pythonsecurity:S8707".
 # [[IgnoredSecrets]]  secret_type, reason, ignoreUntil
 
+# The three findings Scorecard has for every single-maintainer repository; the standard asks
+# for them here whether or not Scorecard reports them yet.
 [[IgnoredAlerts]]
 tool = "Scorecard"
 rule = "CodeReviewID"
@@ -36,14 +36,6 @@ ignoreUntil = 2027-05-14
 reason = """Single maintainer: the ruleset blocks deletion and force-pushes and requires a \
 pull request with green CI, but no approval, since nobody else can give one. Scorecard scores \
 the missing approvers and stale-review dismissal, so it stays below maximal."""
-
-[[IgnoredAlerts]]   tool, rule (as GitHub reports them), path, reason, ignoreUntil
-#                     path is the file the finding is in; the entry covers that file only.
-#                     Leave it out only for a finding without a file (Scorecard's
-#                     repository-level ones); left out for a finding in a file, it blocks.
-#                     A SonarQube Cloud finding has tool = "SonarQube Cloud" and the rule
-#                     as SonarQube Cloud writes it, e.g. "pythonsecurity:S8707".
-# [[IgnoredSecrets]]  secret_type, reason, ignoreUntil
 
 [[IgnoredAlerts]]
 tool = "Scorecard"
