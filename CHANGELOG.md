@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- Every release file carries signed build provenance, which `gh attestation verify <file> --repo paxel/pixpixpix` checks ([pix-105](https://github.com/paxel/pixpixpix/issues/105)).
+- Every release file carries signed build provenance, which `gh attestation verify <file> --repo paxel/pixpixpix` checks, and every release a CycloneDX SBOM of its source ([pix-105](https://github.com/paxel/pixpixpix/issues/105), [pix-127](https://github.com/paxel/pixpixpix/issues/127)).
 
 ### Changed
 
