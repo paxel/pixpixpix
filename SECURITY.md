@@ -16,10 +16,11 @@ discussed in that advisory, which stays private until a release with the fix is 
 ## What is already checked
 
 Every pull request and every change to the summer branch runs CodeQL, a dependency audit
-(cargo deny) and the fuzz targets of the hand-written file parsers, and SonarQube Cloud and
-OpenSSF Scorecard analyse the summer branch. The CodeQL and Scorecard findings are the
-repository's code scanning alerts, SonarQube Cloud's are on its project page; a report does
-not need to repeat them.
+(osv-scanner) and SonarQube Cloud; OpenSSF Scorecard analyses the summer branch, and the fuzz
+targets of the hand-written file parsers run every week. The CodeQL and Scorecard findings
+are the repository's code scanning alerts, SonarQube Cloud's are on its project page; a
+report does not need to repeat them. A release is not built while one of them is open and
+not accepted in `code-scanning-ignores.toml` with a reason and a date.
 
 ## Verifying a release
 
