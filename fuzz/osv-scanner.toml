@@ -1,0 +1,40 @@
+# The fuzz crate has its own lockfile, so osv-scanner reads its exceptions here; see
+# ../osv-scanner.toml for the format. The crate builds on pixpixpix and so carries its
+# dependencies, the three unmaintained notices included.
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0370"
+ignoreUntil = 2027-02-14
+reason = """An unmaintained notice, no vulnerability: zvariant comes through eframe's accesskit feature \
+(accesskit_unix on zbus 5). accesskit_unix and atspi have no release on zbus 6 yet, and dropping \
+the feature would take screen-reader support away."""
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0371"
+ignoreUntil = 2027-02-14
+reason = """An unmaintained notice, no vulnerability: zbus_names comes through eframe's accesskit feature \
+(accesskit_unix on zbus 5). accesskit_unix and atspi have no release on zbus 6 yet, and dropping \
+the feature would take screen-reader support away."""
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0372"
+ignoreUntil = 2027-02-14
+reason = """An unmaintained notice, no vulnerability: zvariant_derive comes through eframe's accesskit feature \
+(accesskit_unix on zbus 5). accesskit_unix and atspi have no release on zbus 6 yet, and dropping \
+the feature would take screen-reader support away."""
+
+[[PackageOverrides]]
+name = "libfuzzer-sys"
+ecosystem = "crates.io"
+license.ignore = true
+effectiveUntil = 2027-05-14
+reason = """NCSA AND (Apache-2.0 OR MIT): the NCSA part is LLVM's libFuzzer, a permissive licence \
+that is not on the standard's allowlist. libfuzzer-sys is linked only into the fuzz targets, \
+which are never part of a release."""
+
+[[PackageOverrides]]
+name = "pixpixpix-fuzz"
+ecosystem = "crates.io"
+license.ignore = true
+effectiveUntil = 2027-05-14
+reason = """This crate itself: MIT, like pixpixpix, but never published, so no registry knows \
+its licence. The OSV gate recognises a repository's own packages only outside fuzz/."""
