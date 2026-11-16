@@ -37,7 +37,7 @@ command -v flatpak >/dev/null 2>&1 ||
 command -v curl >/dev/null 2>&1 || fail "curl is not installed"
 
 # The latest release's page redirects to its tag.
-latest=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$releases/latest") ||
+latest=$(curl --proto '=https' --tlsv1.2 -fsSLI -o /dev/null -w '%{url_effective}' "$releases/latest") ||
   fail "cannot reach $releases"
 case $latest in
   */tag/v*) version=${latest##*/tag/v} ;;
@@ -49,7 +49,7 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
 echo "Downloading $bundle"
-curl -fSL --progress-bar -o "$tmp/$bundle" "$releases/download/v$version/$bundle" ||
+curl --proto '=https' --tlsv1.2 -fSL --progress-bar -o "$tmp/$bundle" "$releases/download/v$version/$bundle" ||
   fail "cannot download $bundle"
 
 flatpak remote-add --user --if-not-exists flathub "$flathub"

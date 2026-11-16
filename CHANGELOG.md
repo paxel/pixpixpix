@@ -21,6 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Security
 
 - rustix is updated to 1.1.6, whose extended-attribute functions no longer hand out uninitialized memory (RUSTSEC-2026-0486, [pix-98](https://github.com/paxel/pixpixpix/issues/98)).
+- The Flatpak installer (`packaging/flatpak/install.sh`) follows redirects to HTTPS addresses only ([pix-126](https://github.com/paxel/pixpixpix/issues/126)).
 
 ---
 
