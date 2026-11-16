@@ -350,9 +350,9 @@ fn the_install_script_installs_the_latest_bundle_with_its_runtime_and_both_wrapp
     assert_eq!(calls.len(), 5, "{}", run.log);
     assert_eq!(
         calls[0],
-        "curl -fsSLI -o /dev/null -w %{url_effective} https://github.com/paxel/pixpixpix/releases/latest"
+        "curl --proto =https --tlsv1.2 -fsSLI -o /dev/null -w %{url_effective} https://github.com/paxel/pixpixpix/releases/latest"
     );
-    assert!(calls[1].starts_with("curl -fSL --progress-bar -o "));
+    assert!(calls[1].starts_with("curl --proto =https --tlsv1.2 -fSL --progress-bar -o "));
     assert!(calls[1].ends_with(
         "/pixpixpix-1.2.3-x86_64.flatpak https://github.com/paxel/pixpixpix/releases/download/v1.2.3/pixpixpix-1.2.3-x86_64.flatpak"
     ));
