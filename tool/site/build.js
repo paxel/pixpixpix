@@ -386,7 +386,7 @@ export function render404({ navs, version, whatsNew, base = "/", versions = [] }
 const ATTR_LINK = /\s(?:xlink:)?(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>"']+))/g;
 const SRCSET = /\ssrcset\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
 // Everything between the brackets; the blanks and the quotes around it come off in cssUrl().
-const CSS_URL = /url\(([^)]*)\)/g;
+const CSS_URL = /url\(([^()]*)\)/g;
 
 /** The address inside a CSS url(): trimmed, and without the quotes it may stand in. */
 function cssUrl(inner) {

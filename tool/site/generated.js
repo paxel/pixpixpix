@@ -22,7 +22,7 @@ export function inline(text, docs = "") {
   return escapeHtml(text)
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/\[([^\][]+)\]\((https?:[^)]+)\)/g, (_, label, url) => `<a href="${href(url)}">${label}</a>`)
+    .replace(/\[([^\][]+)\]\((https?:[^()]+)\)/g, (_, label, url) => `<a href="${href(url)}">${label}</a>`)
     .replace(/(^|\s)_([^_]+)_(?=[\s.,;:]|$)/g, "$1<em>$2</em>");
 }
 
