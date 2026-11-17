@@ -346,6 +346,27 @@ fn the_bin_view_hides_the_info_and_i_does_nothing_there() {
 }
 
 #[test]
+fn open_info_reads_nothing_from_the_trash() {
+    let mut core = open();
+    key(&mut core, Key::T);
+    let item = |name: &str| pixpixpix::core::BinItem {
+        id: name.into(),
+        file: PathBuf::from("/trash").join(name),
+        original: Some(p(name)),
+        deleted: 0,
+    };
+    let listed = core.handle(Event::BinListed(Ok(vec![item("x.jpg"), item("y.jpg")])));
+    let moved = key(&mut core, Key::Right);
+    for command in listed.iter().chain(&moved) {
+        assert!(!matches!(command, Command::ReadMetadata(_)), "{command:?}");
+    }
+    // Back in the image view the info is still that of the file shown.
+    let closed = key(&mut core, Key::T);
+    assert!(!closed.contains(&Command::ReadMetadata(p("a.jpg"))));
+    assert_eq!(shown(&core).file.first(), Some(&field("File", "a.jpg")));
+}
+
+#[test]
 fn remove_location_asks_where_the_new_file_goes_and_writes_it() {
     let mut core = open();
     assert!(shown(&core).can_remove_location);

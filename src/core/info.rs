@@ -55,12 +55,12 @@ impl Core {
     }
 
     /// The file the metadata view is about: the selected tile's in the
-    /// overview, the current file otherwise.
+    /// overview, the current file otherwise; the bin view, which hides the
+    /// view, leaves it on the current file.
     fn info_file(&self) -> Option<PathBuf> {
-        if self.view.overview.is_some() {
-            self.selected_path()
-        } else {
-            self.current.clone()
+        match &self.view.overview {
+            Some(overview) if !overview.bin => self.selected_path(),
+            _ => self.current.clone(),
         }
     }
 
