@@ -20,6 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `Esc` hides the focused pane, one layer per press: in the band it hides the band, and in the dir column of the overview it hides the column and the overview stays ([pix-137](https://github.com/paxel/pixpixpix/issues/137)).
 - `Enter` in the dir column goes on to the folder's pictures, the image view or the overview's gallery, and the column stays; `Right` still goes into the first subfolder ([pix-141](https://github.com/paxel/pixpixpix/issues/141)).
 - `n` shows, focuses and hides the dir column in the overview too ([pix-138](https://github.com/paxel/pixpixpix/issues/138)).
+- On Linux, `brew install` names the packages of the optional libraries for Fedora, Debian or Ubuntu, and Arch ([pix-146](https://github.com/paxel/pixpixpix/issues/146)).
 
 ---
 
