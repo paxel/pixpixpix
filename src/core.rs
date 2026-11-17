@@ -1084,6 +1084,10 @@ const GALLERY_KEYS: &[KeyHint] = &[
         action: "trash",
     },
     KeyHint {
+        keys: "N",
+        action: "folders",
+    },
+    KeyHint {
         keys: "G",
         action: "close overview",
     },
@@ -1114,6 +1118,10 @@ const CONTENTS_KEYS: &[KeyHint] = &[
     KeyHint {
         keys: "Enter",
         action: "gallery",
+    },
+    KeyHint {
+        keys: "N",
+        action: "hide folders",
     },
     KeyHint {
         keys: "G",

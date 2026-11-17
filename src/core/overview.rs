@@ -419,13 +419,15 @@ impl Core {
         commands
     }
 
-    /// Keys while the overview is open: `Tab` moves between dir column and
+    /// Keys while the overview is open: `n` shows, focuses and hides the dir
+    /// column as in the image view, `Tab` moves between dir column and
     /// gallery, the rest goes to the focused one.
     pub(super) fn overview_key(&mut self, key: Key) -> Vec<Command> {
         if self.view.overview.as_ref().is_some_and(|o| o.bin) {
             return self.bin_key(key);
         }
         match (key, self.view.focus) {
+            (Key::N, _) => self.toggle_column(),
             (Key::Tab, Focus::Dirs) => {
                 self.set_focus(Focus::Image);
                 Vec::new()

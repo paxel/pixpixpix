@@ -1335,6 +1335,17 @@ fn a_click_on_a_tile_shows_its_file() {
 }
 
 #[test]
+fn the_overview_lists_n_for_the_dir_column() {
+    let (mut h, _) = overview_open();
+    h.get_by_label("folders");
+    h.key_press(egui::Key::N);
+    h.run();
+    h.get_by_label("hide folders");
+    assert!(h.state().core.view().overview.is_some());
+    assert!(h.state().core.view().dir_column.is_some());
+}
+
+#[test]
 fn ctrl_wheel_over_the_overview_resizes_the_thumbnails() {
     let (mut h, scan) = overview_open();
     overview_section(&mut h, scan.unwrap(), "/p", &["/p/a.jpg".into()]);
