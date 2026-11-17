@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - `n` focuses the [dir column](https://paxel.github.io/pixpixpix/getting-around.html) when it is shown and hides it only from inside, as `b` does for the band; `i` and `p` show and hide info and the tools from the dir column and the band too, and the key line says for all four what a press does now ([pix-136](https://github.com/paxel/pixpixpix/issues/136)).
+- `Esc` hides the focused pane, one layer per press: in the band it hides the band, and in the dir column of the overview it hides the column and the overview stays ([pix-137](https://github.com/paxel/pixpixpix/issues/137)).
 
 ---
 

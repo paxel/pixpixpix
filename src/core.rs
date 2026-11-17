@@ -940,7 +940,7 @@ const DIR_COLUMN_KEYS: &[KeyHint] = &[
     },
     KeyHint {
         keys: "Esc",
-        action: "image view",
+        action: "hide",
     },
     KeyHint {
         keys: "Right/Enter",
@@ -991,7 +991,7 @@ const BAND_KEYS: &[KeyHint] = &[
     },
     KeyHint {
         keys: "Esc",
-        action: "image view",
+        action: "hide",
     },
     KeyHint {
         keys: "I",
@@ -1095,7 +1095,7 @@ const CONTENTS_KEYS: &[KeyHint] = &[
     },
     KeyHint {
         keys: "Esc",
-        action: "image view",
+        action: "hide",
     },
     KeyHint {
         keys: "Right/Enter",
@@ -2942,7 +2942,7 @@ impl Core {
 
     /// Keys of the band: the arrows move the highlight, `Enter` shows the
     /// highlighted file like a click and returns to the image view, `Esc`
-    /// returns to it without, the highlight dropped.
+    /// hides the band as `b` does there, the shown file kept.
     fn band_key(&mut self, key: Key) -> Vec<Command> {
         let index = self.view.band_highlight;
         let target = match key {
@@ -2956,12 +2956,8 @@ impl Core {
                 self.set_focus(Focus::Image);
                 return commands;
             }
-            Key::Escape => {
-                // Back to the main screen; the shown file stays.
-                self.band_highlight = None;
-                self.set_focus(Focus::Image);
-                return Vec::new();
-            }
+            // Not that: the band goes, the shown file stays.
+            Key::Escape => return self.toggle_band(),
             _ => None,
         };
         if let Some(thumb) = target.and_then(|i| self.view.band.get(i)) {

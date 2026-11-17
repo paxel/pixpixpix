@@ -596,6 +596,23 @@ fn the_pane_key_hints_say_what_a_press_does_now() {
     h.get_by_label("info");
 }
 
+#[test]
+fn esc_reads_hide_in_the_band_and_the_dir_column() {
+    let mut h = harness(browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]));
+    h.run();
+    h.key_press(egui::Key::N);
+    h.run();
+    h.get_by_label("Esc");
+    h.get_by_label("hide");
+    h.key_press(egui::Key::B);
+    h.run();
+    h.get_by_label("hide");
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert!(h.state().core.view().settings.band_hidden);
+    assert!(h.query_by_label("hide").is_none());
+}
+
 const CACHE_LABEL: &str = "Cached images per side";
 
 #[test]

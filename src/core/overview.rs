@@ -197,7 +197,7 @@ impl Core {
         commands
     }
 
-    /// `Esc` in the overview: as `g`, but the image view gets the focus.
+    /// `Esc` in the gallery: as `g`, but the image view gets the focus.
     fn escape_overview(&mut self) -> Vec<Command> {
         let commands = self.leave_overview();
         self.set_focus(Focus::Image);
@@ -471,7 +471,8 @@ impl Core {
             Key::Up | Key::Down | Key::Left | Key::Right | Key::Enter | Key::Backspace => {
                 self.column_action(|core| core.dir_key(key))
             }
-            Key::Escape => self.escape_overview(),
+            // Not that: the column goes, the overview stays.
+            Key::Escape => self.toggle_column(),
             _ => Vec::new(),
         }
     }

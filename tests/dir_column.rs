@@ -463,6 +463,8 @@ fn the_up_row_goes_to_the_parent() {
 #[test]
 fn escape_closes_the_column_for_the_image_view() {
     let mut core = column_open();
+    let hint = core.view().key_line.keys.iter().find(|k| k.keys == "Esc");
+    assert_eq!(hint.map(|k| k.action), Some("hide"));
     press(&mut core, Key::Escape);
     assert_eq!(core.view().dir_column, None);
     assert_eq!(core.view().focus, Focus::Image);

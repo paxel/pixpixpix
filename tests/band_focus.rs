@@ -165,7 +165,7 @@ fn tab_cycles_column_image_view_and_band() {
 }
 
 #[test]
-fn escape_returns_to_the_image_view_keeping_the_file_and_the_band() {
+fn escape_hides_the_band_keeping_the_file_and_focuses_the_image_view() {
     for from_column in [true, false] {
         let mut core = column_open();
         if !from_column {
@@ -174,11 +174,19 @@ fn escape_returns_to_the_image_view_keeping_the_file_and_the_band() {
         let shown = core.view().screen.clone();
         press(&mut core, Key::B);
         press(&mut core, Key::Right);
-        press(&mut core, Key::Escape);
+        assert_eq!(action_of(&core, "Esc"), Some("hide"), "{from_column}");
+        // Hidden as `b` hides it, and saved.
+        assert_eq!(
+            press(&mut core, Key::Escape),
+            [band_hidden(true)],
+            "{from_column}"
+        );
+        assert!(core.view().settings.band_hidden, "{from_column}");
         assert_eq!(core.view().focus, Focus::Image, "{from_column}");
         assert_eq!(core.view().screen, shown, "{from_column}");
         assert_eq!(core.view().band_highlight, None, "{from_column}");
-        assert!(!core.view().band.is_empty(), "{from_column}");
+        // The column is another pane and stays.
+        assert!(core.view().dir_column.is_some(), "{from_column}");
     }
 }
 
