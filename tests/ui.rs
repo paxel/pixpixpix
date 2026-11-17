@@ -1335,6 +1335,26 @@ fn a_click_on_a_tile_shows_its_file() {
 }
 
 #[test]
+fn i_shows_the_info_beside_the_gallery() {
+    let (mut h, scan) = overview_open();
+    overview_section(
+        &mut h,
+        scan.unwrap(),
+        "/p",
+        &["/p/a.jpg".to_owned(), "/p/b.jpg".to_owned()],
+    );
+    assert!(h.query_by_label("Metadata").is_none());
+    h.key_press(egui::Key::I);
+    h.run();
+    let pane = h.get_by_label("Metadata").rect();
+    h.get_by_label("hide info");
+    // Beside the gallery, not over its tiles.
+    let tile = h.get_by_role_and_label(Role::Label, "a.jpg").rect();
+    assert!(tile.right() <= pane.left(), "{tile:?} {pane:?}");
+    assert!(h.state().core.view().overview.is_some());
+}
+
+#[test]
 fn the_overview_lists_n_for_the_dir_column() {
     let (mut h, _) = overview_open();
     h.get_by_label("folders");

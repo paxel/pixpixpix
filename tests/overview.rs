@@ -129,9 +129,9 @@ const QUIT: &str = if cfg!(target_os = "macos") {
     "Ctrl+Q"
 };
 
-const GALLERY_KEYS: [&str; 16] = [
-    "Arrows", "Enter", "+/-", "C", "Shift+C", "L/R", "O", "X", "N", "G", "Esc", "S", "F1", "F",
-    QUIT, "?",
+const GALLERY_KEYS: [&str; 17] = [
+    "Arrows", "Enter", "+/-", "C", "Shift+C", "L/R", "O", "X", "I", "N", "G", "Esc", "S", "F1",
+    "F", QUIT, "?",
 ];
 
 #[test]
@@ -794,6 +794,7 @@ fn tab_moves_between_dir_column_and_gallery_and_the_key_line_follows() {
             "Esc",
             "Right",
             "Enter",
+            "I",
             "N",
             "G",
             "Tab",

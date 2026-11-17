@@ -1084,6 +1084,10 @@ const GALLERY_KEYS: &[KeyHint] = &[
         action: "trash",
     },
     KeyHint {
+        keys: "I",
+        action: "info",
+    },
+    KeyHint {
         keys: "N",
         action: "folders",
     },
@@ -1118,6 +1122,10 @@ const CONTENTS_KEYS: &[KeyHint] = &[
     KeyHint {
         keys: "Enter",
         action: "gallery",
+    },
+    KeyHint {
+        keys: "I",
+        action: "info",
     },
     KeyHint {
         keys: "N",
@@ -2168,6 +2176,11 @@ impl Core {
                 && let Some(at) = keys.iter().position(|k| k.keys == "X")
             {
                 keys.insert(at.saturating_add(1), UNDO_TRASH_KEY);
+            }
+            if self.info.is_some() {
+                for key in keys.iter_mut().filter(|k| k.keys == "I") {
+                    key.action = "hide info";
+                }
             }
             self.view.key_line.keys = keys;
         } else if self.view.focus == Focus::Image && !self.covered() {

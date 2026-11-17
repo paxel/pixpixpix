@@ -54,9 +54,20 @@ impl Core {
         };
     }
 
-    /// Fits the open metadata view to the current file: a new file is read.
+    /// The file the metadata view is about: the selected tile's in the
+    /// overview, the current file otherwise.
+    fn info_file(&self) -> Option<PathBuf> {
+        if self.view.overview.is_some() {
+            self.selected_path()
+        } else {
+            self.current.clone()
+        }
+    }
+
+    /// Fits the open metadata view to the file it is about: a new file is
+    /// read.
     pub(super) fn sync_info(&mut self) -> Vec<Command> {
-        let current = self.current.clone();
+        let current = self.info_file();
         let Some(info) = self.info.as_mut().filter(|i| i.path != current) else {
             return Vec::new();
         };
@@ -149,7 +160,9 @@ impl Core {
             Strip::Location => read.has_location,
             Strip::AllExif => read.has_exif,
         };
-        let free = self.dialog.is_none() && self.writing.as_ref() != Some(path);
+        let free = self.dialog.is_none()
+            && self.view.overview.is_none()
+            && self.writing.as_ref() != Some(path);
         (has && free
             && info.path.as_ref() == Some(path)
             && self.current.as_ref() == Some(path)
@@ -178,12 +191,20 @@ impl Core {
         }
     }
 
-    /// Puts the metadata view into the view; the overview hides it.
+    /// Puts the metadata view into the view; the bin view hides it. In the
+    /// overview it is about the selected tile, and says so without one.
     pub(super) fn publish_info(&mut self) {
-        let info = self.info.as_ref().filter(|_| self.view.overview.is_none());
+        let bin = self.view.overview.as_ref().is_some_and(|o| o.bin);
+        let info = self.info.as_ref().filter(|_| !bin);
         self.view.metadata = info.map(|info| {
             let read = info.read.as_ref().and_then(|r| r.as_ref().ok());
             let mut file = read.map(|r| r.file.clone()).unwrap_or_default();
+            if info.path.is_none() && self.view.overview.is_some() {
+                file.push(Field {
+                    label: "File",
+                    value: "none selected".to_owned(),
+                });
+            }
             if let (Some(_), Screen::Image { path, image }) = (read, &self.screen)
                 && info.path.as_ref() == Some(path)
             {

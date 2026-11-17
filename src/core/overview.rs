@@ -420,7 +420,7 @@ impl Core {
     }
 
     /// Keys while the overview is open: `n` shows, focuses and hides the dir
-    /// column as in the image view, `Tab` moves between dir column and
+    /// column as in the image view, `i` shows and hides info, `Tab` moves between dir column and
     /// gallery, the rest goes to the focused one.
     pub(super) fn overview_key(&mut self, key: Key) -> Vec<Command> {
         if self.view.overview.as_ref().is_some_and(|o| o.bin) {
@@ -428,6 +428,11 @@ impl Core {
         }
         match (key, self.view.focus) {
             (Key::N, _) => self.toggle_column(),
+            // Info about the selected tile's file.
+            (Key::I, _) => {
+                self.toggle_info();
+                Vec::new()
+            }
             (Key::Tab, Focus::Dirs) => {
                 self.set_focus(Focus::Image);
                 Vec::new()

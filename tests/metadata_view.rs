@@ -253,12 +253,95 @@ fn a_failed_write_keeps_the_typed_date_and_says_why() {
     );
 }
 
+/// Opens the overview of `/p` with a.jpg and b.jpg as its tiles.
+fn overview(core: &mut Core) {
+    let commands = key(core, Key::G);
+    let scan = commands.iter().find_map(|c| match c {
+        Command::ScanOverview { scan, .. } => Some(*scan),
+        _ => None,
+    });
+    core.handle(Event::OverviewSection {
+        scan: scan.unwrap(),
+        dir: PathBuf::from("/p"),
+        files: vec![p("a.jpg"), p("b.jpg")],
+    });
+}
+
+fn hint(core: &Core, keys: &str) -> Option<&'static str> {
+    let hint = core.view().key_line.keys.iter().find(|k| k.keys == keys);
+    hint.map(|k| k.action)
+}
+
 #[test]
-fn the_overview_hides_the_metadata_view() {
-    let mut core = open();
-    key(&mut core, Key::G);
+fn i_in_the_gallery_shows_the_selected_tile_s_info_and_hides_it() {
+    let mut core = browsing();
+    overview(&mut core);
+    assert_eq!(hint(&core, "I"), Some("info"));
+    assert_eq!(key(&mut core, Key::I), [Command::ReadMetadata(p("a.jpg"))]);
+    assert!(shown(&core).reading);
+    assert_eq!(hint(&core, "I"), Some("hide info"));
+    core.handle(Event::MetadataRead {
+        path: p("a.jpg"),
+        result: Ok(read("a.jpg", None)),
+    });
+    assert_eq!(shown(&core).file.first(), Some(&field("File", "a.jpg")));
+    assert!(key(&mut core, Key::I).is_empty());
     assert_eq!(core.view().metadata, None);
+    assert_eq!(hint(&core, "I"), Some("info"));
+}
+
+#[test]
+fn the_info_follows_the_selection() {
+    let mut core = browsing();
+    overview(&mut core);
+    key(&mut core, Key::I);
+    let commands = key(&mut core, Key::Right);
+    assert!(commands.contains(&Command::ReadMetadata(p("b.jpg"))));
+    core.handle(Event::MetadataRead {
+        path: p("b.jpg"),
+        result: Ok(read("b.jpg", None)),
+    });
+    assert_eq!(shown(&core).file, [field("File", "b.jpg")]);
+}
+
+#[test]
+fn without_a_selected_tile_the_info_says_so() {
+    let mut core = browsing();
     key(&mut core, Key::G);
+    assert!(key(&mut core, Key::I).is_empty());
+    assert_eq!(shown(&core).file, [field("File", "none selected")]);
+    assert!(!shown(&core).reading);
+}
+
+#[test]
+fn info_left_open_shows_in_the_overview_and_after_it() {
+    let mut core = open();
+    overview(&mut core);
+    assert!(core.view().metadata.is_some());
+    key(&mut core, Key::G);
+    assert!(core.view().metadata.is_some());
+    assert_eq!(hint(&core, "I"), Some("hide info"));
+}
+
+#[test]
+fn nothing_is_removed_from_a_file_in_the_overview() {
+    let mut core = open();
+    assert!(shown(&core).can_remove_location);
+    overview(&mut core);
+    assert!(!shown(&core).can_remove_location);
+    assert!(!shown(&core).can_remove_exif);
+    core.handle(Event::RemoveMetadata(Strip::Location));
+    assert_eq!(core.view().save_dialog, None);
+}
+
+#[test]
+fn the_bin_view_hides_the_info_and_i_does_nothing_there() {
+    let mut core = open();
+    key(&mut core, Key::T);
+    assert_eq!(core.view().metadata, None);
+    assert!(key(&mut core, Key::I).is_empty());
+    assert_eq!(hint(&core, "I"), None);
+    key(&mut core, Key::T);
     assert!(core.view().metadata.is_some());
 }
 
