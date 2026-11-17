@@ -81,7 +81,7 @@ fn s_opens_and_closes_the_settings_screen() {
         [Command::ReadDefaults { .. }]
     ));
     assert!(core.view().settings_open);
-    assert_eq!(key_names(&core), ["S/Esc", QUIT]);
+    assert_eq!(key_names(&core), ["S/Esc", "F1", QUIT]);
     press(&mut core, Key::S);
     assert!(!core.view().settings_open);
     assert_eq!(
@@ -104,6 +104,7 @@ fn s_opens_and_closes_the_settings_screen() {
             "B",
             "Tab",
             "S",
+            "F1",
             "F",
             QUIT,
             "?"

@@ -819,7 +819,7 @@ impl Core {
     fn drawable(&self) -> Option<(&Path, &crate::decode::DecodedImage)> {
         if !self.toolbar_open
             || self.dialog.is_some()
-            || self.view.settings_open
+            || self.covered()
             || self.view.overview.is_some()
             || self.view.focus != super::Focus::Image
         {
@@ -904,7 +904,7 @@ impl Core {
             | Event::Navigate { .. } => true,
             // Playing or seeking would replace the frame drawn on.
             Event::Clicked | Event::StepVideo(_) => video,
-            Event::Key(key) if self.view.settings_open => key.command && key.key == Key::Q,
+            Event::Key(key) if self.covered() => key.command && key.key == Key::Q,
             Event::Key(key) if key.command => {
                 key.key == Key::Q || (video && matches!(key.key, Key::Left | Key::Right))
             }
@@ -938,6 +938,7 @@ impl Core {
             return;
         };
         self.view.settings_open = false;
+        self.view.about = None;
         self.dialog = Some(Dialog {
             name: self.new_name(&path, "_edit"),
             overwrite_refused: self.overwrite_refused(&path),
@@ -957,6 +958,7 @@ impl Core {
             Strip::AllExif => "_noexif",
         };
         self.view.settings_open = false;
+        self.view.about = None;
         self.dialog = Some(Dialog {
             name: self.new_name(&path, suffix),
             overwrite_refused: self.overwrite_refused(&path),

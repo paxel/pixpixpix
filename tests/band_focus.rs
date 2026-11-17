@@ -211,6 +211,7 @@ fn the_key_line_lists_the_band_keys_while_it_has_the_focus() {
             "B",
             "Tab",
             "S",
+            "F1",
             "F",
             quit,
             "?"

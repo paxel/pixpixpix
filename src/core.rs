@@ -42,6 +42,7 @@ enum Step {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Key {
     F,
+    F1,
     Q,
     Escape,
     Left,
@@ -630,6 +631,7 @@ impl KeyHint {
 fn key_named(name: &str) -> Option<Key> {
     Some(match name {
         "F" => Key::F,
+        "F1" => Key::F1,
         "Q" => Key::Q,
         "Esc" => Key::Escape,
         "Left" => Key::Left,
@@ -1034,6 +1036,10 @@ const GLOBAL_KEYS: &[KeyHint] = &[
         action: "settings",
     },
     KeyHint {
+        keys: "F1",
+        action: "about",
+    },
+    KeyHint {
         keys: "F",
         action: "fullscreen",
     },
@@ -1145,12 +1151,28 @@ const SETTINGS_KEYS: &[KeyHint] = &[
         action: "close",
     },
     KeyHint {
+        keys: "F1",
+        action: "about",
+    },
+    KeyHint {
         keys: QUIT_KEYS,
         action: "quit",
     },
 ];
 
-/// The keys of the About page.
+/// The keys of the About page opened by `F1` from outside the settings.
+const ABOUT_ALONE_KEYS: &[KeyHint] = &[
+    KeyHint {
+        keys: "Esc/F1",
+        action: "close",
+    },
+    KeyHint {
+        keys: QUIT_KEYS,
+        action: "quit",
+    },
+];
+
+/// The keys of the About page over the settings screen.
 const ABOUT_KEYS: &[KeyHint] = &[
     KeyHint {
         keys: "Esc",
@@ -2132,7 +2154,7 @@ impl Core {
         for (thumb, kind) in self.view.band.iter_mut().zip(kinds) {
             thumb.motion = kind;
         }
-        if self.view.overview.is_some() && !self.view.settings_open {
+        if self.view.overview.is_some() && !self.covered() {
             let mut keys = overview_keys(self.view.focus, self.view.dir_column.is_some());
             if !self.trashed.is_empty()
                 && let Some(at) = keys.iter().position(|k| k.keys == "X")
@@ -2140,7 +2162,7 @@ impl Core {
                 keys.insert(at.saturating_add(1), UNDO_TRASH_KEY);
             }
             self.view.key_line.keys = keys;
-        } else if self.view.focus == Focus::Image && !self.view.settings_open {
+        } else if self.view.focus == Focus::Image && !self.covered() {
             let mut keys = focus_keys(Focus::Image, self.view.dir_column.is_some());
             if self.view.inner.is_some() {
                 keys.insert(1, INNER_KEYS);
@@ -2177,7 +2199,7 @@ impl Core {
             }
             self.view.key_line.keys = keys;
         }
-        if !self.view.settings_open && self.view.overview.is_none() {
+        if !self.covered() && self.view.overview.is_none() {
             self.publish_pane_keys();
         }
         if self.dialog.is_some() {
@@ -2186,7 +2208,7 @@ impl Core {
         if self.view.trash_section.is_some() {
             self.view.key_line.keys = TRASH_SECTION_KEYS.to_vec();
         }
-        if self.view.overview.as_ref().is_some_and(|o| o.bin) && !self.view.settings_open {
+        if self.view.overview.as_ref().is_some_and(|o| o.bin) && !self.covered() {
             self.view.key_line.keys = if self.view.bin_preview.is_some() {
                 BIN_PREVIEW_KEYS.to_vec()
             } else {
@@ -2195,7 +2217,7 @@ impl Core {
             self.view.key_line.keys.extend_from_slice(GLOBAL_KEYS);
         }
         let hideable =
-            !self.view.settings_open && self.dialog.is_none() && self.view.trash_section.is_none();
+            !self.covered() && self.dialog.is_none() && self.view.trash_section.is_none();
         let keys = &mut self.view.key_line.keys;
         keys.retain(|k| *k != HIDE_HINTS_KEY);
         if hideable {
@@ -2700,10 +2722,21 @@ impl Core {
                 _ => Vec::new(),
             };
         }
+        if self.view.about.is_some() && !self.view.settings_open {
+            return match (key.key, key.command) {
+                (Key::Q, true) => vec![Command::Quit],
+                (Key::Escape | Key::F1, false) => {
+                    self.close_about();
+                    Vec::new()
+                }
+                _ => Vec::new(),
+            };
+        }
         if self.view.settings_open {
             match (key.key, key.command) {
                 (Key::Q, true) => return vec![Command::Quit],
-                (Key::Escape, false) if self.view.about.is_some() => self.close_about(),
+                (Key::Escape | Key::F1, false) if self.view.about.is_some() => self.close_about(),
+                (Key::F1, false) => return self.open_about(),
                 (Key::S | Key::Escape, false) => {
                     self.view.about = None;
                     self.view.settings_open = false;
@@ -2717,6 +2750,7 @@ impl Core {
         match (key.key, key.command) {
             (Key::Q, true) => vec![Command::Quit],
             (Key::S, false) => self.open_settings(),
+            (Key::F1, false) => self.open_about(),
             (Key::F, false) => {
                 self.view.fullscreen = !self.view.fullscreen;
                 vec![Command::SetFullscreen(self.view.fullscreen)]
@@ -2812,24 +2846,36 @@ impl Core {
         }
     }
 
-    /// Opens the settings screen, which takes every key but quit.
-    /// The About page over the open settings screen; its libraries are
-    /// looked for.
+    /// The settings screen or the About page is over everything else and
+    /// takes the keys.
+    fn covered(&self) -> bool {
+        self.view.settings_open || self.view.about.is_some()
+    }
+
+    /// The About page, over the settings screen or, by `F1`, over whatever
+    /// shows; its libraries are looked for. It takes every key but quit.
     fn open_about(&mut self) -> Vec<Command> {
-        if !self.view.settings_open {
-            return Vec::new();
-        }
         self.view.about = Some(About::default());
-        self.view.key_line.keys = ABOUT_KEYS.to_vec();
+        self.view.key_line.keys = if self.view.settings_open {
+            ABOUT_KEYS.to_vec()
+        } else {
+            ABOUT_ALONE_KEYS.to_vec()
+        };
         vec![Command::ProbeLibraries]
     }
 
-    /// Back from the About page to the settings screen.
+    /// Back from the About page to the settings screen, or to what `F1`
+    /// covered, with the focus it had.
     fn close_about(&mut self) {
         self.view.about = None;
-        self.view.key_line.keys = SETTINGS_KEYS.to_vec();
+        self.view.key_line.keys = if self.view.settings_open {
+            SETTINGS_KEYS.to_vec()
+        } else {
+            focus_keys(self.view.focus, self.view.dir_column.is_some())
+        };
     }
 
+    /// Opens the settings screen, which takes every key but quit.
     fn open_settings(&mut self) -> Vec<Command> {
         self.view.settings_open = true;
         self.view.key_line.keys = SETTINGS_KEYS.to_vec();

@@ -149,6 +149,7 @@ pub fn input_events(ctx: &egui::Context) -> Vec<Event> {
 fn map_key(key: egui::Key) -> Option<Key> {
     Some(match key {
         egui::Key::F => Key::F,
+        egui::Key::F1 => Key::F1,
         egui::Key::Q => Key::Q,
         egui::Key::Escape => Key::Escape,
         egui::Key::ArrowLeft => Key::Left,
@@ -310,7 +311,7 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
     if let Some(asked) = &view.trash_section {
         show_trash_section(ui.ctx(), asked, &mut events);
     }
-    if let Some(about) = view.about.as_ref().filter(|_| view.settings_open) {
+    if let Some(about) = &view.about {
         show_about(ui.ctx(), about, &mut events);
     } else if view.settings_open {
         show_settings(

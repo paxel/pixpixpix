@@ -629,6 +629,30 @@ fn esc_reads_hide_in_the_band_and_the_dir_column() {
     assert!(h.query_by_label("hide").is_none());
 }
 
+#[test]
+fn f1_opens_the_about_page_over_the_image_view_and_esc_closes_it() {
+    let mut h = harness(browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]));
+    h.run();
+    h.get_by_label("F1");
+    h.get_by_label("about");
+    h.key_press(egui::Key::F1);
+    h.run();
+    assert_eq!(h.state().commands, [Command::ProbeLibraries]);
+    h.get_by_label("pixpixpix");
+    h.get_by_label("Esc/F1");
+    // The settings screen is not behind it.
+    assert!(h.query_by_label("Settings").is_none());
+    assert!(!h.state().core.view().settings_open);
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert!(h.state().core.view().about.is_none());
+    h.get_by_label("+/-");
+    // A click on the hint opens it too.
+    let rect = h.get_by_label("about").rect();
+    click_at(&mut h, rect.center());
+    assert!(h.state().core.view().about.is_some());
+}
+
 const CACHE_LABEL: &str = "Cached images per side";
 
 #[test]

@@ -583,7 +583,7 @@ impl Core {
 
     /// `Ctrl`+wheel over the overview.
     pub(super) fn wheel_thumbnails(&mut self, larger: bool) -> Vec<Command> {
-        if self.view.overview.is_none() || self.view.settings_open {
+        if self.view.overview.is_none() || self.covered() {
             return Vec::new();
         }
         self.resize_thumbnails(larger)
