@@ -468,7 +468,7 @@ fn a_folder_without_images_says_so() {
 #[test]
 fn entering_an_unreadable_folder_shows_the_error() {
     let mut h = column_open();
-    h.key_press(egui::Key::Enter);
+    h.key_press(egui::Key::ArrowRight);
     h.run();
     listed(&mut h, "/p/holidays", Err("permission denied".into()));
     h.get_by_label("Cannot read /p/holidays: permission denied");
