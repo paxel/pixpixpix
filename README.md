@@ -35,14 +35,30 @@ On Linux with Homebrew:
 brew install paxel/tap/pixpixpix
 ```
 
+Three optional libraries come from your distribution: libmpv for videos, libheif for
+HEIC/HEIF and AVIF, libturbojpeg for lossless JPEG turns. Without them everything else
+works.
+
+```sh
+# Fedora
+sudo dnf install mpv-libs libheif turbojpeg
+# Debian, Ubuntu
+sudo apt install libmpv2 libheif1 libheif-plugin-libde265 libheif-plugin-dav1d libturbojpeg
+# Arch
+sudo pacman -S mpv libheif libjpeg-turbo
+```
+
 On macOS with Homebrew:
 
 ```sh
 brew install --cask paxel/tap/pixpixpix
 ```
 
-A Flatpak, release tarballs, building from source, and the system libraries a few
-formats need are on the [Install](https://paxel.github.io/pixpixpix/install.html) page.
+The cask brings libheif and jpeg-turbo with it and the app bundles libmpv, so there is
+nothing else to install.
+
+A Flatpak, release tarballs and building from source are on the
+[Install](https://paxel.github.io/pixpixpix/install.html) page.
 
 ## Development
 
