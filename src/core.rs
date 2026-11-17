@@ -959,8 +959,16 @@ const DIR_COLUMN_KEYS: &[KeyHint] = &[
         action: "overview",
     },
     KeyHint {
+        keys: "I",
+        action: "info",
+    },
+    KeyHint {
+        keys: "P",
+        action: "tools",
+    },
+    KeyHint {
         keys: "N",
-        action: "close",
+        action: "hide folders",
     },
     KeyHint {
         keys: "B",
@@ -984,6 +992,18 @@ const BAND_KEYS: &[KeyHint] = &[
     KeyHint {
         keys: "Esc",
         action: "image view",
+    },
+    KeyHint {
+        keys: "I",
+        action: "info",
+    },
+    KeyHint {
+        keys: "P",
+        action: "tools",
+    },
+    KeyHint {
+        keys: "N",
+        action: "folders",
     },
     KeyHint {
         keys: "B",
@@ -2150,7 +2170,7 @@ impl Core {
             self.view.key_line.keys = keys;
         }
         if !self.view.settings_open && self.view.overview.is_none() {
-            self.publish_band_keys();
+            self.publish_pane_keys();
         }
         if self.dialog.is_some() {
             self.view.key_line.keys = SAVE_DIALOG_KEYS.to_vec();
@@ -2718,6 +2738,18 @@ impl Core {
             _ if self.view.overview.is_some() => self.overview_key(key.key),
             (Key::N, false) => self.toggle_column(),
             (Key::B, false) => self.toggle_band(),
+            (Key::I, false) => {
+                self.toggle_info();
+                Vec::new()
+            }
+            (Key::P, false) => {
+                self.toggle_toolbar();
+                // The tools draw on a still frame.
+                if self.toolbar_open && self.video.as_ref().is_some_and(|v| v.playing) {
+                    return self.toggle_play();
+                }
+                Vec::new()
+            }
             (Key::Tab, false) => {
                 match self.view.focus {
                     Focus::Dirs => self.set_focus(Focus::Image),
@@ -2873,17 +2905,25 @@ impl Core {
         }
     }
 
-    /// Fits the key hints of `b` and `Tab` to the band being hidden or
-    /// focused.
-    fn publish_band_keys(&mut self) {
+    /// Fits the key hints of the pane keys to what a press does now, showing
+    /// or focusing a pane or hiding it, and that of `Tab` to the band being
+    /// hidden.
+    fn publish_pane_keys(&mut self) {
         let hidden = self.view.settings.band_hidden;
         let focus = self.view.focus;
         let column = self.view.dir_column.is_some();
+        let (info, tools) = (self.info.is_some(), self.toolbar_open);
         let keys = &mut self.view.key_line.keys;
         for key in keys.iter_mut() {
             match key.keys {
-                "B" if hidden => key.action = "show preloaded files",
-                "B" if focus == Focus::Band => key.action = "hide preloaded files",
+                "N" if focus == Focus::Dirs => key.action = "hide folders",
+                "N" => key.action = "folders",
+                "B" if focus == Focus::Band && !hidden => key.action = "hide preloaded files",
+                "B" => key.action = "preloaded files",
+                "I" if info => key.action = "hide info",
+                "I" => key.action = "info",
+                "P" if tools => key.action = "hide tools",
+                "P" => key.action = "tools",
                 "Tab" if hidden && focus == Focus::Image && column => key.action = "folders",
                 _ => {}
             }
@@ -2930,10 +2970,15 @@ impl Core {
         Vec::new()
     }
 
-    /// Opens the column on the current folder, focused, or closes it, ending
-    /// the one-shot actions, and returns focus to the image view. Nothing to
-    /// list before the folder is known.
+    /// `n`: opens the column on the current folder, focused, focuses the
+    /// open one, or closes it from inside, ending the one-shot actions, and
+    /// returns focus to the image view. Nothing to list before the folder is
+    /// known.
     fn toggle_column(&mut self) -> Vec<Command> {
+        if self.view.dir_column.is_some() && self.view.focus != Focus::Dirs {
+            self.set_focus(Focus::Dirs);
+            return Vec::new();
+        }
         if self.view.dir_column.is_some() {
             let commands = self.reset_one_shot();
             self.view.dir_column = None;
@@ -3239,20 +3284,8 @@ impl Core {
             Key::X => self.trash(),
             Key::U => self.undo_trash(),
             Key::C => self.copy(),
-            Key::I => {
-                self.toggle_info();
-                Vec::new()
-            }
             Key::Space => self.toggle_play(),
             Key::M => self.toggle_mute(),
-            Key::P => {
-                self.toggle_toolbar();
-                // The tools draw on a still frame.
-                if self.toolbar_open && self.video.as_ref().is_some_and(|v| v.playing) {
-                    return self.toggle_play();
-                }
-                Vec::new()
-            }
             _ => Vec::new(),
         }
     }

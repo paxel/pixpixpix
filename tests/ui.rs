@@ -569,6 +569,33 @@ fn the_key_line_lists_the_band_keys_while_it_has_the_focus() {
     assert!(h.query_by_label("Esc").is_none());
 }
 
+/// The hints of the pane keys read what a press does now, and a click on
+/// one presses its key.
+#[test]
+fn the_pane_key_hints_say_what_a_press_does_now() {
+    let mut h = harness(browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]));
+    h.run();
+    h.get_by_label("info");
+    h.get_by_label("tools");
+    h.get_by_label("folders");
+    h.key_press(egui::Key::I);
+    h.run();
+    h.key_press(egui::Key::P);
+    h.run();
+    h.get_by_label("hide info");
+    h.get_by_label("hide tools");
+    // In the dir column too.
+    h.key_press(egui::Key::N);
+    h.run();
+    h.get_by_label("hide folders");
+    h.get_by_label("hide tools");
+    let rect = h.get_by_label("hide info").rect();
+    click_at(&mut h, rect.center());
+    assert!(h.state().core.view().metadata.is_none());
+    assert_eq!(h.state().core.view().focus, pixpixpix::core::Focus::Dirs);
+    h.get_by_label("info");
+}
+
 const CACHE_LABEL: &str = "Cached images per side";
 
 #[test]

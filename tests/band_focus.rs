@@ -197,6 +197,9 @@ fn the_key_line_lists_the_band_keys_while_it_has_the_focus() {
             "Left/Right",
             "Enter",
             "Esc",
+            "I",
+            "P",
+            "N",
             "B",
             "Tab",
             "S",
@@ -205,11 +208,11 @@ fn the_key_line_lists_the_band_keys_while_it_has_the_focus() {
             "?"
         ]
     );
-    assert_eq!(core.view().key_line.keys[3].action, "hide preloaded files");
-    assert_eq!(core.view().key_line.keys[4].action, "image view");
+    assert_eq!(action_of(&core, "B"), Some("hide preloaded files"));
+    assert_eq!(action_of(&core, "Tab"), Some("image view"));
     let mut core = column_open();
     press(&mut core, Key::B);
-    assert_eq!(core.view().key_line.keys[4].action, "folders");
+    assert_eq!(action_of(&core, "Tab"), Some("folders"));
 }
 
 fn action_of(core: &Core, keys: &str) -> Option<&'static str> {
@@ -235,7 +238,7 @@ fn b_in_the_band_hides_it_and_b_again_shows_and_focuses_it() {
     assert_eq!(press(&mut core, Key::B), [band_hidden(true)]);
     assert!(core.view().settings.band_hidden);
     assert_eq!(core.view().focus, Focus::Image);
-    assert_eq!(action_of(&core, "B"), Some("show preloaded files"));
+    assert_eq!(action_of(&core, "B"), Some("preloaded files"));
     assert_eq!(press(&mut core, Key::B), [band_hidden(false)]);
     assert!(!core.view().settings.band_hidden);
     assert_eq!(core.view().focus, Focus::Band);
@@ -269,5 +272,5 @@ fn a_band_hidden_before_stays_hidden_after_a_restart() {
         ..Settings::default()
     })));
     assert!(core.view().settings.band_hidden);
-    assert_eq!(action_of(&core, "B"), Some("show preloaded files"));
+    assert_eq!(action_of(&core, "B"), Some("preloaded files"));
 }
