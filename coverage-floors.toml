@@ -1,0 +1,13 @@
+# The coverage ratchet (paxel/gates coverage_ratchet.py): one part per measured package. CI
+# writes coverage/rust.lcov and fails below the floor. After a rise, run the two commands
+# AGENTS.md names; the ratchet raises the floor to the measured value minus 0.1 and writes
+# .github/badges/coverage-rust.json. Commit both with the change that earned them.
+#
+# The tests take another branch when a native library pixpixpix loads at runtime is missing,
+# so the number depends on the machine. CI measures with libturbojpeg, libheif (with its
+# decoder plugins) and libmpv installed; raise the floor only from a machine that has them too.
+
+[[parts]]
+name = "rust"
+lcov = "coverage/rust.lcov"
+floor = 85.75

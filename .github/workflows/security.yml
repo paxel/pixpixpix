@@ -1,33 +1,24 @@
-# Checks the dependencies with cargo deny (deny.toml): a known vulnerability
-# (RustSec) or a licence that is not allowed fails it. Runs on every push and
-# pull request, and weekly, because new advisories appear without any change
-# here. Unmaintained, unsound or yanked crates fail it too.
 name: Security
 
+# Weekly, and by hand: the release gate without a version, strict. It fails on every open
+# code-scanning or secret-scanning alert that code-scanning-ignores.toml does not accept, on a
+# known vulnerability, on an unmaintained dependency and on a licence outside the allowlist,
+# and when an accepted finding's date has passed: that is the review.
 on:
-  push:
-    branches: [summer]
-  pull_request:
   schedule:
-    - cron: "17 5 * * 1"
+    - cron: "23 5 * * 1"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  cargo-deny:
-    name: Advisories and licences (cargo deny)
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
-        with:
-          command: check advisories licenses sources
-      # The fuzz crate has a lockfile of its own. Its licences are not checked:
-      # libFuzzer (NCSA) only builds the fuzz targets and never ships.
-      - name: Advisories and sources of the fuzz crate
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
-        with:
-          manifest-path: fuzz/Cargo.toml
-          command: check advisories sources
+  gate:
+    uses: paxel/gates/.github/workflows/release-gate.yml@d22bf6e88b4412ff8281ff48963917843abf494f # v1.1.1
+    permissions:
+      contents: read
+      security-events: read
+    with:
+      strict: true
+    secrets:
+      alerts-token: ${{ secrets.GATES_ALERTS_TOKEN }}

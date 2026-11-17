@@ -11,9 +11,12 @@ import {
   buildSite,
   checkLinks,
   collectPages,
+  decodeEntities,
+  extractLinks,
   parseFrontMatter,
   processHeadings,
   readVersion,
+  stripTags,
   versionHref,
 } from "./build.js";
 import { generatedPages, inline, latestNews, parseChangelog } from "./generated.js";
@@ -221,4 +224,26 @@ test("a link to the site in a changelog entry leads to that page of the version 
   // A page or an anchor the version lacks fails the build.
   const files = new Map([["whats-new.html", inline("[gone](https://paxel.github.io/pixpixpix/index.html#nowhere)")], ["index.html", ""]]);
   assert.throws(() => checkLinks(files), /missing anchor #nowhere/);
+});
+
+test("the links of a stylesheet are read bare, quoted and with blanks around them", () => {
+  const css = `a { background: url(a.png) } b { src: url( "b c.woff2" ) } c { x: url('d.svg') } d { y: url(  e.png  ) }`;
+  assert.deepEqual(extractLinks("site.css", css), ["a.png", "b c.woff2", "d.svg", "e.png"]);
+  assert.deepEqual(extractLinks("site.css", "a { x: url() } b { y: url(\"') }"), ["", `"'`]);
+});
+
+test("a query after a link is not part of the file the link check looks for", () => {
+  const files = new Map([["index.html", '<a href="a.html?v=1#top">a</a><a href="a.html?x">b</a>'], ["a.html", '<h1 id="top">A</h1>']]);
+  assert.doesNotThrow(() => checkLinks(files));
+  assert.throws(() => checkLinks(new Map([["index.html", '<a href="b.html?v=1">b</a>']])), /b\.html/);
+});
+
+test("tags are stripped, a lone < stays text, entities are decoded", () => {
+  assert.equal(stripTags("<p>Open the <strong>trash</strong></p><p>again</p>"), "Open the trash again");
+  assert.equal(stripTags("1 < 2 and <em>3</em> > 2"), "1 < 2 and 3 > 2");
+  assert.equal(decodeEntities("&#x41;&#66;&lt;&amp;lt;"), "AB<&lt;");
+});
+
+test("a link label holds no bracket; text in brackets before a link stays text", () => {
+  assert.equal(inline("[x] [docs](https://github.com/paxel)"), '[x] <a href="https://github.com/paxel">docs</a>');
 });

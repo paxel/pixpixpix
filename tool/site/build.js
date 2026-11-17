@@ -385,13 +385,22 @@ export function render404({ navs, version, whatsNew, base = "/", versions = [] }
 
 const ATTR_LINK = /\s(?:xlink:)?(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>"']+))/g;
 const SRCSET = /\ssrcset\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
-const CSS_URL = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^)"']*))\s*\)/g;
+// Everything between the brackets; the blanks and the quotes around it come off in cssUrl().
+const CSS_URL = /url\(([^()]*)\)/g;
+
+/** The address inside a CSS url(): trimmed, and without the quotes it may stand in. */
+function cssUrl(inner) {
+  const url = inner.trim();
+  const quote = url[0];
+  const quoted = (quote === '"' || quote === "'") && url.length > 1 && url.endsWith(quote);
+  return quoted ? url.slice(1, -1) : url;
+}
 
 /** Every link (href, src, srcset candidates, CSS url()) in one output file. */
 export function extractLinks(file, content) {
   const links = [];
   if (file.endsWith(".css")) {
-    for (const m of content.matchAll(CSS_URL)) links.push((m[1] ?? m[2] ?? m[3]).trim());
+    for (const m of content.matchAll(CSS_URL)) links.push(cssUrl(m[1]));
     return links;
   }
   if (!file.endsWith(".html")) return links;
@@ -418,7 +427,9 @@ export function checkLinks(files, { base = "/", knownTargets = new Set() } = {})
       if (EXTERNAL.test(link)) continue;
       const hashAt = link.indexOf("#");
       const fragment = hashAt >= 0 ? link.slice(hashAt + 1) : "";
-      let target = (hashAt >= 0 ? link.slice(0, hashAt) : link).replace(/\?.*$/, "");
+      let target = hashAt >= 0 ? link.slice(0, hashAt) : link;
+      const queryAt = target.indexOf("?");
+      if (queryAt >= 0) target = target.slice(0, queryAt);
       if (target.startsWith("/")) {
         if (knownTargets.has(target)) continue; // a file of another version
         if (!target.startsWith(base)) {

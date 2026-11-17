@@ -32,7 +32,7 @@ const NAMED_ENTITIES = {
 /** Decodes numeric and the named entities the pages use; `&amp;` last so `&amp;lt;` stays `&lt;`. */
 export function decodeEntities(text) {
   return text
-    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(Number.parseInt(hex, 16)))
     .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(Number(dec)))
     .replace(/&([a-z]+);/gi, (whole, name) =>
       name === "amp" ? whole : (NAMED_ENTITIES[name] ?? whole),
@@ -44,7 +44,8 @@ const INLINE_TAG = /^<\/?(a|code|em|strong|kbd|span|b|i|abbr|sup|sub|mark|small|
 
 /** Text of an HTML fragment: inline tags vanish, block tags become a space, entities are decoded. */
 export function stripTags(html) {
-  const text = html.replace(/<[^>]*>/g, (tag) => (INLINE_TAG.test(tag) ? "" : " "));
+  // A tag holds no "<": a lone one in the text is not the start of a tag.
+  const text = html.replace(/<[^<>]*>/g, (tag) => (INLINE_TAG.test(tag) ? "" : " "));
   return decodeEntities(text).replace(/\s+/g, " ").trim();
 }
 
