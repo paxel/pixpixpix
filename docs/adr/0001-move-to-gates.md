@@ -18,7 +18,7 @@ finding, of which pixpixpix had 17.
 
 ## Decision
 
-pixpixpix meets the standard of gates v1.1.1. Where the standard decides, it is followed
+pixpixpix meets the standard of gates v1.1.2. Where the standard decides, it is followed
 without a note here: the OSV gate instead of cargo deny, one coverage ratchet, the shared
 CodeQL, Scorecard, fuzz, release gate and provenance workflows, the files and the badge row.
 What follows is where pixpixpix adds to it, or had a choice.

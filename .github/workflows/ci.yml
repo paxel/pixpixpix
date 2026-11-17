@@ -23,10 +23,10 @@ env:
 
 jobs:
   vulns:
-    uses: paxel/gates/.github/workflows/vulns.yml@d22bf6e88b4412ff8281ff48963917843abf494f # v1.1.1
+    uses: paxel/gates/.github/workflows/vulns.yml@ba23cabf3ca13ea19f2100ba319869768209a7ce # v1.1.2
 
   rust:
-    uses: paxel/gates/.github/workflows/rust.yml@d22bf6e88b4412ff8281ff48963917843abf494f # v1.1.1
+    uses: paxel/gates/.github/workflows/rust.yml@ba23cabf3ca13ea19f2100ba319869768209a7ce # v1.1.2
     with:
       apt-packages: libturbojpeg libheif1 libheif-plugin-libde265 libheif-plugin-dav1d libmpv2
       # The helper processes the tests start write their profile on the way out; without the
@@ -80,6 +80,6 @@ jobs:
 
   sonar:
     needs: rust
-    uses: paxel/gates/.github/workflows/sonar.yml@d22bf6e88b4412ff8281ff48963917843abf494f # v1.1.1
+    uses: paxel/gates/.github/workflows/sonar.yml@ba23cabf3ca13ea19f2100ba319869768209a7ce # v1.1.2
     secrets:
       sonar-token: ${{ secrets.SQ_TOKEN }}

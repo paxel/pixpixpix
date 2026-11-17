@@ -30,20 +30,3 @@ effectiveUntil = 2027-05-14
 reason = """NCSA AND (Apache-2.0 OR MIT): the NCSA part is LLVM's libFuzzer, a permissive licence \
 that is not on the standard's allowlist. libfuzzer-sys is linked only into the fuzz targets, \
 which are never part of a release."""
-
-[[PackageOverrides]]
-name = "pixpixpix-fuzz"
-ecosystem = "crates.io"
-license.ignore = true
-effectiveUntil = 2027-05-14
-reason = """This crate itself: MIT, like pixpixpix, but never published, so no registry knows \
-its licence. The OSV gate recognises a repository's own packages only outside fuzz/."""
-
-[[PackageOverrides]]
-name = "trash"
-ecosystem = "crates.io"
-version = "5.4.0"
-license.ignore = true
-effectiveUntil = 2026-12-17
-reason = """MIT per crates.io, like every release before it. 5.4.0 was published on 2026-11-17 and \
-the licence index osv-scanner asks does not know it yet; remove this once it does."""
