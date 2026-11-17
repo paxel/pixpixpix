@@ -68,6 +68,11 @@ node --test "tool/site/*.test.js"                 # test the site build
 cargo test --test screenshots -- --ignored        # redo site/assets/screenshots
 ```
 
+## Support
+
+pixpixpix is free. If it is useful to you, you can
+[support it on Ko-fi](https://ko-fi.com/paxel7).
+
 ## The name
 
 The name nods to the band Pigs Pigs Pigs Pigs Pigs Pigs Pigs

@@ -668,6 +668,7 @@ fn f1_opens_the_about_page_over_the_image_view_and_esc_closes_it() {
     h.run();
     assert_eq!(h.state().commands, [Command::ProbeLibraries]);
     h.get_by_label("pixpixpix");
+    h.get_by_role_and_label(Role::Link, "Support on Ko-fi");
     h.get_by_label("Esc/F1");
     // The settings screen is not behind it.
     assert!(h.query_by_label("Settings").is_none());
@@ -2450,6 +2451,7 @@ fn the_settings_link_to_an_about_page_that_lists_and_copies_the_libraries() {
         "{text}"
     );
     assert!(text.contains(env!("CARGO_PKG_VERSION")), "{text}");
+    assert!(text.contains("Support: https://ko-fi.com/paxel7"), "{text}");
     // Esc goes back to the settings, S closes them.
     h.key_press(egui::Key::Escape);
     h.run();

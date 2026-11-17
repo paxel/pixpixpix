@@ -967,6 +967,9 @@ fn show_trash_section(ctx: &egui::Context, asked: &TrashSection, events: &mut Ve
 
 /// Where pixpixpix lives.
 const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
+
+/// Where the project can be supported.
+const KOFI: &str = "https://ko-fi.com/paxel7";
 /// The band the name nods to.
 const BAND_WIKIPEDIA: &str = "https://en.wikipedia.org/wiki/Pigs_Pigs_Pigs_Pigs_Pigs_Pigs_Pigs";
 const BAND_SPOTIFY: &str = "https://open.spotify.com/artist/1F7QDWyZTLGzkyGLgFjEhU";
@@ -996,7 +999,10 @@ fn show_about(ctx: &egui::Context, about: &About, events: &mut Vec<Event>) {
                         ))
                         .color(DIM_TEXT),
                     );
-                    ui.hyperlink_to("GitHub", REPOSITORY);
+                    ui.horizontal(|ui| {
+                        ui.hyperlink_to("GitHub", REPOSITORY);
+                        ui.hyperlink_to("Support on Ko-fi", KOFI);
+                    });
                 });
             });
             ui.add_space(8.0);
@@ -1048,7 +1054,7 @@ fn show_about(ctx: &egui::Context, about: &About, events: &mut Vec<Event>) {
 /// What the About page's copy button puts on the clipboard.
 pub fn about_text(about: &About) -> String {
     let mut text = format!(
-        "{}\nMIT license\n{REPOSITORY}\n\nLibraries:\n",
+        "{}\nMIT license\n{REPOSITORY}\nSupport: {KOFI}\n\nLibraries:\n",
         crate::report::system()
     );
     for library in about.libraries.iter().flatten() {
