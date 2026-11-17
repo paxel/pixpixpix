@@ -145,15 +145,16 @@ fn right_goes_into_the_first_subfolder_shown() {
 }
 
 #[test]
+fn enter_leaves_the_column_not_the_level_and_keeps_dots() {
+    let mut core = column_open();
+    press(&mut core, Key::Period);
+    press(&mut core, Key::Enter);
+    assert_eq!(tags(&core), [(Toggle::DotEntries, false)]);
+}
+
+#[test]
 fn leaving_the_level_resets_dots() {
-    for key in [
-        Key::Left,
-        Key::Right,
-        Key::Enter,
-        Key::Escape,
-        Key::Backspace,
-        Key::N,
-    ] {
+    for key in [Key::Left, Key::Right, Key::Escape, Key::Backspace, Key::N] {
         let mut core = column_open();
         press(&mut core, Key::Period);
         assert_eq!(tags(&core), [(Toggle::DotEntries, false)], "{key:?}");

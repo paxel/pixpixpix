@@ -787,7 +787,8 @@ fn tab_moves_between_dir_column_and_gallery_and_the_key_line_follows() {
             "Up/Down",
             "Left/Backspace",
             "Esc",
-            "Right/Enter",
+            "Right",
+            "Enter",
             "G",
             "Tab",
             "S",
@@ -990,6 +991,35 @@ fn shift_c_copies_the_selected_file() {
         core.handle(Event::Key(shift_c)),
         [Command::CopyFile(p("b.jpg"))]
     );
+}
+
+#[test]
+fn enter_in_the_column_goes_to_the_gallery_and_the_column_stays() {
+    let (mut core, scan) = contents();
+    section(&mut core, scan, "/p", &["/p/a.jpg", "/p/b.jpg"]);
+    press(&mut core, Key::Tab);
+    assert_eq!(core.view().focus, Focus::Dirs);
+    let hint = core.view().key_line.keys.iter().find(|k| k.keys == "Enter");
+    assert_eq!(hint.map(|k| k.action), Some("gallery"));
+    assert!(press(&mut core, Key::Enter).is_empty());
+    assert_eq!(core.view().focus, Focus::Image);
+    assert!(core.view().dir_column.is_some());
+    assert_eq!(
+        overview(&core).map(|o| o.root.clone()),
+        Some(PathBuf::from("/p"))
+    );
+    // The arrows select tiles again.
+    press(&mut core, Key::Right);
+    assert_eq!(selected(&core), Some(1));
+}
+
+#[test]
+fn right_in_the_column_still_goes_into_the_first_subfolder() {
+    let (mut core, _) = contents();
+    press(&mut core, Key::Tab);
+    assert_eq!(core.view().focus, Focus::Dirs);
+    press(&mut core, Key::Right);
+    assert_eq!(overview(&core).map(|o| o.root.clone()), Some(p("x")));
 }
 
 #[test]

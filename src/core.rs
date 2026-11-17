@@ -943,8 +943,12 @@ const DIR_COLUMN_KEYS: &[KeyHint] = &[
         action: "hide",
     },
     KeyHint {
-        keys: "Right/Enter",
+        keys: "Right",
         action: "first subfolder",
+    },
+    KeyHint {
+        keys: "Enter",
+        action: "image view",
     },
     KeyHint {
         keys: ".",
@@ -1098,8 +1102,12 @@ const CONTENTS_KEYS: &[KeyHint] = &[
         action: "hide",
     },
     KeyHint {
-        keys: "Right/Enter",
+        keys: "Right",
         action: "first subfolder",
+    },
+    KeyHint {
+        keys: "Enter",
+        action: "gallery",
     },
     KeyHint {
         keys: "G",
@@ -3094,8 +3102,13 @@ impl Core {
         if key == Key::Escape {
             return self.toggle_column();
         }
+        // This folder: on to its pictures, the column kept.
+        if key == Key::Enter {
+            self.set_focus(Focus::Image);
+            return Vec::new();
+        }
         let mut commands = self.move_in_column(key);
-        if matches!(key, Key::Left | Key::Right | Key::Enter | Key::Backspace) {
+        if matches!(key, Key::Left | Key::Right | Key::Backspace) {
             commands.extend(self.reset_one_shot());
         }
         commands
@@ -3129,7 +3142,7 @@ impl Core {
     }
 
     /// Up/Down go to the folder above or below the current one, Left to the
-    /// parent, Right and Enter into the first subfolder.
+    /// parent, Right into the first subfolder.
     fn move_in_column(&mut self, key: Key) -> Vec<Command> {
         let Some(column) = self.view.dir_column.as_ref() else {
             return Vec::new();
@@ -3153,7 +3166,7 @@ impl Core {
                 .as_deref()
                 .and_then(Path::parent)
                 .map(Path::to_path_buf),
-            Key::Right | Key::Enter => self.subdirs.as_ref().and_then(|dirs| {
+            Key::Right => self.subdirs.as_ref().and_then(|dirs| {
                 dirs.iter()
                     .find(|d| self.dots || !folder::is_dot(d))
                     .cloned()

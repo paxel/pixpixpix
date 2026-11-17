@@ -373,9 +373,9 @@ fn n_shows_the_current_folder_among_its_siblings_highlighted() {
 }
 
 #[test]
-fn enter_goes_into_the_first_subfolder() {
+fn right_goes_into_the_first_subfolder() {
     let mut h = column_open();
-    h.key_press(egui::Key::Enter);
+    h.key_press(egui::Key::ArrowRight);
     h.run();
     assert_eq!(
         h.state().core.view().screen,
@@ -385,6 +385,22 @@ fn enter_goes_into_the_first_subfolder() {
     );
     assert_eq!(folder_toggled(&h, "holidays"), Some(Toggled::True));
     assert_eq!(folder_toggled(&h, "work"), Some(Toggled::False));
+}
+
+#[test]
+fn enter_in_the_column_goes_to_the_image_view_with_a_hint_of_its_own() {
+    let mut h = column_open();
+    h.get_by_label("Right");
+    h.get_by_label("first subfolder");
+    h.get_by_label("Enter");
+    let screen = h.state().core.view().screen.clone();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    assert_eq!(h.state().core.view().screen, screen);
+    assert_eq!(h.state().core.view().focus, pixpixpix::core::Focus::Image);
+    // The column stays, and the key line is the image view's.
+    assert_eq!(folder_toggled(&h, "p"), Some(Toggled::True));
+    h.get_by_label("+/-");
 }
 
 #[test]
