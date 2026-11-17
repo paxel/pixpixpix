@@ -42,7 +42,12 @@ pub fn run() -> ExitCode {
     let (events, inbox) = channel();
     #[cfg(target_os = "macos")]
     crate::macos::open_files(events.clone(), ctx.clone());
-    let (core, commands) = Core::start(start);
+    let (mut core, mut commands) = Core::start(start);
+    // The random choices differ from start to start.
+    let seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_nanos());
+    commands.extend(core.handle(Event::Seed(u64::try_from(seed).unwrap_or(0))));
     let mut worker = Worker {
         ctx: ctx.clone(),
         events,
@@ -811,7 +816,7 @@ impl eframe::App for App {
             self.dispatch(&ctx, event);
         }
         // Not from `ui::show`: its events ask for another frame at once.
-        if self.core.view().next_frame_in.is_some() {
+        if self.core.view().next_frame_in.is_some() || self.core.view().cat.is_some() {
             self.dispatch(&ctx, Event::Tick(Instant::now()));
         }
         for event in ui::input_events(&ctx) {

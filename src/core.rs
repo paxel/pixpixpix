@@ -109,6 +109,31 @@ pub struct Points {
     pub y: f32,
 }
 
+/// The angry cat `Esc` sends off when it has nothing left to close.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Cat {
+    /// How far it has flown from the centre of the image.
+    pub offset: Points,
+}
+
+/// How long the angry cat is seen.
+pub const CAT_TIME: Duration = Duration::from_secs(1);
+
+/// The slowest and the fastest an angry cat flies, in points per second.
+pub const CAT_SPEED: std::ops::RangeInclusive<f32> = 150.0..=800.0;
+
+/// Where the random choices start without [`Event::Seed`].
+const DEFAULT_SEED: u64 = 0x9E37_79B9_7F4A_7C15;
+
+/// An angry cat on its way.
+#[derive(Debug, Clone, Copy)]
+struct CatFlight {
+    /// Points per second.
+    velocity: Points,
+    /// The first tick after `Esc`; absent before it.
+    start: Option<Instant>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
     Key(KeyPress),
@@ -227,8 +252,12 @@ pub enum Event {
         path: PathBuf,
         result: Result<Vec<Frame>, String>,
     },
-    /// The time has come for the frame [`View::next_frame_in`] announced.
+    /// The time has come for the frame [`View::next_frame_in`] announced, or
+    /// a frame is drawn while [`View::cat`] flies.
     Tick(Instant),
+    /// What the random choices start from, sent once at the start; without
+    /// it they start from a fixed number.
+    Seed(u64),
     /// The file of a successful [`Event::Decoded`], sent right after it,
     /// holds `count` images, more than one; that event showed the first.
     Images {
@@ -1543,6 +1572,9 @@ pub struct View {
     /// While the main area plays an animation: when its next frame is due,
     /// to be announced with [`Event::Tick`]. Zero before the first tick.
     pub next_frame_in: Option<Duration>,
+    /// While the angry cat flies; every frame drawn meanwhile is announced
+    /// with [`Event::Tick`].
+    pub cat: Option<Cat>,
     /// While the main area shows a multi-image file: which of its images.
     pub inner: Option<InnerImages>,
     /// While the main area shows a video, or plays the video of a Live Photo
@@ -1625,6 +1657,10 @@ pub struct Core {
     animated: BTreeSet<PathBuf>,
     /// The animation of the current file, once the first frame is shown.
     animation: Option<Animation>,
+    /// The angry cat on its way.
+    cat: Option<CatFlight>,
+    /// The state of the random choices.
+    seed: u64,
     /// How many images the files whose last decode found more than one hold.
     images: BTreeMap<PathBuf, usize>,
     /// The image shown of the current file while it holds more than one.
@@ -1804,6 +1840,7 @@ impl Core {
                 trash_error: None,
                 copy_error: None,
                 next_frame_in: None,
+                cat: None,
                 inner: None,
                 video: None,
                 motion: None,
@@ -1838,6 +1875,8 @@ impl Core {
             undo_waiting: None,
             animated: BTreeSet::new(),
             animation: None,
+            cat: None,
+            seed: DEFAULT_SEED,
             images: BTreeMap::new(),
             inner: None,
             video: None,
@@ -1984,6 +2023,12 @@ impl Core {
             }
             Event::Tick(now) => {
                 self.tick(now);
+                self.fly_cat(now);
+                Vec::new()
+            }
+            Event::Seed(seed) => {
+                // Zero would stay zero.
+                self.seed = seed.max(1);
                 Vec::new()
             }
             Event::Images { path, count } => {
@@ -2579,6 +2624,63 @@ impl Core {
                 }
             }
             _ => Animation::Still(path),
+        });
+    }
+
+    /// The next random number, by xorshift.
+    fn random(&mut self) -> u64 {
+        let mut x = self.seed;
+        x ^= x.wrapping_shl(13);
+        x ^= x.wrapping_shr(7);
+        x ^= x.wrapping_shl(17);
+        self.seed = x;
+        x
+    }
+
+    /// A random fraction from 0 up to, not including, 1.
+    fn random_fraction(&mut self) -> f32 {
+        // 16 bits: every value is an exact `f32`.
+        let bits = u16::try_from(self.random().wrapping_shr(48)).unwrap_or(0);
+        f32::from(bits) / 65_536.0
+    }
+
+    /// Sends an angry cat off from the centre of the image, in a random
+    /// direction at a random speed; one on its way gives way to it.
+    fn send_cat(&mut self) {
+        let angle = self.random_fraction() * std::f32::consts::TAU;
+        let span = CAT_SPEED.end() - CAT_SPEED.start();
+        let speed = CAT_SPEED.start() + self.random_fraction() * span;
+        self.cat = Some(CatFlight {
+            velocity: Points {
+                x: speed * angle.cos(),
+                y: speed * angle.sin(),
+            },
+            start: None,
+        });
+        self.view.cat = Some(Cat {
+            offset: Points::default(),
+        });
+    }
+
+    /// Moves the angry cat to where it is at `now`; after [`CAT_TIME`] it is
+    /// gone. The first tick starts its flight.
+    fn fly_cat(&mut self, now: Instant) {
+        let Some(cat) = &mut self.cat else {
+            return;
+        };
+        let start = *cat.start.get_or_insert(now);
+        let age = now.saturating_duration_since(start);
+        if age >= CAT_TIME {
+            self.cat = None;
+            self.view.cat = None;
+            return;
+        }
+        let seconds = age.as_secs_f32();
+        self.view.cat = Some(Cat {
+            offset: Points {
+                x: cat.velocity.x * seconds,
+                y: cat.velocity.y * seconds,
+            },
         });
     }
 
@@ -3324,6 +3426,11 @@ impl Core {
 
     fn image_key(&mut self, key: Key) -> Vec<Command> {
         match key {
+            // Nothing left to close: the end of the escalation.
+            Key::Escape => {
+                self.send_cat();
+                Vec::new()
+            }
             Key::Left => self.step(Step::Previous),
             Key::Right => self.step(Step::Next),
             Key::Up => self.step_inner(Step::Previous),

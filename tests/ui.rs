@@ -613,6 +613,35 @@ fn the_pane_key_hints_say_what_a_press_does_now() {
 }
 
 #[test]
+fn esc_in_the_image_view_draws_an_angry_cat_for_a_second() {
+    let mut h = harness(browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]));
+    h.run();
+    assert!(h.query_by_label("Angry cat").is_none());
+    h.key_press(egui::Key::Escape);
+    h.run();
+    let centre = h
+        .get_by_role_and_label(Role::Image, "Angry cat")
+        .rect()
+        .center();
+    let start = std::time::Instant::now();
+    h.state_mut().core.handle(Event::Tick(start));
+    h.state_mut()
+        .core
+        .handle(Event::Tick(start + std::time::Duration::from_millis(500)));
+    h.run();
+    let flown = h
+        .get_by_role_and_label(Role::Image, "Angry cat")
+        .rect()
+        .center();
+    assert!(centre.distance(flown) > 50.0, "{centre:?} {flown:?}");
+    h.state_mut()
+        .core
+        .handle(Event::Tick(start + pixpixpix::core::CAT_TIME));
+    h.run();
+    assert!(h.query_by_label("Angry cat").is_none());
+}
+
+#[test]
 fn esc_reads_hide_in_the_band_and_the_dir_column() {
     let mut h = harness(browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]));
     h.run();

@@ -9,7 +9,7 @@ use std::sync::Arc;
 use egui::{Color32, ColorImage, RichText, TextureHandle, TextureOptions};
 
 use crate::core::{
-    About, BinPreview, DefaultRow, Defaults, DirColumn, EditsView, Event, ExportView, Focus,
+    About, BinPreview, Cat, DefaultRow, Defaults, DirColumn, EditsView, Event, ExportView, Focus,
     InnerImages, Key, KeyHint, KeyPress, MetadataView, MotionKind, Notice, Points, Region, Screen,
     Thumb, Toggle, TrashSection, Video, VideoStep, View, Zoom, unturned,
 };
@@ -31,6 +31,8 @@ const CURRENT_MARK: Color32 = Color32::from_rgb(0xff, 0xd5, 0x80);
 /// The highlighted thumb while the band has the focus, around the current mark.
 const BAND_HIGHLIGHT: Color32 = Color32::from_rgb(0x7c, 0xc4, 0xff);
 const BROKEN_TILE: Color32 = Color32::from_rgb(0x3a, 0x1e, 0x1c);
+const CAT_FUR: Color32 = Color32::from_rgb(0xe0, 0x8a, 0x3c);
+const CAT_FACE: Color32 = Color32::from_rgb(0x1c, 0x12, 0x0a);
 /// A band thumb still loading.
 const PLACEHOLDER_TILE: Color32 = Color32::from_rgb(0x24, 0x24, 0x28);
 /// The badge of an animated or multi-image thumb and its marks.
@@ -296,6 +298,9 @@ pub fn show(ui: &mut egui::Ui, view: &View, textures: &mut Textures) -> Vec<Even
             }
             if view.toolbar.is_none() && view.save_dialog.is_none() {
                 show_edge_arrows(ui, &mut events);
+            }
+            if let Some(cat) = view.cat {
+                show_cat(ui, cat);
             }
             if let Some(inner) = view.inner {
                 show_inner(ui, inner);
@@ -1666,6 +1671,52 @@ fn show_inner(ui: &mut egui::Ui, inner: InnerImages) {
 
 /// That the image shown is a Live Photo or Motion Photo, in the top left
 /// corner.
+/// The angry cat, drawn from shapes where it has flown to from the centre
+/// of the main area; every frame asks for the next while it flies.
+fn show_cat(ui: &mut egui::Ui, cat: Cat) {
+    const RADIUS: f32 = 40.0;
+    let middle = ui.max_rect().center();
+    let centre = egui::pos2(middle.x + cat.offset.x, middle.y + cat.offset.y);
+    let at = |x: f32, y: f32| egui::pos2(centre.x + x * RADIUS, centre.y + y * RADIUS);
+    let rect = egui::Rect::from_center_size(centre, egui::Vec2::splat(RADIUS * 2.6));
+    let response = ui.interact(rect, egui::Id::unique("angry cat"), egui::Sense::hover());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, "Angry cat"));
+    let painter = ui.painter();
+    let line = egui::Stroke::new(2.5, CAT_FACE);
+    // Ears first, the head over their roots.
+    for side in [-1.0, 1.0] {
+        painter.add(egui::Shape::convex_polygon(
+            vec![
+                at(side * 0.95, -0.3),
+                at(side * 0.9, -1.25),
+                at(side * 0.25, -0.8),
+            ],
+            CAT_FUR,
+            egui::Stroke::NONE,
+        ));
+    }
+    painter.circle_filled(centre, RADIUS, CAT_FUR);
+    for side in [-1.0, 1.0] {
+        // Eyes under brows that slant down to the nose.
+        painter.circle_filled(at(side * 0.4, -0.1), RADIUS * 0.12, CAT_FACE);
+        painter.line_segment([at(side * 0.7, -0.5), at(side * 0.15, -0.2)], line);
+        // Whiskers.
+        for tilt in [-0.1, 0.1] {
+            painter.line_segment(
+                [at(side * 0.35, 0.3), at(side * 1.2, 0.3 + tilt)],
+                egui::Stroke::new(1.0, CAT_FACE),
+            );
+        }
+    }
+    // The frown: corners lower than the middle.
+    painter.add(egui::Shape::line(
+        vec![at(-0.35, 0.65), at(0.0, 0.45), at(0.35, 0.65)],
+        line,
+    ));
+    ui.ctx()
+        .request_repaint_after(std::time::Duration::from_millis(16));
+}
+
 fn show_motion(ui: &mut egui::Ui, kind: MotionKind) {
     let area = ui.max_rect();
     let rect = egui::Rect::from_min_size(

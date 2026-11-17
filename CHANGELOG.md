@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - `F1` opens the About page from every screen, and the key line lists it ([pix-142](https://github.com/paxel/pixpixpix/issues/142)).
 - `i` in the overview shows info about the selected file and follows the selection ([pix-139](https://github.com/paxel/pixpixpix/issues/139)).
+- `Esc` in the image view with nothing left to close sends an angry cat flying for a second ([pix-140](https://github.com/paxel/pixpixpix/issues/140)).
 
 ### Changed
 
