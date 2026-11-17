@@ -740,13 +740,14 @@ impl Core {
         };
         items.sort_by_key(|item| std::cmp::Reverse(item.deleted));
         for item in items {
-            let day = chrono::DateTime::from_timestamp(item.deleted, 0)
-                .map(|t| {
-                    t.with_timezone(&chrono::Local)
-                        .format("%Y-%m-%d")
+            let day = jiff::Timestamp::from_second(item.deleted).map_or_else(
+                |_| "unknown day".to_owned(),
+                |t| {
+                    t.to_zoned_datetime(jiff::tz::TimeZone::system())
+                        .strftime("%Y-%m-%d")
                         .to_string()
-                })
-                .unwrap_or_else(|| "unknown day".to_owned());
+                },
+            );
             let index = overview.tiles.len();
             match overview.sections.last_mut() {
                 Some(section) if section.title == day => {

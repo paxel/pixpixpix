@@ -10,10 +10,11 @@ use std::ops::Range;
 use std::path::Path;
 use std::time::SystemTime;
 
-use chrono::{DateTime, Local, NaiveDateTime};
 use exif::{Context, Exif, In, Reader, Tag, Value};
 use image::metadata::Orientation;
 use image::{ImageDecoder, ImageFormat, ImageReader};
+use jiff::ZonedDateTime;
+use jiff::civil::DateTime;
 
 use crate::{annotate, decode, folder, motion, multi, rotate};
 
@@ -110,15 +111,19 @@ fn size(bytes: u64) -> String {
     }
 }
 
+/// A file time in the local time zone; a time no calendar holds shows as unknown.
 fn local(time: SystemTime) -> String {
-    DateTime::<Local>::from(time).format(TYPED).to_string()
+    ZonedDateTime::try_from(time).map_or_else(
+        |_| "unknown".to_owned(),
+        |zoned| zoned.strftime(TYPED).to_string(),
+    )
 }
 
 /// The capture date as typed; a date that is no date shows as stored.
 fn captured(exif: &Exif) -> Option<String> {
     let stored = text(exif, Tag::DateTimeOriginal)?;
-    Some(match NaiveDateTime::parse_from_str(&stored, STORED) {
-        Ok(date) => date.format(TYPED).to_string(),
+    Some(match DateTime::strptime(STORED, &stored) {
+        Ok(date) => date.strftime(TYPED).to_string(),
         Err(_) => stored,
     })
 }
@@ -214,9 +219,9 @@ fn orientation(exif: &Exif) -> Option<String> {
 /// A typed capture date `YYYY-MM-DD HH:MM:SS` as EXIF stores it, or none if
 /// it is not such a date.
 pub fn stored_date(typed: &str) -> Option<String> {
-    let date = NaiveDateTime::parse_from_str(typed, TYPED).ok()?;
+    let date = DateTime::strptime(TYPED, typed).ok()?;
     // Exactly as typed, so the stored date keeps its fixed length.
-    (date.format(TYPED).to_string() == typed).then(|| date.format(STORED).to_string())
+    (date.strftime(TYPED).to_string() == typed).then(|| date.strftime(STORED).to_string())
 }
 
 /// Sets the capture date of the file at `path` to `stored`, as
