@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   fuzz:
-    uses: paxel/gates/.github/workflows/fuzz.yml@d22bf6e88b4412ff8281ff48963917843abf494f # v1.1.1
+    uses: paxel/gates/.github/workflows/fuzz.yml@ba23cabf3ca13ea19f2100ba319869768209a7ce # v1.1.2
     with:
       stack: rust
       # A fuzzer finds more the longer it runs: a quarter of an hour per target.
