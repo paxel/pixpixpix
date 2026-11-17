@@ -811,6 +811,9 @@ impl eframe::App for App {
             }
             self.dispatch(&ctx, Event::FirstFrameShown);
             set_window_icon(ctx.clone());
+            // After the launch: the window toolkit sets up its own menu then.
+            #[cfg(target_os = "macos")]
+            crate::macos::install_menu(self.worker.events.clone(), ctx.clone());
         }
         while let Ok(event) = self.inbox.try_recv() {
             self.dispatch(&ctx, event);

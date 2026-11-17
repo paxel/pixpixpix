@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - `F1` opens the About page from every screen, and the key line lists it ([pix-142](https://github.com/paxel/pixpixpix/issues/142)).
+- On macOS the menu bar has an app menu with About pixpixpix, Settings… (`Cmd+,`), Hide and Quit ([pix-143](https://github.com/paxel/pixpixpix/issues/143)).
 - `i` in the overview shows info about the selected file and follows the selection ([pix-139](https://github.com/paxel/pixpixpix/issues/139)).
 - `Esc` in the image view with nothing left to close sends an angry cat flying for a second ([pix-140](https://github.com/paxel/pixpixpix/issues/140)).
 
