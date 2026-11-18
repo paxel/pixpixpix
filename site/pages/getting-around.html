@@ -8,13 +8,16 @@ in its bottom right corner, and lists that area's keys, on as many lines as it n
 key in that line does what the key does: under the pointer the key lights up, and a click flashes
 it. In a pair such as <kbd>Left/Right</kbd> only the key a click presses lights up.
 <kbd>?</kbd> hides the hints and brings them back, also by click.</p>
-<p>On macOS, <kbd>Cmd</kbd> takes the place of <kbd>Ctrl</kbd> in every key on these pages.</p>
+<p>On macOS, <kbd>Cmd</kbd> takes the place of <kbd>Ctrl</kbd> in every key on these pages, and the
+app menu in the menu bar has About, Settings… (<kbd>Cmd+,</kbd>), Hide and Quit.</p>
 
 <h2>Everywhere</h2>
 <table>
 <thead><tr><th>Key</th><th>Action</th></tr></thead>
 <tbody>
 <tr><td><kbd>s</kbd></td><td>settings</td></tr>
+<tr><td><kbd>Esc</kbd></td><td>hide the focused pane or leave the screen on top, one layer per press; with nothing left to close, an angry cat says so</td></tr>
+<tr><td><kbd>F1</kbd></td><td>the About page: version, links and the optional libraries found; <kbd>Esc</kbd> or <kbd>F1</kbd> closes it</td></tr>
 <tr><td><kbd>f</kbd></td><td>fullscreen</td></tr>
 <tr><td><kbd>Ctrl+Q</kbd></td><td>quit</td></tr>
 <tr><td><kbd>Tab</kbd></td><td>next area</td></tr>
@@ -43,10 +46,14 @@ next file; the one under the pointer lights up.</p>
 <tr><td><kbd>1</kbd></td><td>100 %</td></tr>
 <tr><td><kbd>Up</kbd> / <kbd>Down</kbd></td><td>previous / next image inside a multi-image file</td></tr>
 <tr><td><kbd>g</kbd></td><td>overview, the file shown selected</td></tr>
-<tr><td><kbd>n</kbd></td><td>dir column</td></tr>
-<tr><td><kbd>b</kbd></td><td>focus the preloaded files; there, hide them</td></tr>
+<tr><td><kbd>n</kbd></td><td>show and focus the dir column; there, hide it</td></tr>
+<tr><td><kbd>b</kbd></td><td>show and focus the preloaded files; there, hide them</td></tr>
 </tbody>
 </table>
+<p><kbd>n</kbd> and <kbd>b</kbd> work the same way from the image view, the dir column and the band:
+a hidden pane is shown and focused, a shown one is focused, and the focused one is hidden.
+<kbd>i</kbd> (info) and <kbd>p</kbd> (tools) show and hide their pane from all three, and the focus
+stays where it is. The key line says for each of the four what a press does now.</p>
 
 <h2>Videos and moving photos</h2>
 <table>
@@ -69,7 +76,7 @@ back with <kbd>b</kbd>, and stays hidden across starts until then.</p>
 <tbody>
 <tr><td><kbd>Left</kbd> / <kbd>Right</kbd></td><td>move the highlight</td></tr>
 <tr><td><kbd>Enter</kbd></td><td>show the highlighted image</td></tr>
-<tr><td><kbd>Esc</kbd></td><td>back to the image view, the file kept</td></tr>
+<tr><td><kbd>Esc</kbd></td><td>hide the band, back to the image view, the file kept</td></tr>
 <tr><td>click</td><td>show the clicked image (also without <kbd>b</kbd>)</td></tr>
 </tbody>
 </table>
@@ -87,9 +94,10 @@ view along. A click on a folder goes there, a double-click goes into its first s
 <thead><tr><th>Key</th><th>Action</th></tr></thead>
 <tbody>
 <tr><td><kbd>Up</kbd> / <kbd>Down</kbd></td><td>go to the folder above or below</td></tr>
-<tr><td><kbd>Right</kbd> / <kbd>Enter</kbd></td><td>go into the first subfolder</td></tr>
+<tr><td><kbd>Right</kbd></td><td>go into the first subfolder</td></tr>
+<tr><td><kbd>Enter</kbd></td><td>on to the folder's pictures: the image view, or the gallery in the overview; the column stays</td></tr>
 <tr><td><kbd>Left</kbd> / <kbd>Backspace</kbd></td><td>go to the parent</td></tr>
-<tr><td><kbd>Esc</kbd>, <kbd>n</kbd></td><td>close, back to the image view</td></tr>
+<tr><td><kbd>Esc</kbd>, <kbd>n</kbd></td><td>hide the column, back to the image view</td></tr>
 <tr><td><kbd>.</kbd></td><td>show dot files and dot folders until you leave the level</td></tr>
 <tr><td><kbd>Shift+.</kbd></td><td>show dot files and dot folders in every folder, until <kbd>.</kbd></td></tr>
 <tr><td><kbd>g</kbd></td><td>overview of the current folder</td></tr>
@@ -114,6 +122,9 @@ overview: the overview follows the folder it goes to. What you can do to the sel
 <tr><td><kbd>Enter</kbd>, click</td><td>show the file in the image view</td></tr>
 <tr><td><kbd>+</kbd> / <kbd>-</kbd>, <kbd>Ctrl</kbd>+wheel</td><td>thumbnail size</td></tr>
 <tr><td><kbd>g</kbd> / <kbd>Esc</kbd></td><td>close, showing the selected file</td></tr>
+<tr><td><kbd>n</kbd></td><td>show and focus the dir column; there, hide it</td></tr>
+<tr><td><kbd>i</kbd></td><td>info about the selected file, following the selection</td></tr>
 <tr><td><kbd>Tab</kbd></td><td>switch between gallery and dir column</td></tr>
+<tr><td><kbd>Esc</kbd> in the dir column</td><td>hide the column, back to the gallery; the overview stays</td></tr>
 </tbody>
 </table>

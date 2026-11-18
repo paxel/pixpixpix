@@ -1,6 +1,6 @@
 [package]
 name = "pixpixpix"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 description = "Fast keyboard-first image and video viewer for Linux and macOS"
 license = "MIT"
@@ -67,7 +67,7 @@ x11rb = "0.14"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSPasteboard", "NSPasteboardItem", "NSResponder", "NSWorkspace"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSMenu", "NSMenuItem", "NSPasteboard", "NSPasteboardItem", "NSResponder", "NSWorkspace"] }
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFString"] }
 objc2-core-services = { version = "0.3", default-features = false, features = ["std", "AE", "AEDataModel", "AppleEvents", "LaunchServices", "LSInfo", "LSConstants"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "objc2-core-services", "NSAppleEventDescriptor", "NSAppleEventManager", "NSArray", "NSData", "NSError", "NSFileManager", "NSNotification", "NSObject", "NSString", "NSURL"] }

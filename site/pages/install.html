@@ -25,8 +25,8 @@ on Fedora</a>.</p>
 <p>The cask installs <code>pixpixpix.app</code> with libmpv bundled, plus the
 <code>pixpixpix</code> and <code>pix3</code> commands:</p>
 <pre><code>brew install --cask paxel/tap/pixpixpix</code></pre>
-<p>HEIC/AVIF and lossless JPEG turns need two more libraries from Homebrew:</p>
-<pre><code>brew install libheif jpeg-turbo</code></pre>
+<p>The cask brings libheif and jpeg-turbo, for HEIC/AVIF and lossless JPEG turns, with it, so
+there is nothing else to install.</p>
 <p>The app is not signed, so macOS blocks its first start: allow it once in System Settings &gt;
 Privacy &amp; Security &gt; "Open Anyway", or run
 <code>xattr -dr com.apple.quarantine /Applications/pixpixpix.app</code>.</p>

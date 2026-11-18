@@ -1,6 +1,7 @@
 //! AppKit, which every Mac has: the general pasteboard for `c`, the Apple
 //! Event through which Finder's "Open With" and a file dropped on the Dock
-//! icon reach the app, and Launch Services for the default apps.
+//! icon reach the app, the app menu in the menu bar, and Launch Services for
+//! the default apps.
 #![expect(
     unsafe_code,
     reason = "calls into AppKit through the Objective-C runtime"
@@ -9,11 +10,12 @@
 use std::sync::mpsc::Sender;
 
 use objc2::rc::{Retained, autoreleasepool};
-use objc2::runtime::ProtocolObject;
+use objc2::runtime::{AnyObject, ProtocolObject, Sel};
 use objc2::{AnyThread, DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSApplicationWillFinishLaunchingNotification, NSPasteboard, NSPasteboardItem,
-    NSPasteboardTypeFileURL, NSPasteboardTypePNG, NSPasteboardTypeString, NSPasteboardWriting,
+    NSApplication, NSApplicationWillFinishLaunchingNotification, NSMenu, NSMenuItem, NSPasteboard,
+    NSPasteboardItem, NSPasteboardTypeFileURL, NSPasteboardTypePNG, NSPasteboardTypeString,
+    NSPasteboardWriting,
 };
 use objc2_core_services::{kAEOpenDocuments, kCoreEventClass, keyDirectObject};
 use objc2_foundation::{
@@ -27,6 +29,7 @@ use objc2_core_services::LSRolesMask;
 
 use crate::clipboard::Content;
 use crate::core::Event;
+use crate::menu::Item;
 
 /// Puts `content` on the general pasteboard as one item: the PNG for image
 /// apps, the file for Finder and plain text, each if there is one.
@@ -162,6 +165,103 @@ pub fn open_files(events: Sender<Event>, ctx: egui::Context) {
     // AppKit keeps neither the observer nor the event handler alive; it
     // serves as long as the app runs.
     std::mem::forget(handler);
+}
+
+define_class!(
+    // SAFETY: NSObject has no subclassing requirements and `MenuTarget` does
+    // not implement `Drop`.
+    #[unsafe(super = NSObject)]
+    #[thread_kind = MainThreadOnly]
+    #[name = "PixpixpixMenuTarget"]
+    #[ivars = Opener]
+    struct MenuTarget;
+
+    // SAFETY: `NSObjectProtocol` has no safety requirements.
+    unsafe impl NSObjectProtocol for MenuTarget {}
+
+    impl MenuTarget {
+        // SAFETY: the signature is the one a menu item's action has.
+        #[unsafe(method(showAbout:))]
+        fn show_about(&self, _sender: Option<&AnyObject>) {
+            self.send(Item::About);
+        }
+
+        // SAFETY: as above.
+        #[unsafe(method(showSettings:))]
+        fn show_settings(&self, _sender: Option<&AnyObject>) {
+            self.send(Item::Settings);
+        }
+
+        // SAFETY: as above.
+        #[unsafe(method(quit:))]
+        fn quit(&self, _sender: Option<&AnyObject>) {
+            self.send(Item::Quit);
+        }
+    }
+);
+
+impl MenuTarget {
+    /// Sends what `item` stands for to the core and wakes the window.
+    fn send(&self, item: Item) {
+        let target = self.ivars();
+        // The app may already be gone; nothing to do then.
+        let _ = target.events.send(item.event());
+        target.ctx.request_repaint();
+    }
+}
+
+/// A menu item titled `title` that sends `action`, chosen by `Cmd` and
+/// `key` when that is not empty.
+fn menu_item(mtm: MainThreadMarker, title: &str, action: Sel, key: &str) -> Retained<NSMenuItem> {
+    // SAFETY: `action` is a selector made by `sel!`.
+    unsafe {
+        NSMenuItem::initWithTitle_action_keyEquivalent(
+            NSMenuItem::alloc(mtm),
+            &NSString::from_str(title),
+            Some(action),
+            &NSString::from_str(key),
+        )
+    }
+}
+
+/// Puts the app menu into the menu bar in place of the one the window
+/// toolkit set up: About, Settings…, Hide and Quit. About, Settings… and
+/// Quit go to `events` as the key presses that do the same, so quitting asks
+/// about unsaved edits; Hide is AppKit's own. Call on the main thread once
+/// the app has launched; elsewhere it does nothing.
+pub fn install_menu(events: Sender<Event>, ctx: egui::Context) {
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    let target = MenuTarget::alloc(mtm).set_ivars(Opener { events, ctx });
+    // SAFETY: NSObject's `init` has this signature.
+    let target: Retained<MenuTarget> = unsafe { msg_send![super(target), init] };
+    let object: &AnyObject = &target;
+    let ours = |item: Item, action: Sel| {
+        let entry = menu_item(mtm, item.title(), action, item.key_equivalent());
+        // SAFETY: the target has the selector `action` and stays alive for
+        // good below.
+        unsafe { entry.setTarget(Some(object)) };
+        entry
+    };
+    let menu = NSMenu::new(mtm);
+    menu.addItem(&ours(Item::About, sel!(showAbout:)));
+    menu.addItem(&NSMenuItem::separatorItem(mtm));
+    menu.addItem(&ours(Item::Settings, sel!(showSettings:)));
+    menu.addItem(&NSMenuItem::separatorItem(mtm));
+    // Without a target the application itself answers `hide:`.
+    menu.addItem(&menu_item(mtm, "Hide pixpixpix", sel!(hide:), "h"));
+    menu.addItem(&NSMenuItem::separatorItem(mtm));
+    menu.addItem(&ours(Item::Quit, sel!(quit:)));
+    // The first item of the menu bar holds the app menu.
+    let holder = NSMenuItem::new(mtm);
+    holder.setSubmenu(Some(&menu));
+    let bar = NSMenu::new(mtm);
+    bar.addItem(&holder);
+    NSApplication::sharedApplication(mtm).setMainMenu(Some(&bar));
+    // AppKit does not keep a menu item's target alive; it serves as long as
+    // the app runs.
+    std::mem::forget(target);
 }
 
 /// Launch Services, which keeps the default app of each content type.

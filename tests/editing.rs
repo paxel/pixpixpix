@@ -491,6 +491,13 @@ fn quitting_waits_for_the_save() {
 }
 
 #[test]
+fn quit_from_the_mac_menu_waits_for_the_save_too() {
+    let mut core = edited(&["a.jpg"]);
+    assert!(core.handle(pixpixpix::menu::Item::Quit.event()).is_empty());
+    assert!(core.view().save_dialog.is_some());
+}
+
+#[test]
 fn a_failed_save_does_not_quit() {
     let mut core = edited(&["a.jpg"]);
     core.handle(Event::Key(KeyPress::command(Key::Q)));

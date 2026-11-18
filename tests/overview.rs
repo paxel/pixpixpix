@@ -129,8 +129,9 @@ const QUIT: &str = if cfg!(target_os = "macos") {
     "Ctrl+Q"
 };
 
-const GALLERY_KEYS: [&str; 14] = [
-    "Arrows", "Enter", "+/-", "C", "Shift+C", "L/R", "O", "X", "G", "Esc", "S", "F", QUIT, "?",
+const GALLERY_KEYS: [&str; 17] = [
+    "Arrows", "Enter", "+/-", "C", "Shift+C", "L/R", "O", "X", "I", "N", "G", "Esc", "S", "F1",
+    "F", QUIT, "?",
 ];
 
 #[test]
@@ -314,8 +315,12 @@ fn g_out_cancels_the_thumbnail_decodes_and_keeps_the_scan_for_g_back() {
 fn other_keys_do_nothing_while_the_overview_is_open() {
     let (mut core, _) = opened();
     assert!(press(&mut core, Key::Right).is_empty());
-    assert!(press(&mut core, Key::N).is_empty());
-    assert!(core.view().dir_column.is_none());
+    for key in [Key::B, Key::P] {
+        assert!(press(&mut core, key).is_empty(), "{key:?}");
+    }
+    assert!(!core.view().settings.band_hidden);
+    assert!(core.view().toolbar.is_none());
+    assert_eq!(core.view().focus, Focus::Image);
     press(&mut core, Key::G);
     press(&mut core, Key::Right);
     assert!(matches!(&core.view().screen, Screen::Image { path, .. } if *path == p("b.jpg")));
@@ -787,10 +792,14 @@ fn tab_moves_between_dir_column_and_gallery_and_the_key_line_follows() {
             "Up/Down",
             "Left/Backspace",
             "Esc",
-            "Right/Enter",
+            "Right",
+            "Enter",
+            "I",
+            "N",
             "G",
             "Tab",
             "S",
+            "F1",
             "F",
             QUIT,
             "?"
@@ -992,19 +1001,138 @@ fn shift_c_copies_the_selected_file() {
     );
 }
 
+fn hint(core: &Core, keys: &str) -> Option<&'static str> {
+    let hint = core.view().key_line.keys.iter().find(|k| k.keys == keys);
+    hint.map(|k| k.action)
+}
+
 #[test]
-fn esc_in_the_gallery_or_its_column_shows_the_selected_tile_in_the_image_view() {
-    for in_column in [false, true] {
+fn n_shows_and_focuses_the_hidden_column_in_the_overview() {
+    let (mut core, scan) = opened();
+    section(&mut core, scan.unwrap_or_default(), "/p", &["/p/a.jpg"]);
+    assert_eq!(hint(&core, "N"), Some("folders"));
+    assert_eq!(
+        press(&mut core, Key::N),
+        [
+            Command::ListDirs(PathBuf::from("/")),
+            Command::ListDirs(PathBuf::from("/p")),
+        ]
+    );
+    assert_eq!(core.view().focus, Focus::Dirs);
+    assert_eq!(
+        core.view().dir_column.as_ref().map(|c| c.dir.clone()),
+        Some(PathBuf::from("/"))
+    );
+    assert!(overview(&core).is_some());
+    assert_eq!(hint(&core, "N"), Some("hide folders"));
+}
+
+#[test]
+fn a_column_opened_in_the_overview_moves_the_overview_along() {
+    let (mut core, scan) = opened();
+    section(&mut core, scan.unwrap_or_default(), "/p", &["/p/a.jpg"]);
+    press(&mut core, Key::N);
+    core.handle(Event::DirsListed {
+        dir: PathBuf::from("/"),
+        result: Ok(vec![PathBuf::from("/p"), PathBuf::from("/q")]),
+    });
+    let commands = press(&mut core, Key::Down);
+    assert_eq!(
+        scan_of(&commands).map(|(_, root, _)| root),
+        Some(PathBuf::from("/q"))
+    );
+}
+
+#[test]
+fn n_focuses_the_shown_column_from_the_gallery_and_hides_it_from_inside() {
+    let (mut core, scan) = contents();
+    section(&mut core, scan, "/p", &["/p/a.jpg", "/p/b.jpg"]);
+    assert_eq!(core.view().focus, Focus::Image);
+    assert_eq!(hint(&core, "N"), Some("folders"));
+    assert!(press(&mut core, Key::N).is_empty());
+    assert_eq!(core.view().focus, Focus::Dirs);
+    assert!(core.view().dir_column.is_some());
+    assert_eq!(hint(&core, "N"), Some("hide folders"));
+    press(&mut core, Key::N);
+    assert_eq!(core.view().dir_column, None);
+    assert_eq!(core.view().focus, Focus::Image);
+    assert!(overview(&core).is_some());
+    // The gallery has the arrows.
+    press(&mut core, Key::Right);
+    assert_eq!(selected(&core), Some(1));
+}
+
+#[test]
+fn n_does_nothing_in_the_bin_view() {
+    let mut core = browsing();
+    press(&mut core, Key::T);
+    assert!(press(&mut core, Key::N).is_empty());
+    assert!(core.view().dir_column.is_none());
+    assert_eq!(hint(&core, "N"), None);
+}
+
+#[test]
+fn enter_in_the_column_goes_to_the_gallery_and_the_column_stays() {
+    let (mut core, scan) = contents();
+    section(&mut core, scan, "/p", &["/p/a.jpg", "/p/b.jpg"]);
+    press(&mut core, Key::Tab);
+    assert_eq!(core.view().focus, Focus::Dirs);
+    let hint = core.view().key_line.keys.iter().find(|k| k.keys == "Enter");
+    assert_eq!(hint.map(|k| k.action), Some("gallery"));
+    assert!(press(&mut core, Key::Enter).is_empty());
+    assert_eq!(core.view().focus, Focus::Image);
+    assert!(core.view().dir_column.is_some());
+    assert_eq!(
+        overview(&core).map(|o| o.root.clone()),
+        Some(PathBuf::from("/p"))
+    );
+    // The arrows select tiles again.
+    press(&mut core, Key::Right);
+    assert_eq!(selected(&core), Some(1));
+}
+
+#[test]
+fn right_in_the_column_still_goes_into_the_first_subfolder() {
+    let (mut core, _) = contents();
+    press(&mut core, Key::Tab);
+    assert_eq!(core.view().focus, Focus::Dirs);
+    press(&mut core, Key::Right);
+    assert_eq!(overview(&core).map(|o| o.root.clone()), Some(p("x")));
+}
+
+#[test]
+fn esc_in_the_column_hides_it_and_the_overview_stays() {
+    let (mut core, scan) = contents();
+    section(&mut core, scan, "/p", &["/p/a.jpg", "/p/b.jpg"]);
+    press(&mut core, Key::Right);
+    press(&mut core, Key::Tab);
+    assert_eq!(core.view().focus, Focus::Dirs);
+    let hint = core.view().key_line.keys.iter().find(|k| k.keys == "Esc");
+    assert_eq!(hint.map(|k| k.action), Some("hide"));
+    assert!(press(&mut core, Key::Escape).is_empty());
+    assert_eq!(core.view().dir_column, None);
+    assert!(overview(&core).is_some());
+    // The gallery has the focus and its keys.
+    assert_eq!(core.view().focus, Focus::Image);
+    assert_eq!(selected(&core), Some(1));
+    assert!(key_names(&core).contains(&"Arrows"));
+}
+
+#[test]
+fn esc_in_the_gallery_shows_the_selected_tile_in_the_image_view() {
+    for through_column in [false, true] {
         let (mut core, scan) = contents();
         section(&mut core, scan, "/p", &["/p/a.jpg", "/p/b.jpg"]);
         press(&mut core, Key::Right);
-        if in_column {
+        if through_column {
+            // One layer per press: the column first.
             press(&mut core, Key::Tab);
-            assert_eq!(core.view().focus, Focus::Dirs);
+            press(&mut core, Key::Escape);
+            assert!(overview(&core).is_some());
         }
         press(&mut core, Key::Escape);
-        assert!(overview(&core).is_none(), "{in_column}");
-        assert_eq!(core.view().focus, Focus::Image, "{in_column}");
+        assert!(overview(&core).is_none(), "{through_column}");
+        assert_eq!(core.view().focus, Focus::Image, "{through_column}");
         assert!(matches!(
             &core.view().screen,
             Screen::Image { path, .. } if *path == p("b.jpg")

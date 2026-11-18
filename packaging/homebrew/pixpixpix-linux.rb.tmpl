@@ -60,8 +60,14 @@ class Pixpixpix < Formula
     <<~EOS
       pixpixpix loads some libraries from your distribution on first need:
       libturbojpeg for lossless JPEG turns, libheif for HEIC/HEIF and AVIF,
-      libmpv for videos (e.g. Debian/Ubuntu:
-      sudo apt install libturbojpeg libheif1 libheif-plugin-libde265 libheif-plugin-dav1d libmpv2).
+      libmpv for videos. To install them:
+
+        Fedora:
+          sudo dnf install mpv-libs libheif turbojpeg
+        Debian, Ubuntu:
+          sudo apt install libmpv2 libheif1 libheif-plugin-libde265 libheif-plugin-dav1d libturbojpeg
+        Arch:
+          sudo pacman -S mpv libheif libjpeg-turbo
 
       The install puts pixpixpix into your application menu and into "Open with"
       for images and videos, under ~/.local/share; it never becomes the default app.

@@ -42,6 +42,7 @@ enum Step {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Key {
     F,
+    F1,
     Q,
     Escape,
     Left,
@@ -106,6 +107,31 @@ impl KeyPress {
 pub struct Points {
     pub x: f32,
     pub y: f32,
+}
+
+/// The angry cat `Esc` sends off when it has nothing left to close.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Cat {
+    /// How far it has flown from the centre of the image.
+    pub offset: Points,
+}
+
+/// How long the angry cat is seen.
+pub const CAT_TIME: Duration = Duration::from_secs(1);
+
+/// The slowest and the fastest an angry cat flies, in points per second.
+pub const CAT_SPEED: std::ops::RangeInclusive<f32> = 150.0..=800.0;
+
+/// Where the random choices start without [`Event::Seed`].
+const DEFAULT_SEED: u64 = 0x9E37_79B9_7F4A_7C15;
+
+/// An angry cat on its way.
+#[derive(Debug, Clone, Copy)]
+struct CatFlight {
+    /// Points per second.
+    velocity: Points,
+    /// The first tick after `Esc`; absent before it.
+    start: Option<Instant>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -226,8 +252,12 @@ pub enum Event {
         path: PathBuf,
         result: Result<Vec<Frame>, String>,
     },
-    /// The time has come for the frame [`View::next_frame_in`] announced.
+    /// The time has come for the frame [`View::next_frame_in`] announced, or
+    /// a frame is drawn while [`View::cat`] flies.
     Tick(Instant),
+    /// What the random choices start from, sent once at the start; without
+    /// it they start from a fixed number.
+    Seed(u64),
     /// The file of a successful [`Event::Decoded`], sent right after it,
     /// holds `count` images, more than one; that event showed the first.
     Images {
@@ -630,6 +660,7 @@ impl KeyHint {
 fn key_named(name: &str) -> Option<Key> {
     Some(match name {
         "F" => Key::F,
+        "F1" => Key::F1,
         "Q" => Key::Q,
         "Esc" => Key::Escape,
         "Left" => Key::Left,
@@ -940,11 +971,15 @@ const DIR_COLUMN_KEYS: &[KeyHint] = &[
     },
     KeyHint {
         keys: "Esc",
-        action: "image view",
+        action: "hide",
     },
     KeyHint {
-        keys: "Right/Enter",
+        keys: "Right",
         action: "first subfolder",
+    },
+    KeyHint {
+        keys: "Enter",
+        action: "image view",
     },
     KeyHint {
         keys: ".",
@@ -959,8 +994,16 @@ const DIR_COLUMN_KEYS: &[KeyHint] = &[
         action: "overview",
     },
     KeyHint {
+        keys: "I",
+        action: "info",
+    },
+    KeyHint {
+        keys: "P",
+        action: "tools",
+    },
+    KeyHint {
         keys: "N",
-        action: "close",
+        action: "hide folders",
     },
     KeyHint {
         keys: "B",
@@ -983,7 +1026,19 @@ const BAND_KEYS: &[KeyHint] = &[
     },
     KeyHint {
         keys: "Esc",
-        action: "image view",
+        action: "hide",
+    },
+    KeyHint {
+        keys: "I",
+        action: "info",
+    },
+    KeyHint {
+        keys: "P",
+        action: "tools",
+    },
+    KeyHint {
+        keys: "N",
+        action: "folders",
     },
     KeyHint {
         keys: "B",
@@ -1008,6 +1063,10 @@ const GLOBAL_KEYS: &[KeyHint] = &[
     KeyHint {
         keys: "S",
         action: "settings",
+    },
+    KeyHint {
+        keys: "F1",
+        action: "about",
     },
     KeyHint {
         keys: "F",
@@ -1054,6 +1113,14 @@ const GALLERY_KEYS: &[KeyHint] = &[
         action: "trash",
     },
     KeyHint {
+        keys: "I",
+        action: "info",
+    },
+    KeyHint {
+        keys: "N",
+        action: "folders",
+    },
+    KeyHint {
         keys: "G",
         action: "close overview",
     },
@@ -1075,11 +1142,23 @@ const CONTENTS_KEYS: &[KeyHint] = &[
     },
     KeyHint {
         keys: "Esc",
-        action: "image view",
+        action: "hide",
     },
     KeyHint {
-        keys: "Right/Enter",
+        keys: "Right",
         action: "first subfolder",
+    },
+    KeyHint {
+        keys: "Enter",
+        action: "gallery",
+    },
+    KeyHint {
+        keys: "I",
+        action: "info",
+    },
+    KeyHint {
+        keys: "N",
+        action: "hide folders",
     },
     KeyHint {
         keys: "G",
@@ -1117,12 +1196,28 @@ const SETTINGS_KEYS: &[KeyHint] = &[
         action: "close",
     },
     KeyHint {
+        keys: "F1",
+        action: "about",
+    },
+    KeyHint {
         keys: QUIT_KEYS,
         action: "quit",
     },
 ];
 
-/// The keys of the About page.
+/// The keys of the About page opened by `F1` from outside the settings.
+const ABOUT_ALONE_KEYS: &[KeyHint] = &[
+    KeyHint {
+        keys: "Esc/F1",
+        action: "close",
+    },
+    KeyHint {
+        keys: QUIT_KEYS,
+        action: "quit",
+    },
+];
+
+/// The keys of the About page over the settings screen.
 const ABOUT_KEYS: &[KeyHint] = &[
     KeyHint {
         keys: "Esc",
@@ -1477,6 +1572,9 @@ pub struct View {
     /// While the main area plays an animation: when its next frame is due,
     /// to be announced with [`Event::Tick`]. Zero before the first tick.
     pub next_frame_in: Option<Duration>,
+    /// While the angry cat flies; every frame drawn meanwhile is announced
+    /// with [`Event::Tick`].
+    pub cat: Option<Cat>,
     /// While the main area shows a multi-image file: which of its images.
     pub inner: Option<InnerImages>,
     /// While the main area shows a video, or plays the video of a Live Photo
@@ -1559,6 +1657,10 @@ pub struct Core {
     animated: BTreeSet<PathBuf>,
     /// The animation of the current file, once the first frame is shown.
     animation: Option<Animation>,
+    /// The angry cat on its way.
+    cat: Option<CatFlight>,
+    /// The state of the random choices.
+    seed: u64,
     /// How many images the files whose last decode found more than one hold.
     images: BTreeMap<PathBuf, usize>,
     /// The image shown of the current file while it holds more than one.
@@ -1738,6 +1840,7 @@ impl Core {
                 trash_error: None,
                 copy_error: None,
                 next_frame_in: None,
+                cat: None,
                 inner: None,
                 video: None,
                 motion: None,
@@ -1772,6 +1875,8 @@ impl Core {
             undo_waiting: None,
             animated: BTreeSet::new(),
             animation: None,
+            cat: None,
+            seed: DEFAULT_SEED,
             images: BTreeMap::new(),
             inner: None,
             video: None,
@@ -1918,6 +2023,12 @@ impl Core {
             }
             Event::Tick(now) => {
                 self.tick(now);
+                self.fly_cat(now);
+                Vec::new()
+            }
+            Event::Seed(seed) => {
+                // Zero would stay zero.
+                self.seed = seed.max(1);
                 Vec::new()
             }
             Event::Images { path, count } => {
@@ -2104,15 +2215,20 @@ impl Core {
         for (thumb, kind) in self.view.band.iter_mut().zip(kinds) {
             thumb.motion = kind;
         }
-        if self.view.overview.is_some() && !self.view.settings_open {
+        if self.view.overview.is_some() && !self.covered() {
             let mut keys = overview_keys(self.view.focus, self.view.dir_column.is_some());
             if !self.trashed.is_empty()
                 && let Some(at) = keys.iter().position(|k| k.keys == "X")
             {
                 keys.insert(at.saturating_add(1), UNDO_TRASH_KEY);
             }
+            if self.info.is_some() {
+                for key in keys.iter_mut().filter(|k| k.keys == "I") {
+                    key.action = "hide info";
+                }
+            }
             self.view.key_line.keys = keys;
-        } else if self.view.focus == Focus::Image && !self.view.settings_open {
+        } else if self.view.focus == Focus::Image && !self.covered() {
             let mut keys = focus_keys(Focus::Image, self.view.dir_column.is_some());
             if self.view.inner.is_some() {
                 keys.insert(1, INNER_KEYS);
@@ -2149,8 +2265,8 @@ impl Core {
             }
             self.view.key_line.keys = keys;
         }
-        if !self.view.settings_open && self.view.overview.is_none() {
-            self.publish_band_keys();
+        if !self.covered() && self.view.overview.is_none() {
+            self.publish_pane_keys();
         }
         if self.dialog.is_some() {
             self.view.key_line.keys = SAVE_DIALOG_KEYS.to_vec();
@@ -2158,7 +2274,7 @@ impl Core {
         if self.view.trash_section.is_some() {
             self.view.key_line.keys = TRASH_SECTION_KEYS.to_vec();
         }
-        if self.view.overview.as_ref().is_some_and(|o| o.bin) && !self.view.settings_open {
+        if self.view.overview.as_ref().is_some_and(|o| o.bin) && !self.covered() {
             self.view.key_line.keys = if self.view.bin_preview.is_some() {
                 BIN_PREVIEW_KEYS.to_vec()
             } else {
@@ -2167,7 +2283,7 @@ impl Core {
             self.view.key_line.keys.extend_from_slice(GLOBAL_KEYS);
         }
         let hideable =
-            !self.view.settings_open && self.dialog.is_none() && self.view.trash_section.is_none();
+            !self.covered() && self.dialog.is_none() && self.view.trash_section.is_none();
         let keys = &mut self.view.key_line.keys;
         keys.retain(|k| *k != HIDE_HINTS_KEY);
         if hideable {
@@ -2511,6 +2627,63 @@ impl Core {
         });
     }
 
+    /// The next random number, by xorshift.
+    fn random(&mut self) -> u64 {
+        let mut x = self.seed;
+        x ^= x.wrapping_shl(13);
+        x ^= x.wrapping_shr(7);
+        x ^= x.wrapping_shl(17);
+        self.seed = x;
+        x
+    }
+
+    /// A random fraction from 0 up to, not including, 1.
+    fn random_fraction(&mut self) -> f32 {
+        // 16 bits: every value is an exact `f32`.
+        let bits = u16::try_from(self.random().wrapping_shr(48)).unwrap_or(0);
+        f32::from(bits) / 65_536.0
+    }
+
+    /// Sends an angry cat off from the centre of the image, in a random
+    /// direction at a random speed; one on its way gives way to it.
+    fn send_cat(&mut self) {
+        let angle = self.random_fraction() * std::f32::consts::TAU;
+        let span = CAT_SPEED.end() - CAT_SPEED.start();
+        let speed = CAT_SPEED.start() + self.random_fraction() * span;
+        self.cat = Some(CatFlight {
+            velocity: Points {
+                x: speed * angle.cos(),
+                y: speed * angle.sin(),
+            },
+            start: None,
+        });
+        self.view.cat = Some(Cat {
+            offset: Points::default(),
+        });
+    }
+
+    /// Moves the angry cat to where it is at `now`; after [`CAT_TIME`] it is
+    /// gone. The first tick starts its flight.
+    fn fly_cat(&mut self, now: Instant) {
+        let Some(cat) = &mut self.cat else {
+            return;
+        };
+        let start = *cat.start.get_or_insert(now);
+        let age = now.saturating_duration_since(start);
+        if age >= CAT_TIME {
+            self.cat = None;
+            self.view.cat = None;
+            return;
+        }
+        let seconds = age.as_secs_f32();
+        self.view.cat = Some(Cat {
+            offset: Points {
+                x: cat.velocity.x * seconds,
+                y: cat.velocity.y * seconds,
+            },
+        });
+    }
+
     /// Shows the frame due at `now`: the frames loop, the first tick starts
     /// them.
     fn tick(&mut self, now: Instant) {
@@ -2672,10 +2845,21 @@ impl Core {
                 _ => Vec::new(),
             };
         }
+        if self.view.about.is_some() && !self.view.settings_open {
+            return match (key.key, key.command) {
+                (Key::Q, true) => vec![Command::Quit],
+                (Key::Escape | Key::F1, false) => {
+                    self.close_about();
+                    Vec::new()
+                }
+                _ => Vec::new(),
+            };
+        }
         if self.view.settings_open {
             match (key.key, key.command) {
                 (Key::Q, true) => return vec![Command::Quit],
-                (Key::Escape, false) if self.view.about.is_some() => self.close_about(),
+                (Key::Escape | Key::F1, false) if self.view.about.is_some() => self.close_about(),
+                (Key::F1, false) => return self.open_about(),
                 (Key::S | Key::Escape, false) => {
                     self.view.about = None;
                     self.view.settings_open = false;
@@ -2689,6 +2873,7 @@ impl Core {
         match (key.key, key.command) {
             (Key::Q, true) => vec![Command::Quit],
             (Key::S, false) => self.open_settings(),
+            (Key::F1, false) => self.open_about(),
             (Key::F, false) => {
                 self.view.fullscreen = !self.view.fullscreen;
                 vec![Command::SetFullscreen(self.view.fullscreen)]
@@ -2718,6 +2903,18 @@ impl Core {
             _ if self.view.overview.is_some() => self.overview_key(key.key),
             (Key::N, false) => self.toggle_column(),
             (Key::B, false) => self.toggle_band(),
+            (Key::I, false) => {
+                self.toggle_info();
+                Vec::new()
+            }
+            (Key::P, false) => {
+                self.toggle_toolbar();
+                // The tools draw on a still frame.
+                if self.toolbar_open && self.video.as_ref().is_some_and(|v| v.playing) {
+                    return self.toggle_play();
+                }
+                Vec::new()
+            }
             (Key::Tab, false) => {
                 match self.view.focus {
                     Focus::Dirs => self.set_focus(Focus::Image),
@@ -2772,24 +2969,36 @@ impl Core {
         }
     }
 
-    /// Opens the settings screen, which takes every key but quit.
-    /// The About page over the open settings screen; its libraries are
-    /// looked for.
+    /// The settings screen or the About page is over everything else and
+    /// takes the keys.
+    fn covered(&self) -> bool {
+        self.view.settings_open || self.view.about.is_some()
+    }
+
+    /// The About page, over the settings screen or, by `F1`, over whatever
+    /// shows; its libraries are looked for. It takes every key but quit.
     fn open_about(&mut self) -> Vec<Command> {
-        if !self.view.settings_open {
-            return Vec::new();
-        }
         self.view.about = Some(About::default());
-        self.view.key_line.keys = ABOUT_KEYS.to_vec();
+        self.view.key_line.keys = if self.view.settings_open {
+            ABOUT_KEYS.to_vec()
+        } else {
+            ABOUT_ALONE_KEYS.to_vec()
+        };
         vec![Command::ProbeLibraries]
     }
 
-    /// Back from the About page to the settings screen.
+    /// Back from the About page to the settings screen, or to what `F1`
+    /// covered, with the focus it had.
     fn close_about(&mut self) {
         self.view.about = None;
-        self.view.key_line.keys = SETTINGS_KEYS.to_vec();
+        self.view.key_line.keys = if self.view.settings_open {
+            SETTINGS_KEYS.to_vec()
+        } else {
+            focus_keys(self.view.focus, self.view.dir_column.is_some())
+        };
     }
 
+    /// Opens the settings screen, which takes every key but quit.
     fn open_settings(&mut self) -> Vec<Command> {
         self.view.settings_open = true;
         self.view.key_line.keys = SETTINGS_KEYS.to_vec();
@@ -2873,17 +3082,25 @@ impl Core {
         }
     }
 
-    /// Fits the key hints of `b` and `Tab` to the band being hidden or
-    /// focused.
-    fn publish_band_keys(&mut self) {
+    /// Fits the key hints of the pane keys to what a press does now, showing
+    /// or focusing a pane or hiding it, and that of `Tab` to the band being
+    /// hidden.
+    fn publish_pane_keys(&mut self) {
         let hidden = self.view.settings.band_hidden;
         let focus = self.view.focus;
         let column = self.view.dir_column.is_some();
+        let (info, tools) = (self.info.is_some(), self.toolbar_open);
         let keys = &mut self.view.key_line.keys;
         for key in keys.iter_mut() {
             match key.keys {
-                "B" if hidden => key.action = "show preloaded files",
-                "B" if focus == Focus::Band => key.action = "hide preloaded files",
+                "N" if focus == Focus::Dirs => key.action = "hide folders",
+                "N" => key.action = "folders",
+                "B" if focus == Focus::Band && !hidden => key.action = "hide preloaded files",
+                "B" => key.action = "preloaded files",
+                "I" if info => key.action = "hide info",
+                "I" => key.action = "info",
+                "P" if tools => key.action = "hide tools",
+                "P" => key.action = "tools",
                 "Tab" if hidden && focus == Focus::Image && column => key.action = "folders",
                 _ => {}
             }
@@ -2902,7 +3119,7 @@ impl Core {
 
     /// Keys of the band: the arrows move the highlight, `Enter` shows the
     /// highlighted file like a click and returns to the image view, `Esc`
-    /// returns to it without, the highlight dropped.
+    /// hides the band as `b` does there, the shown file kept.
     fn band_key(&mut self, key: Key) -> Vec<Command> {
         let index = self.view.band_highlight;
         let target = match key {
@@ -2916,12 +3133,8 @@ impl Core {
                 self.set_focus(Focus::Image);
                 return commands;
             }
-            Key::Escape => {
-                // Back to the main screen; the shown file stays.
-                self.band_highlight = None;
-                self.set_focus(Focus::Image);
-                return Vec::new();
-            }
+            // Not that: the band goes, the shown file stays.
+            Key::Escape => return self.toggle_band(),
             _ => None,
         };
         if let Some(thumb) = target.and_then(|i| self.view.band.get(i)) {
@@ -2930,10 +3143,15 @@ impl Core {
         Vec::new()
     }
 
-    /// Opens the column on the current folder, focused, or closes it, ending
-    /// the one-shot actions, and returns focus to the image view. Nothing to
-    /// list before the folder is known.
+    /// `n`: opens the column on the current folder, focused, focuses the
+    /// open one, or closes it from inside, ending the one-shot actions, and
+    /// returns focus to the image view. Nothing to list before the folder is
+    /// known.
     fn toggle_column(&mut self) -> Vec<Command> {
+        if self.view.dir_column.is_some() && self.view.focus != Focus::Dirs {
+            self.set_focus(Focus::Dirs);
+            return Vec::new();
+        }
         if self.view.dir_column.is_some() {
             let commands = self.reset_one_shot();
             self.view.dir_column = None;
@@ -3053,8 +3271,13 @@ impl Core {
         if key == Key::Escape {
             return self.toggle_column();
         }
+        // This folder: on to its pictures, the column kept.
+        if key == Key::Enter {
+            self.set_focus(Focus::Image);
+            return Vec::new();
+        }
         let mut commands = self.move_in_column(key);
-        if matches!(key, Key::Left | Key::Right | Key::Enter | Key::Backspace) {
+        if matches!(key, Key::Left | Key::Right | Key::Backspace) {
             commands.extend(self.reset_one_shot());
         }
         commands
@@ -3088,7 +3311,7 @@ impl Core {
     }
 
     /// Up/Down go to the folder above or below the current one, Left to the
-    /// parent, Right and Enter into the first subfolder.
+    /// parent, Right into the first subfolder.
     fn move_in_column(&mut self, key: Key) -> Vec<Command> {
         let Some(column) = self.view.dir_column.as_ref() else {
             return Vec::new();
@@ -3112,7 +3335,7 @@ impl Core {
                 .as_deref()
                 .and_then(Path::parent)
                 .map(Path::to_path_buf),
-            Key::Right | Key::Enter => self.subdirs.as_ref().and_then(|dirs| {
+            Key::Right => self.subdirs.as_ref().and_then(|dirs| {
                 dirs.iter()
                     .find(|d| self.dots || !folder::is_dot(d))
                     .cloned()
@@ -3203,6 +3426,11 @@ impl Core {
 
     fn image_key(&mut self, key: Key) -> Vec<Command> {
         match key {
+            // Nothing left to close: the end of the escalation.
+            Key::Escape => {
+                self.send_cat();
+                Vec::new()
+            }
             Key::Left => self.step(Step::Previous),
             Key::Right => self.step(Step::Next),
             Key::Up => self.step_inner(Step::Previous),
@@ -3239,20 +3467,8 @@ impl Core {
             Key::X => self.trash(),
             Key::U => self.undo_trash(),
             Key::C => self.copy(),
-            Key::I => {
-                self.toggle_info();
-                Vec::new()
-            }
             Key::Space => self.toggle_play(),
             Key::M => self.toggle_mute(),
-            Key::P => {
-                self.toggle_toolbar();
-                // The tools draw on a still frame.
-                if self.toolbar_open && self.video.as_ref().is_some_and(|v| v.playing) {
-                    return self.toggle_play();
-                }
-                Vec::new()
-            }
             _ => Vec::new(),
         }
     }

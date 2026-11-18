@@ -373,9 +373,9 @@ fn n_shows_the_current_folder_among_its_siblings_highlighted() {
 }
 
 #[test]
-fn enter_goes_into_the_first_subfolder() {
+fn right_goes_into_the_first_subfolder() {
     let mut h = column_open();
-    h.key_press(egui::Key::Enter);
+    h.key_press(egui::Key::ArrowRight);
     h.run();
     assert_eq!(
         h.state().core.view().screen,
@@ -385,6 +385,22 @@ fn enter_goes_into_the_first_subfolder() {
     );
     assert_eq!(folder_toggled(&h, "holidays"), Some(Toggled::True));
     assert_eq!(folder_toggled(&h, "work"), Some(Toggled::False));
+}
+
+#[test]
+fn enter_in_the_column_goes_to_the_image_view_with_a_hint_of_its_own() {
+    let mut h = column_open();
+    h.get_by_label("Right");
+    h.get_by_label("first subfolder");
+    h.get_by_label("Enter");
+    let screen = h.state().core.view().screen.clone();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    assert_eq!(h.state().core.view().screen, screen);
+    assert_eq!(h.state().core.view().focus, pixpixpix::core::Focus::Image);
+    // The column stays, and the key line is the image view's.
+    assert_eq!(folder_toggled(&h, "p"), Some(Toggled::True));
+    h.get_by_label("+/-");
 }
 
 #[test]
@@ -452,7 +468,7 @@ fn a_folder_without_images_says_so() {
 #[test]
 fn entering_an_unreadable_folder_shows_the_error() {
     let mut h = column_open();
-    h.key_press(egui::Key::Enter);
+    h.key_press(egui::Key::ArrowRight);
     h.run();
     listed(&mut h, "/p/holidays", Err("permission denied".into()));
     h.get_by_label("Cannot read /p/holidays: permission denied");
@@ -567,6 +583,104 @@ fn the_key_line_lists_the_band_keys_while_it_has_the_focus() {
     h.run();
     h.get_by_label("+/-");
     assert!(h.query_by_label("Esc").is_none());
+}
+
+/// The hints of the pane keys read what a press does now, and a click on
+/// one presses its key.
+#[test]
+fn the_pane_key_hints_say_what_a_press_does_now() {
+    let mut h = harness(browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]));
+    h.run();
+    h.get_by_label("info");
+    h.get_by_label("tools");
+    h.get_by_label("folders");
+    h.key_press(egui::Key::I);
+    h.run();
+    h.key_press(egui::Key::P);
+    h.run();
+    h.get_by_label("hide info");
+    h.get_by_label("hide tools");
+    // In the dir column too.
+    h.key_press(egui::Key::N);
+    h.run();
+    h.get_by_label("hide folders");
+    h.get_by_label("hide tools");
+    let rect = h.get_by_label("hide info").rect();
+    click_at(&mut h, rect.center());
+    assert!(h.state().core.view().metadata.is_none());
+    assert_eq!(h.state().core.view().focus, pixpixpix::core::Focus::Dirs);
+    h.get_by_label("info");
+}
+
+#[test]
+fn esc_in_the_image_view_draws_an_angry_cat_for_a_second() {
+    let mut h = harness(browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]));
+    h.run();
+    assert!(h.query_by_label("Angry cat").is_none());
+    h.key_press(egui::Key::Escape);
+    h.run();
+    let centre = h
+        .get_by_role_and_label(Role::Image, "Angry cat")
+        .rect()
+        .center();
+    let start = std::time::Instant::now();
+    h.state_mut().core.handle(Event::Tick(start));
+    h.state_mut()
+        .core
+        .handle(Event::Tick(start + std::time::Duration::from_millis(500)));
+    h.run();
+    let flown = h
+        .get_by_role_and_label(Role::Image, "Angry cat")
+        .rect()
+        .center();
+    assert!(centre.distance(flown) > 50.0, "{centre:?} {flown:?}");
+    h.state_mut()
+        .core
+        .handle(Event::Tick(start + pixpixpix::core::CAT_TIME));
+    h.run();
+    assert!(h.query_by_label("Angry cat").is_none());
+}
+
+#[test]
+fn esc_reads_hide_in_the_band_and_the_dir_column() {
+    let mut h = harness(browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]));
+    h.run();
+    h.key_press(egui::Key::N);
+    h.run();
+    h.get_by_label("Esc");
+    h.get_by_label("hide");
+    h.key_press(egui::Key::B);
+    h.run();
+    h.get_by_label("hide");
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert!(h.state().core.view().settings.band_hidden);
+    assert!(h.query_by_label("hide").is_none());
+}
+
+#[test]
+fn f1_opens_the_about_page_over_the_image_view_and_esc_closes_it() {
+    let mut h = harness(browsing("/p/a.jpg", &["/p/a.jpg", "/p/b.jpg"]));
+    h.run();
+    h.get_by_label("F1");
+    h.get_by_label("about");
+    h.key_press(egui::Key::F1);
+    h.run();
+    assert_eq!(h.state().commands, [Command::ProbeLibraries]);
+    h.get_by_label("pixpixpix");
+    h.get_by_role_and_label(Role::Link, "Support on Ko-fi");
+    h.get_by_label("Esc/F1");
+    // The settings screen is not behind it.
+    assert!(h.query_by_label("Settings").is_none());
+    assert!(!h.state().core.view().settings_open);
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert!(h.state().core.view().about.is_none());
+    h.get_by_label("+/-");
+    // A click on the hint opens it too.
+    let rect = h.get_by_label("about").rect();
+    click_at(&mut h, rect.center());
+    assert!(h.state().core.view().about.is_some());
 }
 
 const CACHE_LABEL: &str = "Cached images per side";
@@ -1248,6 +1362,37 @@ fn a_click_on_a_tile_shows_its_file() {
         &h.state().core.view().screen,
         Screen::Loading { path } if path == Path::new("/p/b.jpg")
     ));
+}
+
+#[test]
+fn i_shows_the_info_beside_the_gallery() {
+    let (mut h, scan) = overview_open();
+    overview_section(
+        &mut h,
+        scan.unwrap(),
+        "/p",
+        &["/p/a.jpg".to_owned(), "/p/b.jpg".to_owned()],
+    );
+    assert!(h.query_by_label("Metadata").is_none());
+    h.key_press(egui::Key::I);
+    h.run();
+    let pane = h.get_by_label("Metadata").rect();
+    h.get_by_label("hide info");
+    // Beside the gallery, not over its tiles.
+    let tile = h.get_by_role_and_label(Role::Label, "a.jpg").rect();
+    assert!(tile.right() <= pane.left(), "{tile:?} {pane:?}");
+    assert!(h.state().core.view().overview.is_some());
+}
+
+#[test]
+fn the_overview_lists_n_for_the_dir_column() {
+    let (mut h, _) = overview_open();
+    h.get_by_label("folders");
+    h.key_press(egui::Key::N);
+    h.run();
+    h.get_by_label("hide folders");
+    assert!(h.state().core.view().overview.is_some());
+    assert!(h.state().core.view().dir_column.is_some());
 }
 
 #[test]
@@ -2306,6 +2451,7 @@ fn the_settings_link_to_an_about_page_that_lists_and_copies_the_libraries() {
         "{text}"
     );
     assert!(text.contains(env!("CARGO_PKG_VERSION")), "{text}");
+    assert!(text.contains("Support: https://ko-fi.com/paxel7"), "{text}");
     // Esc goes back to the settings, S closes them.
     h.key_press(egui::Key::Escape);
     h.run();

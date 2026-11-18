@@ -222,8 +222,28 @@ fn entering_a_folder_shows_its_first_image_before_any_neighbour() {
 }
 
 #[test]
-fn right_and_enter_go_into_the_first_subfolder_listing_it_among_its_siblings() {
-    for key in [Key::Right, Key::Enter] {
+fn enter_goes_to_the_image_view_and_the_column_stays() {
+    let mut core = column_open();
+    let shown = core.view().screen.clone();
+    let hint = core.view().key_line.keys.iter().find(|k| k.keys == "Enter");
+    assert_eq!(hint.map(|k| k.action), Some("image view"));
+    assert!(press(&mut core, Key::Enter).is_empty());
+    assert_eq!(core.view().focus, Focus::Image);
+    assert_eq!(core.view().screen, shown);
+    assert_eq!(column(&core).unwrap().dirs, paths(&["/o", "/p", "/q"]));
+    assert_eq!(highlighted(&core), Some(Path::new("/p")));
+    // The arrows step through the folder's files again.
+    press(&mut core, Key::Right);
+    assert!(matches!(
+        &core.view().screen,
+        Screen::Loading { path } if path == Path::new("/p/b.jpg")
+    ));
+}
+
+#[test]
+fn right_goes_into_the_first_subfolder_listing_it_among_its_siblings() {
+    {
+        let key = Key::Right;
         let mut core = column_open();
         assert_eq!(
             press(&mut core, key),
@@ -368,14 +388,18 @@ fn the_key_line_lists_the_keys_of_the_focused_area() {
             "Up/Down",
             "Left/Backspace",
             "Esc",
-            "Right/Enter",
+            "Right",
+            "Enter",
             ".",
             "Shift+.",
             "G",
+            "I",
+            "P",
             "N",
             "B",
             "Tab",
             "S",
+            "F1",
             "F",
             quit,
             "?"
@@ -402,6 +426,7 @@ fn the_key_line_lists_the_keys_of_the_focused_area() {
             "B",
             "Tab",
             "S",
+            "F1",
             "F",
             quit,
             "?"
@@ -461,6 +486,8 @@ fn the_up_row_goes_to_the_parent() {
 #[test]
 fn escape_closes_the_column_for_the_image_view() {
     let mut core = column_open();
+    let hint = core.view().key_line.keys.iter().find(|k| k.keys == "Esc");
+    assert_eq!(hint.map(|k| k.action), Some("hide"));
     press(&mut core, Key::Escape);
     assert_eq!(core.view().dir_column, None);
     assert_eq!(core.view().focus, Focus::Image);

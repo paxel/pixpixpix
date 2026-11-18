@@ -4,25 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.4.0]
+## [0.5.0]
 
 ### Added
 
-- Every release file carries signed build provenance, which `gh attestation verify <file> --repo paxel/pixpixpix` checks, and every release a CycloneDX SBOM of its source ([pix-105](https://github.com/paxel/pixpixpix/issues/105), [pix-127](https://github.com/paxel/pixpixpix/issues/127)).
+- `F1` opens the About page from every screen, and the key line lists it ([pix-142](https://github.com/paxel/pixpixpix/issues/142)).
+- On macOS the menu bar has an app menu with About pixpixpix, Settings… (`Cmd+,`), Hide and Quit ([pix-143](https://github.com/paxel/pixpixpix/issues/143)).
+- The About page links to Ko-fi, where the project can be supported ([pix-144](https://github.com/paxel/pixpixpix/issues/144)).
+- `i` in the overview shows info about the selected file and follows the selection ([pix-139](https://github.com/paxel/pixpixpix/issues/139)).
+- `Esc` in the image view with nothing left to close sends an angry cat flying for a second ([pix-140](https://github.com/paxel/pixpixpix/issues/140)).
 
 ### Changed
 
-- `x` in the [overview](https://paxel.github.io/pixpixpix/trash-and-undo.html#trashing) dims the tile and shows a bin on it at once and moves the selection on; the tile goes once the file is in the trash.
-
-### Fixed
-
-- `u` pressed while a file is still on its way to the trash, as on a slow drive such as pCloud, keeps its tile in the overview, marked as coming back, and puts the file back once it got there; before, the file came back but its tile stayed gone.
-
-### Security
-
-- rustix is updated to 1.1.6, whose extended-attribute functions no longer hand out uninitialized memory (RUSTSEC-2026-0486, [pix-98](https://github.com/paxel/pixpixpix/issues/98)).
-- The Flatpak installer (`packaging/flatpak/install.sh`) follows redirects to HTTPS addresses only ([pix-126](https://github.com/paxel/pixpixpix/issues/126)).
-- Dates are read and written with jiff; chrono, declared unmaintained (RUSTSEC-2026-0543), is no longer part of pixpixpix ([pix-132](https://github.com/paxel/pixpixpix/issues/132)).
+- `n` focuses the [dir column](https://paxel.github.io/pixpixpix/getting-around.html) when it is shown and hides it only from inside, as `b` does for the band; `i` and `p` show and hide info and the tools from the dir column and the band too, and the key line says for all four what a press does now ([pix-136](https://github.com/paxel/pixpixpix/issues/136)).
+- `Esc` hides the focused pane, one layer per press: in the band it hides the band, and in the dir column of the overview it hides the column and the overview stays ([pix-137](https://github.com/paxel/pixpixpix/issues/137)).
+- `Enter` in the dir column goes on to the folder's pictures, the image view or the overview's gallery, and the column stays; `Right` still goes into the first subfolder ([pix-141](https://github.com/paxel/pixpixpix/issues/141)).
+- `n` shows, focuses and hides the dir column in the overview too ([pix-138](https://github.com/paxel/pixpixpix/issues/138)).
+- On Linux, `brew install` names the packages of the optional libraries for Fedora, Debian or Ubuntu, and Arch ([pix-146](https://github.com/paxel/pixpixpix/issues/146)).
 
 ---
 

@@ -16,6 +16,7 @@ pub mod launcher;
 pub mod libraries;
 #[cfg(target_os = "macos")]
 pub mod macos;
+pub mod menu;
 pub mod metadata;
 pub mod motion;
 pub mod mpv;

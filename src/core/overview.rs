@@ -197,7 +197,7 @@ impl Core {
         commands
     }
 
-    /// `Esc` in the overview: as `g`, but the image view gets the focus.
+    /// `Esc` in the gallery: as `g`, but the image view gets the focus.
     fn escape_overview(&mut self) -> Vec<Command> {
         let commands = self.leave_overview();
         self.set_focus(Focus::Image);
@@ -419,13 +419,20 @@ impl Core {
         commands
     }
 
-    /// Keys while the overview is open: `Tab` moves between dir column and
+    /// Keys while the overview is open: `n` shows, focuses and hides the dir
+    /// column as in the image view, `i` shows and hides info, `Tab` moves between dir column and
     /// gallery, the rest goes to the focused one.
     pub(super) fn overview_key(&mut self, key: Key) -> Vec<Command> {
         if self.view.overview.as_ref().is_some_and(|o| o.bin) {
             return self.bin_key(key);
         }
         match (key, self.view.focus) {
+            (Key::N, _) => self.toggle_column(),
+            // Info about the selected tile's file.
+            (Key::I, _) => {
+                self.toggle_info();
+                Vec::new()
+            }
             (Key::Tab, Focus::Dirs) => {
                 self.set_focus(Focus::Image);
                 Vec::new()
@@ -471,7 +478,8 @@ impl Core {
             Key::Up | Key::Down | Key::Left | Key::Right | Key::Enter | Key::Backspace => {
                 self.column_action(|core| core.dir_key(key))
             }
-            Key::Escape => self.escape_overview(),
+            // Not that: the column goes, the overview stays.
+            Key::Escape => self.toggle_column(),
             _ => Vec::new(),
         }
     }
@@ -582,7 +590,7 @@ impl Core {
 
     /// `Ctrl`+wheel over the overview.
     pub(super) fn wheel_thumbnails(&mut self, larger: bool) -> Vec<Command> {
-        if self.view.overview.is_none() || self.view.settings_open {
+        if self.view.overview.is_none() || self.covered() {
             return Vec::new();
         }
         self.resize_thumbnails(larger)
